@@ -2,7 +2,14 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCurrentUser } from '@/api/session'
-import { deleteRoom, getRoom, updateRoom } from '@/api/roomApi'
+import {
+  getRoom,
+  joinRoom as joinRoomRequest,
+  leaveRoom as leaveRoomRequest,
+  setPlayerReady,
+  subscribeToRoom,
+  updateRoom,
+} from '@/api/roomApi'
 
 const props = defineProps({
   roomId: {
@@ -17,23 +24,35 @@ const room = ref(null)
 const message = ref('')
 const isLoading = ref(false)
 const isUpdating = ref(false)
+const isEditingRoom = ref(false)
+const editRoomTitle = ref('')
+const editRoomDescription = ref('')
 const lastSyncedAt = ref(null)
-let pollingId = null
+let unsubscribeRoom = null
+let fallbackPollingId = null
 
 const players = computed(() => room.value?.players || [])
 const currentPlayer = computed(() => {
   return players.value.find((player) => player.userId === savedUser?.id)
 })
+const isHost = computed(() => currentPlayer.value?.isHost === true)
+const canStartGame = computed(() => {
+  return players.value.length > 0 && players.value.every((player) => player.isReady)
+})
 
 onMounted(() => {
   fetchRoom()
-  pollingId = window.setInterval(() => {
+  unsubscribeRoom = subscribeToRoom(props.roomId, () => {
+    syncRoom()
+  })
+  fallbackPollingId = window.setInterval(() => {
     syncRoom()
   }, 2000)
 })
 
 onBeforeUnmount(() => {
-  window.clearInterval(pollingId)
+  unsubscribeRoom?.()
+  window.clearInterval(fallbackPollingId)
 })
 
 async function fetchRoom() {
@@ -73,38 +92,14 @@ async function syncRoom() {
   }
 }
 
-async function patchRoom(payload) {
-  room.value = await updateRoom(props.roomId, payload)
-  lastSyncedAt.value = new Date()
-}
-
 async function joinRoom() {
   if (!room.value || !savedUser) {
     router.push('/login')
     return
   }
 
-  if (players.value.length >= room.value.maxPlayers) {
-    message.value = '방 인원이 가득 찼습니다.'
-    return
-  }
-
-  const joinedAt = new Date().toISOString()
-  const nextPlayers = [
-    ...players.value,
-    {
-      userId: savedUser.id,
-      nickname: savedUser.nickname,
-      isHost: players.value.length === 0,
-      isReady: false,
-      joinedAt,
-    },
-  ]
-
-  await patchRoom({
-    players: nextPlayers,
-    currentPlayers: nextPlayers.length,
-  })
+  room.value = await joinRoomRequest(props.roomId, savedUser)
+  lastSyncedAt.value = new Date()
 }
 
 async function toggleReady() {
@@ -116,14 +111,75 @@ async function toggleReady() {
   isUpdating.value = true
 
   try {
-    const nextPlayers = players.value.map((player) =>
-      player.userId === savedUser.id ? { ...player, isReady: !player.isReady } : player,
-    )
+    room.value = await setPlayerReady(props.roomId, savedUser.id, !currentPlayer.value.isReady)
+    lastSyncedAt.value = new Date()
+  } catch (error) {
+    message.value = error.message
+  } finally {
+    isUpdating.value = false
+  }
+}
 
-    await patchRoom({
-      players: nextPlayers,
-      currentPlayers: nextPlayers.length,
+function openEditRoomForm() {
+  editRoomTitle.value = room.value?.title || ''
+  editRoomDescription.value = room.value?.description || ''
+  isEditingRoom.value = true
+}
+
+function closeEditRoomForm() {
+  isEditingRoom.value = false
+  editRoomTitle.value = ''
+  editRoomDescription.value = ''
+}
+
+async function saveRoomInfo() {
+  message.value = ''
+
+  if (!isHost.value || isUpdating.value) {
+    return
+  }
+
+  if (!editRoomTitle.value.trim()) {
+    message.value = '방 제목을 입력하세요.'
+    return
+  }
+
+  if (!editRoomDescription.value.trim()) {
+    message.value = '방 소개 내용을 입력하세요.'
+    return
+  }
+
+  isUpdating.value = true
+
+  try {
+    room.value = await updateRoom(props.roomId, {
+      title: editRoomTitle.value,
+      description: editRoomDescription.value,
     })
+    lastSyncedAt.value = new Date()
+    closeEditRoomForm()
+  } catch (error) {
+    message.value = error.message
+  } finally {
+    isUpdating.value = false
+  }
+}
+
+async function startGame() {
+  message.value = ''
+
+  if (!isHost.value || !canStartGame.value || isUpdating.value) {
+    return
+  }
+
+  isUpdating.value = true
+
+  try {
+    room.value = await updateRoom(props.roomId, {
+      status: 'playing',
+      phase: '게임 진행 중',
+    })
+    lastSyncedAt.value = new Date()
   } catch (error) {
     message.value = error.message
   } finally {
@@ -141,28 +197,7 @@ async function leaveRoom() {
   isUpdating.value = true
 
   try {
-    let nextPlayers = players.value.filter((player) => player.userId !== savedUser.id)
-
-    if (nextPlayers.length === 0) {
-      await deleteRoom(props.roomId)
-      router.push('/home')
-      return
-    }
-
-    if (currentPlayer.value.isHost) {
-      nextPlayers = nextPlayers.map((player, index) => ({
-        ...player,
-        isHost: index === 0,
-      }))
-    }
-
-    await patchRoom({
-      hostUserId: nextPlayers.find((player) => player.isHost)?.userId,
-      hostNickname: nextPlayers.find((player) => player.isHost)?.nickname,
-      players: nextPlayers,
-      currentPlayers: nextPlayers.length,
-    })
-
+    await leaveRoomRequest(props.roomId, savedUser.id)
     router.push('/home')
   } catch (error) {
     message.value = error.message
@@ -181,15 +216,46 @@ async function leaveRoom() {
         <div>
           <h1>{{ room.title }}</h1>
           <p>방장 {{ room.hostNickname }}님이 만든 게임 방입니다.</p>
+          <p class="room-description">{{ room.description }}</p>
         </div>
 
         <div v-if="currentPlayer" class="room-actions">
+          <button
+            v-if="isHost"
+            type="button"
+            :disabled="isUpdating || !canStartGame || room.status !== 'waiting'"
+            @click="startGame"
+          >
+            게임 시작
+          </button>
+          <button v-if="isHost" type="button" :disabled="isUpdating" @click="openEditRoomForm">
+            방 정보 수정
+          </button>
           <button type="button" :disabled="isUpdating" @click="toggleReady">
             {{ currentPlayer.isReady ? '준비 취소' : '준비' }}
           </button>
           <button type="button" :disabled="isUpdating" @click="leaveRoom">방 나가기</button>
         </div>
       </div>
+
+      <form v-if="isEditingRoom" class="edit-room-form" @submit.prevent="saveRoomInfo">
+        <label>
+          방 제목
+          <input v-model="editRoomTitle" type="text" placeholder="방 제목" />
+        </label>
+
+        <label>
+          방 소개
+          <textarea v-model="editRoomDescription" rows="4" placeholder="방 소개 내용" />
+        </label>
+
+        <div class="edit-actions">
+          <button type="submit" :disabled="isUpdating">
+            {{ isUpdating ? '저장 중...' : '저장' }}
+          </button>
+          <button type="button" :disabled="isUpdating" @click="closeEditRoomForm">취소</button>
+        </div>
+      </form>
 
       <div class="room-grid">
         <article>
@@ -209,7 +275,9 @@ async function leaveRoom() {
       <div class="players">
         <div class="players-heading">
           <h2>참가 플레이어</h2>
-          <span v-if="lastSyncedAt">자동 갱신 중</span>
+          <span v-if="lastSyncedAt">
+            {{ canStartGame ? '모든 플레이어 준비 완료' : '자동 갱신 중' }}
+          </span>
         </div>
         <ul>
           <li v-for="player in players" :key="player.userId">
@@ -261,6 +329,44 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
+}
+
+.edit-room-form {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+}
+
+.edit-room-form label {
+  display: grid;
+  gap: 0.4rem;
+  font-weight: 800;
+}
+
+.edit-room-form input,
+.edit-room-form textarea {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--color-border);
+  border-radius: 0.8rem;
+  color: var(--color-text);
+  font: inherit;
+  padding: 0.8rem 1rem;
+  resize: vertical;
+}
+
+.edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.room-description {
+  color: rgba(255, 245, 224, 0.7);
+  margin-top: 0.5rem;
+  max-width: 42rem;
 }
 
 button {
