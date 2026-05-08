@@ -1,0 +1,228 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "nickname": "host",
+      "createdAt": "2026-05-08T06:00:00.000Z"
+    },
+    {
+      "id": 2,
+      "nickname": "player-1",
+      "createdAt": "2026-05-08T06:01:00.000Z"
+    },
+    {
+      "id": 3,
+      "nickname": "player-2",
+      "createdAt": "2026-05-08T06:02:00.000Z"
+    },
+    {
+      "id": 4,
+      "nickname": "player-3",
+      "createdAt": "2026-05-08T06:03:00.000Z"
+    },
+    {
+      "id": 5,
+      "nickname": "player-4",
+      "createdAt": "2026-05-08T06:04:00.000Z"
+    }
+  ],
+  "rooms": [
+    {
+      "id": 1,
+      "code": "MAFIA1",
+      "hostUserId": 1,
+      "status": "waiting",
+      "maxPlayers": 8,
+      "createdAt": "2026-05-08T06:05:00.000Z",
+      "startedAt": null,
+      "endedAt": null
+    }
+  ],
+  "roomPlayers": [
+    {
+      "id": 1,
+      "roomId": 1,
+      "userId": 1,
+      "seatNo": 1,
+      "isHost": true,
+      "isAlive": true,
+      "joinedAt": "2026-05-08T06:05:00.000Z",
+      "leftAt": null
+    },
+    {
+      "id": 2,
+      "roomId": 1,
+      "userId": 2,
+      "seatNo": 2,
+      "isHost": false,
+      "isAlive": true,
+      "joinedAt": "2026-05-08T06:06:00.000Z",
+      "leftAt": null
+    },
+    {
+      "id": 3,
+      "roomId": 1,
+      "userId": 3,
+      "seatNo": 3,
+      "isHost": false,
+      "isAlive": true,
+      "joinedAt": "2026-05-08T06:07:00.000Z",
+      "leftAt": null
+    },
+    {
+      "id": 4,
+      "roomId": 1,
+      "userId": 4,
+      "seatNo": 4,
+      "isHost": false,
+      "isAlive": true,
+      "joinedAt": "2026-05-08T06:08:00.000Z",
+      "leftAt": null
+    },
+    {
+      "id": 5,
+      "roomId": 1,
+      "userId": 5,
+      "seatNo": 5,
+      "isHost": false,
+      "isAlive": true,
+      "joinedAt": "2026-05-08T06:09:00.000Z",
+      "leftAt": null
+    }
+  ],
+  "games": [
+    {
+      "id": 1,
+      "roomId": 1,
+      "status": "night",
+      "currentDay": 1,
+      "phase": "night",
+      "phaseEndsAt": "2026-05-08T06:15:00.000Z",
+      "winner": null,
+      "createdAt": "2026-05-08T06:10:00.000Z",
+      "endedAt": null
+    }
+  ],
+  "gamePlayers": [
+    {
+      "id": 1,
+      "gameId": 1,
+      "userId": 1,
+      "role": "mafia",
+      "team": "mafia",
+      "isAlive": true,
+      "deathDay": null,
+      "deathReason": null,
+      "revealedRole": false
+    },
+    {
+      "id": 2,
+      "gameId": 1,
+      "userId": 2,
+      "role": "doctor",
+      "team": "citizen",
+      "isAlive": true,
+      "deathDay": null,
+      "deathReason": null,
+      "revealedRole": false
+    },
+    {
+      "id": 3,
+      "gameId": 1,
+      "userId": 3,
+      "role": "police",
+      "team": "citizen",
+      "isAlive": true,
+      "deathDay": null,
+      "deathReason": null,
+      "revealedRole": false
+    },
+    {
+      "id": 4,
+      "gameId": 1,
+      "userId": 4,
+      "role": "citizen",
+      "team": "citizen",
+      "isAlive": true,
+      "deathDay": null,
+      "deathReason": null,
+      "revealedRole": false
+    },
+    {
+      "id": 5,
+      "gameId": 1,
+      "userId": 5,
+      "role": "citizen",
+      "team": "citizen",
+      "isAlive": true,
+      "deathDay": null,
+      "deathReason": null,
+      "revealedRole": false
+    }
+  ],
+  "gamePhases": [
+    {
+      "id": 1,
+      "gameId": 1,
+      "dayNumber": 1,
+      "phase": "night",
+      "startedAt": "2026-05-08T06:10:00.000Z",
+      "endedAt": null
+    }
+  ],
+  "gameActions": [
+    {
+      "id": 1,
+      "gameId": 1,
+      "phaseId": 1,
+      "actorUserId": 1,
+      "targetUserId": 4,
+      "actionType": "kill",
+      "actionValue": null,
+      "createdAt": "2026-05-08T06:11:00.000Z"
+    },
+    {
+      "id": 2,
+      "gameId": 1,
+      "phaseId": 1,
+      "actorUserId": 2,
+      "targetUserId": 4,
+      "actionType": "heal",
+      "actionValue": null,
+      "createdAt": "2026-05-08T06:11:30.000Z"
+    },
+    {
+      "id": 3,
+      "gameId": 1,
+      "phaseId": 1,
+      "actorUserId": 3,
+      "targetUserId": 1,
+      "actionType": "investigate",
+      "actionValue": {
+        "result": "mafia"
+      },
+      "createdAt": "2026-05-08T06:12:00.000Z"
+    }
+  ],
+  "chatMessages": [
+    {
+      "id": 1,
+      "gameId": 1,
+      "roomId": 1,
+      "senderUserId": 1,
+      "channel": "lobby",
+      "message": "게임을 시작합니다.",
+      "createdAt": "2026-05-08T06:09:30.000Z"
+    },
+    {
+      "id": 2,
+      "gameId": 1,
+      "roomId": 1,
+      "senderUserId": 1,
+      "channel": "mafia",
+      "message": "오늘 밤 목표를 정합니다.",
+      "createdAt": "2026-05-08T06:10:30.000Z"
+    }
+  ],
+  "gameResults": []
+}

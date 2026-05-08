@@ -1,0 +1,35 @@
+{
+  "users": [
+    {
+      "id": "1",
+      "loginId": "host",
+      "nickname": "HostPlayer",
+      "password": "1234",
+      "isRegistered": true,
+      "createdAt": "2026-05-08T06:00:00.000Z",
+      "lastLoginAt": null,
+      "character": {
+        "name": "Rookie Mafia",
+        "level": 1,
+        "coin": 1200,
+        "avatar": "default-mafia"
+      }
+    },
+    {
+      "id": "839e",
+      "loginId": "pp",
+      "nickname": "삐삐",
+      "password": "1111",
+      "isRegistered": true,
+      "createdAt": "2026-05-08T07:06:24.629Z",
+      "lastLoginAt": null,
+      "character": {
+        "name": "Rookie Mafia",
+        "level": 1,
+        "coin": 0,
+        "avatar": "default-mafia"
+      }
+    }
+  ],
+  "rooms": []
+}
