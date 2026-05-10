@@ -34,9 +34,82 @@ create table if not exists public.room_players (
   unique (room_id, user_id)
 );
 
+alter table public.profiles
+  add column if not exists representative_title text,
+  add column if not exists profile_quote text,
+  add column if not exists experience_percent integer not null default 0;
+
+create table if not exists public.player_ranks (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  tier text not null default 'Bronze II',
+  rp integer not null default 0,
+  top_percent integer not null default 100,
+  emblem text not null default 'B',
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.player_stats (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  total_games integer not null default 0,
+  overall_win_rate numeric not null default 0,
+  citizen_win_rate numeric not null default 0,
+  mafia_win_rate numeric not null default 0,
+  survival_rate numeric not null default 0,
+  average_survival_turn numeric not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.player_role_stats (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  role_name text not null,
+  icon text not null default '?',
+  games_played integer not null default 0,
+  win_rate integer not null default 0,
+  is_most_played boolean not null default false,
+  unique (user_id, role_name)
+);
+
+create table if not exists public.player_recent_matches (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  role_name text not null,
+  role_icon text not null default '?',
+  won boolean not null default false,
+  summary text not null default '',
+  detail text not null default '',
+  played_at timestamptz not null default now()
+);
+
+create table if not exists public.player_achievements (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  name text not null,
+  icon text not null default '?',
+  rarity text not null default 'Common',
+  unlocked boolean not null default false,
+  unlocked_at text not null default '잠김',
+  description text not null default '',
+  unique (user_id, name)
+);
+
+create table if not exists public.player_cosmetics (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  label text not null,
+  value text not null,
+  sort_order integer not null default 0
+);
+
 alter table public.profiles enable row level security;
 alter table public.rooms enable row level security;
 alter table public.room_players enable row level security;
+alter table public.player_ranks enable row level security;
+alter table public.player_stats enable row level security;
+alter table public.player_role_stats enable row level security;
+alter table public.player_recent_matches enable row level security;
+alter table public.player_achievements enable row level security;
+alter table public.player_cosmetics enable row level security;
 
 create policy "profiles are readable by authenticated users"
   on public.profiles for select
@@ -77,6 +150,36 @@ create policy "room hosts can delete rooms"
 
 create policy "room players are readable by authenticated users"
   on public.room_players for select
+  to authenticated
+  using (true);
+
+create policy "player ranks are readable by authenticated users"
+  on public.player_ranks for select
+  to authenticated
+  using (true);
+
+create policy "player stats are readable by authenticated users"
+  on public.player_stats for select
+  to authenticated
+  using (true);
+
+create policy "player role stats are readable by authenticated users"
+  on public.player_role_stats for select
+  to authenticated
+  using (true);
+
+create policy "player recent matches are readable by authenticated users"
+  on public.player_recent_matches for select
+  to authenticated
+  using (true);
+
+create policy "player achievements are readable by authenticated users"
+  on public.player_achievements for select
+  to authenticated
+  using (true);
+
+create policy "player cosmetics are readable by authenticated users"
+  on public.player_cosmetics for select
   to authenticated
   using (true);
 
