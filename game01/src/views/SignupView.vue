@@ -2,25 +2,24 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { signupUser } from '@/api/authApi'
+import { useToastStore } from '@/stores/toast'
 
 const router = useRouter()
+const toastStore = useToastStore()
 const loginId = ref('')
 const nickname = ref('')
 const password = ref('')
 const passwordConfirm = ref('')
-const message = ref('')
 const isLoading = ref(false)
 
 async function signup() {
-  message.value = ''
-
   if (!loginId.value.trim() || !nickname.value.trim() || !password.value || !passwordConfirm.value) {
-    message.value = '모든 항목을 입력하세요.'
+    toastStore.error('모든 항목을 입력하세요.')
     return
   }
 
   if (password.value !== passwordConfirm.value) {
-    message.value = '비밀번호가 일치하지 않습니다.'
+    toastStore.error('비밀번호가 일치하지 않습니다.')
     return
   }
 
@@ -32,9 +31,10 @@ async function signup() {
       nickname: nickname.value.trim(),
       password: password.value,
     })
+    toastStore.success('회원가입이 완료되었습니다. 로그인해주세요.')
     router.push('/login')
   } catch (error) {
-    message.value = error.message
+    toastStore.error(error.message)
   } finally {
     isLoading.value = false
   }
@@ -66,8 +66,6 @@ async function signup() {
         비밀번호 확인
         <input v-model="passwordConfirm" type="password" placeholder="비밀번호 확인" />
       </label>
-
-      <p v-if="message" class="message">{{ message }}</p>
 
       <button type="submit" :disabled="isLoading">
         {{ isLoading ? '저장 중...' : '계정 만들기' }}

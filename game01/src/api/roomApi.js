@@ -4,6 +4,9 @@ function toPlayer(row) {
   return {
     userId: row.user_id,
     nickname: row.profiles?.nickname || 'Unknown',
+    avatar: row.profiles?.avatar || 'default-mafia',
+    level: row.profiles?.level || 1,
+    title: row.profiles?.representative_title || '초보 마피아',
     isHost: row.is_host,
     isReady: row.is_ready,
     joinedAt: row.joined_at,
@@ -40,7 +43,10 @@ const roomSelect = `
     is_ready,
     joined_at,
     profiles (
-      nickname
+      nickname,
+      avatar,
+      level,
+      representative_title
     )
   )
 `
@@ -69,34 +75,14 @@ export async function getRoom(roomId) {
 }
 
 export async function createRoom({ hostUser, title, description, maxPlayers }) {
-  const { data: room, error: roomError } = await supabase
-    .from('rooms')
-    .insert({
-      title: title.trim(),
-      description: description.trim(),
-      code: `ROOM-${Date.now().toString().slice(-6)}`,
-      host_user_id: hostUser.id,
-      status: 'waiting',
-      max_players: maxPlayers,
-      phase: '시작 전',
-    })
-    .select()
-    .single()
-
-  if (roomError) {
-    throw new Error('방 생성에 실패했습니다.')
-  }
-
-  const { error: playerError } = await supabase.from('room_players').insert({
-    room_id: room.id,
-    user_id: hostUser.id,
-    is_host: true,
-    is_ready: false,
+  const { data: room, error } = await supabase.rpc('create_room', {
+    p_title: title.trim(),
+    p_description: description.trim(),
+    p_max_players: maxPlayers,
   })
 
-  if (playerError) {
-    await supabase.from('rooms').delete().eq('id', room.id)
-    throw new Error('방 참가자 등록에 실패했습니다.')
+  if (error) {
+    throw new Error('방 생성에 실패했습니다.')
   }
 
   return getRoom(room.id)
@@ -203,8 +189,9 @@ export async function deleteRoom(roomId) {
 }
 
 export function subscribeToRooms(callback) {
+  const channelName = `rooms-changes-${Date.now()}-${Math.random().toString(36).slice(2)}`
   const channel = supabase
-    .channel('rooms-changes')
+    .channel(channelName)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, callback)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players' }, callback)
     .subscribe((status) => {

@@ -1,9 +1,11 @@
 <script setup>
-import { onMounted, ref } from 'vue'
-import { getCurrentUser } from '@/api/session'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 import { getMyPageData } from '@/api/myPageApi'
 
-const savedUser = getCurrentUser()
+const authStore = useAuthStore()
+const savedUser = computed(() => authStore.user)
+
 const isSettingsOpen = ref(false)
 const isLoading = ref(true)
 const profile = ref({})
@@ -22,8 +24,10 @@ const settingSections = [
   { title: '접근성', items: ['색약 모드', '폰트 크기 조절'] },
 ]
 
-onMounted(async () => {
-  const data = await getMyPageData(savedUser)
+async function loadData() {
+  if (!savedUser.value) return
+  isLoading.value = true
+  const data = await getMyPageData(savedUser.value)
 
   profile.value = data.profile
   rank.value = data.rank
@@ -33,6 +37,18 @@ onMounted(async () => {
   achievements.value = data.achievements
   cosmetics.value = data.cosmetics
   isLoading.value = false
+}
+
+onMounted(() => {
+  if (savedUser.value) {
+    loadData()
+  }
+})
+
+watch(savedUser, (newUser) => {
+  if (newUser) {
+    loadData()
+  }
 })
 </script>
 

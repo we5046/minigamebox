@@ -1,7 +1,8 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { getCurrentUser } from '@/api/session'
+import { useAuthStore } from '@/stores/auth'
+import { useToastStore } from '@/stores/toast'
 import {
   getRoom,
   joinRoom as joinRoomRequest,
@@ -10,6 +11,7 @@ import {
   subscribeToRoom,
   updateRoom,
 } from '@/api/roomApi'
+import { subscribeToRoomChat, sendRoomChatMessage, normalizeBroadcastMessage } from '@/api/chatApi'
 
 const props = defineProps({
   roomId: {
@@ -19,25 +21,43 @@ const props = defineProps({
 })
 
 const router = useRouter()
-const savedUser = getCurrentUser()
+const authStore = useAuthStore()
+const toastStore = useToastStore()
+const savedUser = computed(() => authStore.user)
+
 const room = ref(null)
-const message = ref('')
 const isLoading = ref(false)
 const isUpdating = ref(false)
 const isEditingRoom = ref(false)
 const editRoomTitle = ref('')
 const editRoomDescription = ref('')
 const lastSyncedAt = ref(null)
+
 let unsubscribeRoom = null
-let fallbackPollingId = null
+let roomChatSubscription = null
+const chatChannel = ref(null)
+
+const chatMessages = ref([
+  {
+    id: 'sys-welcome',
+    nickname: 'System',
+    content: '게임 방에 입장하셨습니다. 매너 채팅 부탁드립니다.',
+    createdAt: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+    isSystem: true,
+  }
+])
+const chatDraft = ref('')
+const chatLogRef = ref(null)
 
 const players = computed(() => room.value?.players || [])
 const currentPlayer = computed(() => {
-  return players.value.find((player) => player.userId === savedUser?.id)
+  return players.value.find((player) => player.userId === savedUser.value?.id)
 })
 const isHost = computed(() => currentPlayer.value?.isHost === true)
 const canStartGame = computed(() => {
-  return players.value.length > 0 && players.value.every((player) => player.isReady)
+  const guests = players.value.filter((player) => !player.isHost)
+  // 방장을 제외한 나머지 인원이 1명 이상이고, 모두 준비 완료 상태일 때 시작 가능
+  return guests.length > 0 && guests.every((player) => player.isReady)
 })
 
 onMounted(() => {
@@ -45,29 +65,62 @@ onMounted(() => {
   unsubscribeRoom = subscribeToRoom(props.roomId, () => {
     syncRoom()
   })
-  fallbackPollingId = window.setInterval(() => {
-    syncRoom()
-  }, 2000)
+  
+  const sub = subscribeToRoomChat(props.roomId, handleChatEvent)
+  roomChatSubscription = sub.unsubscribe
+  chatChannel.value = sub.channel
 })
 
 onBeforeUnmount(() => {
   unsubscribeRoom?.()
-  window.clearInterval(fallbackPollingId)
+  roomChatSubscription?.()
 })
 
+function handleChatEvent(payload) {
+  if (payload?.type === 'subscription-status') return
+  if (!payload?.payload) return
+
+  chatMessages.value.push(normalizeBroadcastMessage(payload.payload))
+  scrollToBottom()
+}
+
+async function submitChat() {
+  const content = chatDraft.value.trim()
+  if (!content || !savedUser.value || !chatChannel.value) return
+
+  try {
+    await sendRoomChatMessage(chatChannel.value, {
+      userId: savedUser.value.id,
+      nickname: currentPlayer.value?.nickname || savedUser.value.nickname,
+      content,
+      isSystem: false
+    })
+    chatDraft.value = ''
+  } catch (error) {
+    toastStore.error(error.message)
+  }
+}
+
+function scrollToBottom() {
+  nextTick(() => {
+    if (chatLogRef.value) {
+      chatLogRef.value.scrollTop = chatLogRef.value.scrollHeight
+    }
+  })
+}
+
 async function fetchRoom() {
-  message.value = ''
   isLoading.value = true
 
   try {
     room.value = await getRoom(props.roomId)
     lastSyncedAt.value = new Date()
 
-    if (savedUser && !currentPlayer.value) {
+    if (savedUser.value && !currentPlayer.value) {
       await joinRoom()
     }
   } catch (error) {
-    message.value = error.message
+    toastStore.error(error.message)
   } finally {
     isLoading.value = false
   }
@@ -81,25 +134,33 @@ async function syncRoom() {
   try {
     room.value = await getRoom(props.roomId)
     lastSyncedAt.value = new Date()
-    message.value = ''
   } catch (error) {
     if (error.message.includes('Not Found')) {
       router.push('/home')
       return
     }
-
-    message.value = error.message
+    toastStore.error(error.message)
   }
 }
 
 async function joinRoom() {
-  if (!room.value || !savedUser) {
+  if (!room.value || !savedUser.value) {
     router.push('/login')
     return
   }
 
-  room.value = await joinRoomRequest(props.roomId, savedUser)
+  room.value = await joinRoomRequest(props.roomId, savedUser.value)
   lastSyncedAt.value = new Date()
+  
+  // Send enter message
+  if (chatChannel.value) {
+    sendRoomChatMessage(chatChannel.value, {
+      userId: 'system',
+      nickname: 'System',
+      content: `${savedUser.value.nickname}님이 입장했습니다.`,
+      isSystem: true
+    }).catch(() => {})
+  }
 }
 
 async function toggleReady() {
@@ -107,14 +168,13 @@ async function toggleReady() {
     return
   }
 
-  message.value = ''
   isUpdating.value = true
 
   try {
-    room.value = await setPlayerReady(props.roomId, savedUser.id, !currentPlayer.value.isReady)
+    room.value = await setPlayerReady(props.roomId, savedUser.value.id, !currentPlayer.value.isReady)
     lastSyncedAt.value = new Date()
   } catch (error) {
-    message.value = error.message
+    toastStore.error(error.message)
   } finally {
     isUpdating.value = false
   }
@@ -133,19 +193,17 @@ function closeEditRoomForm() {
 }
 
 async function saveRoomInfo() {
-  message.value = ''
-
   if (!isHost.value || isUpdating.value) {
     return
   }
 
   if (!editRoomTitle.value.trim()) {
-    message.value = '방 제목을 입력하세요.'
+    toastStore.error('방 제목을 입력하세요.')
     return
   }
 
   if (!editRoomDescription.value.trim()) {
-    message.value = '방 소개 내용을 입력하세요.'
+    toastStore.error('방 소개 내용을 입력하세요.')
     return
   }
 
@@ -159,15 +217,13 @@ async function saveRoomInfo() {
     lastSyncedAt.value = new Date()
     closeEditRoomForm()
   } catch (error) {
-    message.value = error.message
+    toastStore.error(error.message)
   } finally {
     isUpdating.value = false
   }
 }
 
 async function startGame() {
-  message.value = ''
-
   if (!isHost.value || !canStartGame.value || isUpdating.value) {
     return
   }
@@ -181,7 +237,7 @@ async function startGame() {
     })
     lastSyncedAt.value = new Date()
   } catch (error) {
-    message.value = error.message
+    toastStore.error(error.message)
   } finally {
     isUpdating.value = false
   }
@@ -193,14 +249,23 @@ async function leaveRoom() {
     return
   }
 
-  message.value = ''
   isUpdating.value = true
+  
+  // Send leave message
+  if (chatChannel.value) {
+    await sendRoomChatMessage(chatChannel.value, {
+      userId: 'system',
+      nickname: 'System',
+      content: `${savedUser.value.nickname}님이 퇴장했습니다.`,
+      isSystem: true
+    }).catch(() => {})
+  }
 
   try {
-    await leaveRoomRequest(props.roomId, savedUser.id)
+    await leaveRoomRequest(props.roomId, savedUser.value.id)
     router.push('/home')
   } catch (error) {
-    message.value = error.message
+    toastStore.error(error.message)
   } finally {
     isUpdating.value = false
   }
@@ -208,280 +273,785 @@ async function leaveRoom() {
 </script>
 
 <template>
-  <section class="page-card room">
-    <p class="eyebrow">Game Room #{{ roomId }}</p>
+  <section class="page-card room game-lobby-container">
+    <div class="lobby-glow"></div>
+    
+    <p class="eyebrow">Game Room #{{ String(roomId).slice(0, 8) }}</p>
 
     <template v-if="room">
       <div class="room-heading">
-        <div>
-          <h1>{{ room.title }}</h1>
-          <p>방장 {{ room.hostNickname }}님이 만든 게임 방입니다.</p>
-          <p class="room-description">{{ room.description }}</p>
+        <div class="room-info-cluster">
+          <h1 class="room-title">{{ room.title }}</h1>
+          
+          <div class="room-badges">
+            <span class="badge status-badge" :class="room.status === 'waiting' ? 'waiting' : 'playing'">
+              {{ room.status === 'waiting' ? '🟢 대기중' : '🔴 게임중' }}
+            </span>
+            <span class="badge mode-badge">
+              {{ room.description === '랭크전' ? '⚔️ 랭크전' : (room.description === '친선전' ? '🤝 친선전' : '🎭 클래식') }}
+            </span>
+            <span class="badge capacity-badge" :class="{ full: players.length >= room.maxPlayers }">
+              👥 {{ players.length }} / {{ room.maxPlayers }}
+            </span>
+          </div>
+
+          <p class="host-info">방장: <strong class="host-name">{{ room.hostNickname }}</strong></p>
+          <p class="atmosphere-quote">"거짓말을 하는 자는 누구인가? 밤이 깊어갑니다..."</p>
         </div>
 
-        <div v-if="currentPlayer" class="room-actions">
-          <button
-            v-if="isHost"
-            type="button"
-            :disabled="isUpdating || !canStartGame || room.status !== 'waiting'"
-            @click="startGame"
-          >
-            게임 시작
-          </button>
-          <button v-if="isHost" type="button" :disabled="isUpdating" @click="openEditRoomForm">
-            방 정보 수정
-          </button>
-          <button type="button" :disabled="isUpdating" @click="toggleReady">
-            {{ currentPlayer.isReady ? '준비 취소' : '준비' }}
-          </button>
-          <button type="button" :disabled="isUpdating" @click="leaveRoom">방 나가기</button>
+        <div v-if="currentPlayer" class="room-control-panel">
+          <div class="control-header">
+            <span class="control-title">ROOM CONTROL</span>
+            <span class="control-status" v-if="canStartGame">READY</span>
+          </div>
+          <div class="room-actions">
+            <button
+              v-if="isHost"
+              type="button"
+              class="action-btn primary-btn pulse-anim"
+              :disabled="isUpdating || !canStartGame || room.status !== 'waiting'"
+              @click="startGame"
+            >
+              게임 시작
+            </button>
+            
+            <button 
+              v-if="!isHost" 
+              type="button" 
+              class="action-btn"
+              :class="currentPlayer.isReady ? 'secondary-btn' : 'primary-btn pulse-anim'"
+              :disabled="isUpdating" 
+              @click="toggleReady"
+            >
+              {{ currentPlayer.isReady ? '준비 취소' : '준비 하기' }}
+            </button>
+
+            <button v-if="isHost" type="button" class="action-btn secondary-btn" :disabled="isUpdating" @click="openEditRoomForm">
+              방 설정
+            </button>
+            
+            <button type="button" class="action-btn danger-btn" :disabled="isUpdating" @click="leaveRoom">
+              나가기
+            </button>
+          </div>
         </div>
       </div>
 
-      <form v-if="isEditingRoom" class="edit-room-form" @submit.prevent="saveRoomInfo">
-        <label>
-          방 제목
+      <form v-if="isEditingRoom" class="edit-room-form game-styled-form" @submit.prevent="saveRoomInfo">
+        <div class="form-group">
+          <label>방 제목</label>
           <input v-model="editRoomTitle" type="text" placeholder="방 제목" />
-        </label>
+        </div>
 
-        <label>
-          방 소개
-          <textarea v-model="editRoomDescription" rows="4" placeholder="방 소개 내용" />
-        </label>
+        <div class="form-group">
+          <label>게임 모드 (소개)</label>
+          <div class="option-group">
+            <button 
+              type="button" 
+              class="option-btn"
+              :class="{ active: editRoomDescription === '클래식' }"
+              @click="editRoomDescription = '클래식'"
+            >
+              🎭 클래식
+            </button>
+            <button 
+              type="button" 
+              class="option-btn"
+              :class="{ active: editRoomDescription === '랭크전' }"
+              @click="editRoomDescription = '랭크전'"
+            >
+              ⚔️ 랭크전
+            </button>
+            <button 
+              type="button" 
+              class="option-btn"
+              :class="{ active: editRoomDescription === '친선전' }"
+              @click="editRoomDescription = '친선전'"
+            >
+              🤝 친선전
+            </button>
+          </div>
+        </div>
 
         <div class="edit-actions">
-          <button type="submit" :disabled="isUpdating">
+          <button type="submit" class="submit-btn" :disabled="isUpdating">
             {{ isUpdating ? '저장 중...' : '저장' }}
           </button>
           <button type="button" :disabled="isUpdating" @click="closeEditRoomForm">취소</button>
         </div>
       </form>
 
-      <div class="room-grid">
+      <div class="room-rules-grid">
         <article>
-          <strong>현재 페이즈</strong>
-          <span>{{ room.phase }}</span>
+          <strong>🌙 밤 시간</strong>
+          <span>30초</span>
         </article>
         <article>
-          <strong>참가자</strong>
-          <span>{{ players.length }} / {{ room.maxPlayers }}</span>
+          <strong>🗳 투표 시간</strong>
+          <span>15초</span>
         </article>
         <article>
-          <strong>상태</strong>
-          <span>{{ room.status === 'waiting' ? '대기 중' : room.status }}</span>
+          <strong>🎭 역할 공개</strong>
+          <span>비공개</span>
+        </article>
+        <article>
+          <strong>🔒 입장 방식</strong>
+          <span>공개방</span>
         </article>
       </div>
 
-      <div class="players">
+      <div class="players-section">
         <div class="players-heading">
-          <h2>참가 플레이어</h2>
-          <span v-if="lastSyncedAt">
-            {{ canStartGame ? '모든 플레이어 준비 완료' : '자동 갱신 중' }}
+          <h2>참여 인원 목록</h2>
+          <span v-if="lastSyncedAt" class="sync-status" :class="{ 'ready-text': canStartGame }">
+            {{ canStartGame ? '게임 시작까지 5... (진행 가능)' : '대기 중...' }}
           </span>
         </div>
-        <ul>
-          <li v-for="player in players" :key="player.userId">
-            <div>
-              <strong>{{ player.nickname }}</strong>
-              <span>User ID: {{ player.userId }}</span>
+        <ul class="player-card-list">
+          <li v-for="player in players" :key="player.userId" class="player-card" :class="{ 'is-me': player.userId === savedUser?.id }">
+            <div class="player-avatar-wrapper">
+              <img :src="`/avatars/${player.avatar || 'default-mafia'}.png`" alt="Avatar" class="player-avatar" @error="(e) => e.target.style.display='none'" />
+              <div class="player-level">Lv.{{ player.level || 1 }}</div>
             </div>
-            <div class="badges">
-              <span v-if="player.isHost">방장</span>
-              <span :class="{ ready: player.isReady }">
-                {{ player.isReady ? '준비 완료' : '대기 중' }}
+            
+            <div class="player-info">
+              <div class="player-name-wrapper">
+                <span v-if="player.isHost" class="host-icon">👑</span>
+                <strong class="player-name">{{ player.nickname }}</strong>
+              </div>
+              <span class="player-title">{{ player.title || '초보 마피아' }}</span>
+            </div>
+
+            <div class="player-badges">
+              <span class="badge ready-badge" :class="{ active: player.isReady }">
+                {{ player.isReady ? 'READY' : 'WAIT' }}
               </span>
+            </div>
+          </li>
+          
+          <!-- Empty Slots -->
+          <li v-for="i in Math.max(0, room.maxPlayers - players.length)" :key="'empty-'+i" class="player-card empty-slot">
+            <div class="empty-content">
+              <span class="empty-icon">+ EMPTY SLOT</span>
+              <span class="empty-text">플레이어 대기 중...</span>
             </div>
           </li>
         </ul>
       </div>
+
+      <div class="room-chat-section">
+        <div class="chat-header">대기실 채팅</div>
+        <div class="chat-log" ref="chatLogRef">
+          <div v-for="msg in chatMessages" :key="msg.id" class="chat-message" :class="{ 'system-message': msg.isSystem }">
+            <span class="chat-time">[{{ msg.createdAt }}]</span>
+            <template v-if="msg.isSystem">
+              <span class="chat-content system">{{ msg.content }}</span>
+            </template>
+            <template v-else>
+              <strong class="chat-author" :class="{'me': msg.userId === savedUser?.id, 'host': room.hostUserId === msg.userId}">
+                {{ msg.nickname }}:
+              </strong>
+              <span class="chat-content">{{ msg.content }}</span>
+            </template>
+          </div>
+        </div>
+        <form class="chat-form" @submit.prevent="submitChat">
+          <input
+            v-model="chatDraft"
+            type="text"
+            placeholder="메시지를 입력하세요..."
+            maxlength="200"
+            :disabled="!chatChannel"
+          />
+          <button type="submit" :disabled="!chatChannel || !chatDraft.trim() || isUpdating">
+            전송
+          </button>
+        </form>
+      </div>
     </template>
 
     <p v-else-if="isLoading">방 정보를 불러오는 중입니다.</p>
-    <p v-if="message" class="message">{{ message }}</p>
   </section>
 </template>
 
 <style scoped>
-.room {
-  display: grid;
-  gap: 1rem;
+.game-lobby-container {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(30, 20, 15, 0.9), rgba(15, 10, 8, 0.95));
+  border: 1px solid rgba(255, 120, 52, 0.2);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6), inset 0 0 40px rgba(255, 120, 52, 0.05);
+  padding: 2.5rem;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.lobby-glow {
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at 50% 0%, rgba(200, 50, 30, 0.12), transparent 40%);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .eyebrow {
   color: var(--color-accent);
   font-weight: 800;
+  position: relative;
+  z-index: 1;
+  margin: 0;
 }
 
 .room-heading {
   align-items: flex-start;
   display: flex;
-  gap: 1rem;
+  gap: 2rem;
   justify-content: space-between;
+  position: relative;
+  z-index: 1;
 }
 
-h1 {
-  color: var(--color-heading);
-  font-size: 3rem;
+.room-info-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.room-title {
+  color: #fff;
+  font-size: 2.8rem;
   font-weight: 900;
+  text-shadow: 0 0 20px rgba(255, 120, 52, 0.4);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.room-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.badge {
+  padding: 0.35rem 0.7rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.status-badge.waiting { color: #86efac; border-color: rgba(34, 197, 94, 0.4); background: rgba(34, 197, 94, 0.1); }
+.status-badge.playing { color: #fca5a5; border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.1); }
+.mode-badge { color: #ffbe55; border-color: rgba(255, 190, 85, 0.4); background: rgba(255, 190, 85, 0.1); }
+.capacity-badge { color: #93c5fd; border-color: rgba(59, 130, 246, 0.4); }
+.capacity-badge.full { color: #fca5a5; border-color: rgba(239, 68, 68, 0.4); }
+
+.host-info {
+  color: rgba(255, 245, 224, 0.6);
+  font-size: 0.9rem;
+  margin: 0;
+}
+.host-name {
+  color: #ffbe55;
+}
+
+.atmosphere-quote {
+  font-style: italic;
+  color: rgba(255, 120, 52, 0.7);
+  font-size: 0.95rem;
+  margin-top: 0.5rem;
+  border-left: 2px solid rgba(255, 120, 52, 0.4);
+  padding-left: 0.75rem;
+}
+
+.room-control-panel {
+  background: rgba(20, 15, 10, 0.6);
+  border: 1px solid rgba(255, 120, 52, 0.15);
+  border-radius: 8px;
+  padding: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 220px;
+  box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+  position: relative;
+  z-index: 1;
+}
+
+.control-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 120, 52, 0.2);
+  padding-bottom: 0.5rem;
+}
+
+.control-title {
+  color: #ffbe55;
+  font-weight: 900;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+}
+
+.control-status {
+  color: #86efac;
+  font-weight: 900;
+  font-size: 0.75rem;
+  animation: pulse 1.5s infinite;
 }
 
 .room-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 0.6rem;
 }
 
+.action-btn {
+  font-family: inherit;
+  font-weight: 900;
+  font-size: 1rem;
+  padding: 0.85rem 1.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: none;
+}
+
+.primary-btn {
+  background: linear-gradient(180deg, #ff8a00, #e52e71);
+  color: #fff;
+  box-shadow: 0 4px 15px rgba(229, 46, 113, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+}
+
+.primary-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(229, 46, 113, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+  filter: brightness(1.1);
+}
+
+.secondary-btn {
+  background: rgba(255, 255, 255, 0.05);
+  color: #ffbe55;
+  border: 1px solid rgba(255, 190, 85, 0.3);
+}
+
+.secondary-btn:hover:not(:disabled) {
+  background: rgba(255, 190, 85, 0.1);
+  border-color: #ffbe55;
+  transform: translateY(-1px);
+}
+
+.danger-btn {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.85rem;
+  padding: 0.5rem;
+}
+
+.danger-btn:hover:not(:disabled) {
+  color: #fca5a5;
+  text-decoration: underline;
+}
+
+.action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(0.8);
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(229, 46, 113, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(229, 46, 113, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(229, 46, 113, 0); }
+}
+
+.pulse-anim:not(:disabled) {
+  animation: pulse 2s infinite;
+}
+
+.room-rules-grid {
+  display: flex;
+  gap: 1.5rem;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.room-rules-grid article {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.room-rules-grid strong {
+  color: rgba(255, 245, 224, 0.5);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.room-rules-grid span {
+  color: #fff;
+  font-weight: 800;
+  font-size: 0.95rem;
+}
+
+.players-section {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 1.5rem;
+  position: relative;
+  z-index: 1;
+  box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+}
+
+.players-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.players-heading h2 {
+  color: #fff;
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.sync-status {
+  color: rgba(255, 245, 224, 0.4);
+  font-size: 0.85rem;
+}
+
+.sync-status.ready-text {
+  color: #ff8a00;
+  font-weight: 900;
+  animation: pulse 1s infinite;
+}
+
+.player-card-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.player-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: linear-gradient(135deg, rgba(40, 30, 25, 0.8), rgba(20, 15, 10, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.85rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  transition: all 0.2s ease;
+}
+
+.player-card:hover:not(.empty-slot) {
+  transform: translateY(-2px);
+  border-color: rgba(255, 120, 52, 0.3);
+  box-shadow: 0 8px 16px rgba(0,0,0,0.4), 0 0 12px rgba(255, 120, 52, 0.1);
+}
+
+.player-card.is-me {
+  border-color: #ffbe55;
+  background: linear-gradient(135deg, rgba(60, 40, 20, 0.9), rgba(20, 15, 10, 0.95));
+}
+
+.player-avatar-wrapper {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid #555;
+  overflow: hidden;
+}
+
+.player-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.player-level {
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #ff8a00;
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 900;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.player-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.player-name-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.host-icon {
+  font-size: 0.9rem;
+}
+
+.player-name {
+  color: #fff;
+  font-size: 1.1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-title {
+  color: rgba(255, 245, 224, 0.5);
+  font-size: 0.75rem;
+}
+
+.player-badges {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ready-badge {
+  background: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  font-weight: 900;
+  font-size: 0.7rem;
+}
+
+.ready-badge.active {
+  background: rgba(34, 197, 94, 0.15);
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.4);
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
+}
+
+.empty-slot {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  justify-content: center;
+  opacity: 0.6;
+}
+
+.empty-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.empty-icon {
+  color: rgba(255, 255, 255, 0.3);
+  font-weight: 900;
+  letter-spacing: 0.05em;
+}
+
+.empty-text {
+  color: rgba(255, 255, 255, 0.2);
+  font-size: 0.8rem;
+}
+
+.room-chat-section {
+  background: rgba(10, 5, 0, 0.8);
+  border: 1px solid rgba(255, 120, 52, 0.2);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  height: 300px;
+  position: relative;
+  z-index: 1;
+}
+
+.chat-header {
+  padding: 0.75rem 1rem;
+  background: rgba(255, 120, 52, 0.1);
+  border-bottom: 1px solid rgba(255, 120, 52, 0.2);
+  color: #ffbe55;
+  font-weight: 900;
+  font-size: 0.9rem;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.chat-message {
+  font-size: 0.95rem;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.chat-time {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 0.75rem;
+  margin-right: 0.4rem;
+}
+
+.chat-author {
+  color: #93c5fd;
+  margin-right: 0.4rem;
+}
+.chat-author.host {
+  color: #ffd28a;
+}
+.chat-author.me {
+  color: #86efac;
+}
+
+.chat-content {
+  color: rgba(255, 245, 224, 0.9);
+}
+
+.system-message .chat-content.system {
+  color: #fca5a5;
+  font-weight: bold;
+}
+
+.chat-form {
+  display: flex;
+  padding: 0.75rem;
+  gap: 0.5rem;
+  background: rgba(0, 0, 0, 0.4);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+
+.chat-form input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  font-family: inherit;
+}
+
+.chat-form input:focus {
+  outline: none;
+  border-color: rgba(255, 120, 52, 0.4);
+}
+
+.chat-form button {
+  background: #ffbe55;
+  color: #000;
+  border: none;
+  padding: 0 1rem;
+  font-weight: 900;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.chat-form button:hover:not(:disabled) {
+  background: #ff8a00;
+}
+.chat-form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .edit-room-form {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--color-border);
-  border-radius: 1rem;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
   display: grid;
   gap: 0.9rem;
-  padding: 1rem;
+  padding: 1.5rem;
+  position: relative;
+  z-index: 1;
 }
 
 .edit-room-form label {
   display: grid;
   gap: 0.4rem;
   font-weight: 800;
+  color: rgba(255, 245, 224, 0.8);
 }
 
 .edit-room-form input,
 .edit-room-form textarea {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid var(--color-border);
-  border-radius: 0.8rem;
-  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: #fff;
   font: inherit;
   padding: 0.8rem 1rem;
-  resize: vertical;
 }
 
 .edit-actions {
   display: flex;
-  flex-wrap: wrap;
   gap: 0.6rem;
 }
 
-.room-description {
-  color: rgba(255, 245, 224, 0.7);
-  margin-top: 0.5rem;
-  max-width: 42rem;
-}
-
-button {
-  background: var(--color-accent);
-  border: 0;
-  border-radius: 0.8rem;
-  color: #14110f;
+.edit-actions button {
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  font-weight: bold;
+  border: none;
   cursor: pointer;
-  font-weight: 900;
-  padding: 0.75rem 1rem;
 }
-
-button + button {
-  background: transparent;
-  border: 1px solid var(--color-border);
-  color: var(--color-text);
+.edit-actions button[type="submit"] {
+  background: #ffbe55;
+  color: #000;
 }
-
-button:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
-.room-grid {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  margin-top: 1rem;
-}
-
-article,
-.players {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid var(--color-border);
-  border-radius: 1rem;
-  display: grid;
-  gap: 0.35rem;
-  padding: 1rem;
-}
-
-.players-heading {
-  align-items: center;
-  display: flex;
-  gap: 1rem;
-  justify-content: space-between;
-}
-
-.players-heading span {
-  color: rgba(255, 245, 224, 0.58);
-  font-size: 0.85rem;
-}
-
-strong,
-h2 {
-  color: var(--color-heading);
-}
-
-ul {
-  display: grid;
-  gap: 0.75rem;
-  list-style: none;
-  padding: 0;
-}
-
-li {
-  align-items: center;
-  border-top: 1px solid var(--color-border);
-  display: flex;
-  gap: 1rem;
-  justify-content: space-between;
-  padding-top: 0.75rem;
-}
-
-li div:first-child {
-  display: grid;
-  gap: 0.2rem;
-}
-
-li span {
-  color: rgba(255, 245, 224, 0.64);
-  font-size: 0.9rem;
-}
-
-.badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  justify-content: flex-end;
-}
-
-.badges span {
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 0.35rem 0.65rem;
-}
-
-.badges .ready {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-
-.message {
-  color: #ff8f70;
-  font-weight: 700;
+.edit-actions button[type="button"] {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 
 @media (max-width: 760px) {
-  .room-heading,
-  li {
-    align-items: flex-start;
+  .room-heading {
     flex-direction: column;
   }
-
-  .badges {
-    justify-content: flex-start;
+  .room-control-panel {
+    width: 100%;
+  }
+  .room-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .action-btn {
+    flex: 1;
+    text-align: center;
   }
 }
 </style>

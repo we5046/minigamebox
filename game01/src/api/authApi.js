@@ -5,7 +5,7 @@ function toAuthEmail(loginId) {
   return `${loginId.trim().toLowerCase()}@mafia.local`
 }
 
-function toCurrentUser(profile) {
+export function toCurrentUser(profile) {
   return {
     id: profile.id,
     loginId: profile.login_id,
@@ -19,7 +19,7 @@ function toCurrentUser(profile) {
   }
 }
 
-async function getProfile(userId) {
+export async function getProfile(userId) {
   const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single()
 
   if (error) {

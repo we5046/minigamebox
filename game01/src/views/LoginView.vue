@@ -2,18 +2,17 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { loginUser } from '@/api/authApi'
+import { useToastStore } from '@/stores/toast'
 
 const router = useRouter()
+const toastStore = useToastStore()
 const loginId = ref('')
 const password = ref('')
-const message = ref('')
 const isLoading = ref(false)
 
 async function login() {
-  message.value = ''
-
   if (!loginId.value.trim() || !password.value) {
-    message.value = '로그인 ID와 비밀번호를 입력하세요.'
+    toastStore.error('로그인 ID와 비밀번호를 입력하세요.')
     return
   }
 
@@ -24,9 +23,10 @@ async function login() {
       loginId: loginId.value.trim(),
       password: password.value,
     })
+    toastStore.success('로그인 되었습니다.')
     router.push('/home')
   } catch (error) {
-    message.value = error.message
+    toastStore.error(error.message)
   } finally {
     isLoading.value = false
   }
@@ -48,8 +48,6 @@ async function login() {
         비밀번호
         <input v-model="password" type="password" placeholder="비밀번호를 입력하세요" />
       </label>
-
-      <p v-if="message" class="message">{{ message }}</p>
 
       <button type="submit" :disabled="isLoading">
         {{ isLoading ? '확인 중...' : '로그인' }}

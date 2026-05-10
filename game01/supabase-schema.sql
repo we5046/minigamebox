@@ -277,3 +277,62 @@ end;
 $$;
 
 grant execute on function public.leave_room(uuid) to authenticated;
+
+ c r e a t e   o r   r e p l a c e   f u n c t i o n   p u b l i c . c r e a t e _ r o o m ( 
+     p _ t i t l e   t e x t , 
+     p _ d e s c r i p t i o n   t e x t , 
+     p _ m a x _ p l a y e r s   i n t e g e r 
+ ) 
+ r e t u r n s   p u b l i c . r o o m s 
+ l a n g u a g e   p l p g s q l 
+ s e c u r i t y   d e f i n e r 
+ s e t   s e a r c h _ p a t h   =   p u b l i c 
+ a s   \ $ \ $ 
+ d e c l a r e 
+     v _ u s e r _ i d   u u i d   : =   a u t h . u i d ( ) ; 
+     v _ r o o m   p u b l i c . r o o m s ; 
+     v _ c o d e   t e x t ; 
+ b e g i n 
+     i f   v _ u s e r _ i d   i s   n u l l   t h e n 
+         r a i s e   e x c e p t i o n   ' N o t   a u t h e n t i c a t e d ' ; 
+     e n d   i f ; 
+ 
+     v _ c o d e   : =   ' R O O M - '   | |   s u b s t r i n g ( c a s t ( e x t r a c t ( e p o c h   f r o m   n o w ( ) )   *   1 0 0 0   a s   t e x t )   f r o m   8 ) ; 
+ 
+     i n s e r t   i n t o   p u b l i c . r o o m s   ( 
+         t i t l e , 
+         d e s c r i p t i o n , 
+         c o d e , 
+         h o s t _ u s e r _ i d , 
+         m a x _ p l a y e r s , 
+         s t a t u s , 
+         p h a s e 
+     )   v a l u e s   ( 
+         p _ t i t l e , 
+         p _ d e s c r i p t i o n , 
+         v _ c o d e , 
+         v _ u s e r _ i d , 
+         p _ m a x _ p l a y e r s , 
+         ' w a i t i n g ' , 
+         ' ÜÂ‘Ç  È' 
+     )   r e t u r n i n g   *   i n t o   v _ r o o m ; 
+ 
+     i n s e r t   i n t o   p u b l i c . r o o m _ p l a y e r s   ( 
+         r o o m _ i d , 
+         u s e r _ i d , 
+         i s _ h o s t , 
+         i s _ r e a d y 
+     )   v a l u e s   ( 
+         v _ r o o m . i d , 
+         v _ u s e r _ i d , 
+         t r u e , 
+         f a l s e 
+     ) ; 
+ 
+     r e t u r n   v _ r o o m ; 
+ e n d ; 
+ \ $ \ $ ; 
+ 
+ g r a n t   e x e c u t e   o n   f u n c t i o n   p u b l i c . c r e a t e _ r o o m ( t e x t ,   t e x t ,   i n t e g e r )   t o   a u t h e n t i c a t e d ; 
+  
+ 
