@@ -1,6 +1,13 @@
 import { supabase } from './supabaseClient'
 
-let publicChatChannel = null
+const chatChannels = new Map()
+
+const CHAT_CHANNELS = {
+  publicLobby: 'public-lobby-chat',
+  room: (roomId) => `room-chat-${roomId}`,
+  game: (roomId) => `game-chat-${roomId}`,
+  dead: (roomId) => `dead-chat-${roomId}`,
+}
 
 function formatChatTime(value) {
   const date = new Date(value)
@@ -22,78 +29,72 @@ export function normalizeBroadcastMessage(payload) {
     nickname: payload.nickname || 'Unknown',
     content: payload.content,
     createdAt: formatChatTime(payload.createdAt),
-    isSystem: false,
+    isSystem: payload.isSystem === true,
   }
+}
+
+function subscribeToChatChannel(channelKey, callback) {
+  unsubscribeFromChatChannel(channelKey)
+
+  const channel = supabase
+    .channel(channelKey, {
+      config: {
+        broadcast: {
+          self: true,
+        },
+      },
+    })
+    .on('broadcast', { event: 'message' }, callback)
+    .subscribe((status) => {
+      callback({ type: 'subscription-status', status })
+    })
+
+  chatChannels.set(channelKey, channel)
+
+  return {
+    channel,
+    unsubscribe: () => unsubscribeFromChatChannel(channelKey),
+  }
+}
+
+function unsubscribeFromChatChannel(channelKey) {
+  const channel = chatChannels.get(channelKey)
+
+  if (!channel) {
+    return
+  }
+
+  chatChannels.delete(channelKey)
+  supabase.removeChannel(channel)
 }
 
 export function subscribeToPublicChat(callback) {
-  publicChatChannel = supabase
-    .channel('public-lobby-chat', {
-      config: {
-        broadcast: {
-          self: true,
-        },
-      },
-    })
-    .on('broadcast', { event: 'message' }, callback)
-    .subscribe((status) => {
-      callback({ type: 'subscription-status', status })
-    })
-
-  return () => {
-    const channel = publicChatChannel
-    publicChatChannel = null
-    supabase.removeChannel(channel)
-  }
-}
-
-export async function sendPublicChatMessage({ userId, nickname, content }) {
-  if (!publicChatChannel) {
-    throw new Error('공용 채팅 채널에 아직 연결되지 않았습니다.')
-  }
-
-  const result = await publicChatChannel.send({
-    type: 'broadcast',
-    event: 'message',
-    payload: {
-      id: `${userId}-${Date.now()}`,
-      userId,
-      nickname,
-      content: content.trim(),
-      createdAt: new Date().toISOString(),
-    },
-  })
-
-  if (result !== 'ok') {
-    throw new Error('공용 채팅 메시지 전송에 실패했습니다.')
-  }
+  return subscribeToChatChannel(CHAT_CHANNELS.publicLobby, callback)
 }
 
 export function subscribeToRoomChat(roomId, callback) {
-  const roomChatChannel = supabase
-    .channel(`room-chat-${roomId}`, {
-      config: {
-        broadcast: {
-          self: true,
-        },
-      },
-    })
-    .on('broadcast', { event: 'message' }, callback)
-    .subscribe((status) => {
-      callback({ type: 'subscription-status', status })
-    })
+  return subscribeToChatChannel(CHAT_CHANNELS.room(roomId), callback)
+}
 
-  return {
-    channel: roomChatChannel,
-    unsubscribe: () => {
-      supabase.removeChannel(roomChatChannel)
-    }
-  }
+export function subscribeToGameChat(roomId, callback) {
+  return subscribeToChatChannel(CHAT_CHANNELS.game(roomId), callback)
+}
+
+export function subscribeToDeadChat(roomId, callback) {
+  return subscribeToChatChannel(CHAT_CHANNELS.dead(roomId), callback)
+}
+
+export async function sendPublicChatMessage(channel, { userId, nickname, content }) {
+  return sendChatMessage(channel, { userId, nickname, content, isSystem: false })
 }
 
 export async function sendRoomChatMessage(channel, { userId, nickname, content, isSystem = false }) {
+  return sendChatMessage(channel, { userId, nickname, content, isSystem })
+}
+
+export async function sendChatMessage(channel, { userId, nickname, content, isSystem = false }) {
   if (!channel) {
-    throw new Error('채팅 채널에 연결되지 않았습니다.')
+    throw new Error('채팅 채널이 아직 연결되지 않았습니다.')
   }
 
   const result = await channel.send({

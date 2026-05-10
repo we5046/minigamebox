@@ -1,12 +1,16 @@
 import { supabase } from './supabaseClient'
 
+const roomListChannels = new Map()
+const roomDetailChannels = new Map()
+const ROOM_LIST_CHANNEL_KEY = 'rooms-list'
+
 function toPlayer(row) {
   return {
     userId: row.user_id,
     nickname: row.profiles?.nickname || 'Unknown',
     avatar: row.profiles?.avatar || 'default-mafia',
     level: row.profiles?.level || 1,
-    title: row.profiles?.representative_title || '초보 마피아',
+    title: row.profiles?.representative_title || 'Rookie Mafia',
     isHost: row.is_host,
     isReady: row.is_ready,
     joinedAt: row.joined_at,
@@ -28,6 +32,10 @@ export function normalizeRoom(room) {
     hostNickname: hostPlayer?.nickname || room.host_nickname || 'Unknown',
     status: room.status,
     maxPlayers: room.max_players,
+    nightTimeSeconds: room.night_time_seconds || 30,
+    voteTimeSeconds: room.vote_time_seconds || 15,
+    roleRevealMode: room.role_reveal_mode || 'private',
+    entryMode: room.entry_mode || 'public',
     currentPlayers: players.length,
     phase: room.phase,
     createdAt: room.created_at,
@@ -58,7 +66,7 @@ export async function getRooms() {
     .order('created_at', { ascending: false })
 
   if (error) {
-    throw new Error('방 목록을 불러오지 못했습니다.')
+    throw new Error('Failed to load room list.')
   }
 
   return data.map(normalizeRoom)
@@ -68,46 +76,45 @@ export async function getRoom(roomId) {
   const { data, error } = await supabase.from('rooms').select(roomSelect).eq('id', roomId).single()
 
   if (error) {
-    throw new Error('방 정보를 불러오지 못했습니다.')
+    throw new Error('Failed to load room information.')
   }
 
   return normalizeRoom(data)
 }
 
-export async function createRoom({ hostUser, title, description, maxPlayers }) {
+export async function createRoom({
+  title,
+  description,
+  maxPlayers,
+  nightTimeSeconds = 30,
+  voteTimeSeconds = 15,
+  roleRevealMode = 'private',
+  entryMode = 'public',
+}) {
   const { data: room, error } = await supabase.rpc('create_room', {
     p_title: title.trim(),
     p_description: description.trim(),
     p_max_players: maxPlayers,
+    p_night_time_seconds: nightTimeSeconds,
+    p_vote_time_seconds: voteTimeSeconds,
+    p_role_reveal_mode: roleRevealMode,
+    p_entry_mode: entryMode,
   })
 
   if (error) {
-    throw new Error('방 생성에 실패했습니다.')
+    throw new Error('Failed to create room.')
   }
 
   return getRoom(room.id)
 }
 
-export async function joinRoom(roomId, user) {
-  const room = await getRoom(roomId)
-
-  if (room.players.some((player) => player.userId === user.id)) {
-    return room
-  }
-
-  if (room.players.length >= room.maxPlayers) {
-    throw new Error('방 인원이 가득 찼습니다.')
-  }
-
-  const { error } = await supabase.from('room_players').insert({
-    room_id: roomId,
-    user_id: user.id,
-    is_host: room.players.length === 0,
-    is_ready: false,
+export async function joinRoom(roomId) {
+  const { error } = await supabase.rpc('join_room', {
+    p_room_id: roomId,
   })
 
   if (error) {
-    throw new Error('방 참가에 실패했습니다.')
+    throw new Error('Failed to join room.')
   }
 
   return getRoom(roomId)
@@ -131,7 +138,7 @@ export async function updateRoom(roomId, payload) {
     const failedResult = results.find((result) => result.error)
 
     if (failedResult) {
-      throw new Error('참가자 정보를 갱신하지 못했습니다.')
+      throw new Error('Failed to update player information.')
     }
   }
 
@@ -142,12 +149,16 @@ export async function updateRoom(roomId, payload) {
   if (payload.hostUserId) roomPayload.host_user_id = payload.hostUserId
   if (payload.status) roomPayload.status = payload.status
   if (payload.phase) roomPayload.phase = payload.phase
+  if (payload.nightTimeSeconds) roomPayload.night_time_seconds = payload.nightTimeSeconds
+  if (payload.voteTimeSeconds) roomPayload.vote_time_seconds = payload.voteTimeSeconds
+  if (payload.roleRevealMode) roomPayload.role_reveal_mode = payload.roleRevealMode
+  if (payload.entryMode) roomPayload.entry_mode = payload.entryMode
 
   if (Object.keys(roomPayload).length > 0) {
     const { error } = await supabase.from('rooms').update(roomPayload).eq('id', roomId)
 
     if (error) {
-      throw new Error('방 정보를 갱신하지 못했습니다.')
+      throw new Error('Failed to update room information.')
     }
   }
 
@@ -162,19 +173,19 @@ export async function setPlayerReady(roomId, userId, isReady) {
     .eq('user_id', userId)
 
   if (error) {
-    throw new Error('준비 상태를 갱신하지 못했습니다.')
+    throw new Error('Failed to update ready status.')
   }
 
   return getRoom(roomId)
 }
 
-export async function leaveRoom(roomId, userId) {
+export async function leaveRoom(roomId) {
   const { error } = await supabase.rpc('leave_room', {
     p_room_id: roomId,
   })
 
   if (error) {
-    throw new Error('방 나가기에 실패했습니다.')
+    throw new Error('Failed to leave room.')
   }
 
   return null
@@ -184,12 +195,14 @@ export async function deleteRoom(roomId) {
   const { error } = await supabase.from('rooms').delete().eq('id', roomId)
 
   if (error) {
-    throw new Error('방 삭제에 실패했습니다.')
+    throw new Error('Failed to delete room.')
   }
 }
 
 export function subscribeToRooms(callback) {
   const channelName = `rooms-changes-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  unsubscribeFromRooms(ROOM_LIST_CHANNEL_KEY)
+
   const channel = supabase
     .channel(channelName)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, callback)
@@ -198,12 +211,21 @@ export function subscribeToRooms(callback) {
       callback({ type: 'subscription-status', status })
     })
 
-  return () => {
-    supabase.removeChannel(channel)
-  }
+  roomListChannels.set(ROOM_LIST_CHANNEL_KEY, channel)
+
+  return () => unsubscribeFromRooms(ROOM_LIST_CHANNEL_KEY)
 }
 
 export function subscribeToRoom(roomId, callback) {
+  unsubscribeFromRoom(roomId)
+
+  const handleRoomPlayerChange = (payload) => {
+    const changedRoomId = payload.new?.room_id || payload.old?.room_id
+    if (changedRoomId === roomId) {
+      callback(payload)
+    }
+  }
+
   const channel = supabase
     .channel(`room-${roomId}`)
     .on(
@@ -213,14 +235,36 @@ export function subscribeToRoom(roomId, callback) {
     )
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` },
-      callback,
+      { event: '*', schema: 'public', table: 'room_players' },
+      handleRoomPlayerChange,
     )
     .subscribe((status) => {
       callback({ type: 'subscription-status', status })
     })
 
-  return () => {
-    supabase.removeChannel(channel)
+  roomDetailChannels.set(roomId, channel)
+
+  return () => unsubscribeFromRoom(roomId)
+}
+
+function unsubscribeFromRooms(channelName) {
+  const channel = roomListChannels.get(channelName)
+
+  if (!channel) {
+    return
   }
+
+  roomListChannels.delete(channelName)
+  supabase.removeChannel(channel)
+}
+
+function unsubscribeFromRoom(roomId) {
+  const channel = roomDetailChannels.get(roomId)
+
+  if (!channel) {
+    return
+  }
+
+  roomDetailChannels.delete(roomId)
+  supabase.removeChannel(channel)
 }

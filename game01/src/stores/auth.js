@@ -6,6 +6,8 @@ import { getProfile, toCurrentUser } from '@/api/authApi'
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
   const isInitialized = ref(false)
+  let initializePromise = null
+  let authSubscription = null
 
   async function fetchUser(sessionUser) {
     if (!sessionUser) {
@@ -22,16 +24,34 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function initialize() {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      fetchUser(session?.user).finally(() => {
-        isInitialized.value = true
-      })
+    if (initializePromise) {
+      return initializePromise
+    }
+
+    initializePromise = supabase.auth.getSession().then(async ({ data: { session } }) => {
+      await fetchUser(session?.user)
+      if (!authSubscription) {
+        const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+          fetchUser(nextSession?.user)
+        })
+        authSubscription = data.subscription
+      }
+    }).finally(() => {
+      isInitialized.value = true
     })
 
-    supabase.auth.onAuthStateChange((_event, session) => {
-      fetchUser(session?.user)
-    })
+    return initializePromise
   }
 
-  return { user, isInitialized, initialize }
+  function reset() {
+    user.value = null
+    isInitialized.value = false
+    initializePromise = null
+    if (authSubscription) {
+      authSubscription.unsubscribe()
+      authSubscription = null
+    }
+  }
+
+  return { user, isInitialized, initialize, reset }
 })

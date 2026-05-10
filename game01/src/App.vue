@@ -2,15 +2,8 @@
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { logoutUser } from '@/api/authApi'
 import ToastNotification from '@/components/ToastNotification.vue'
-import { useAuthStore } from '@/stores/auth'
-import { onMounted } from 'vue'
 
 const router = useRouter()
-const authStore = useAuthStore()
-
-onMounted(() => {
-  authStore.initialize()
-})
 
 async function logout() {
   await logoutUser()

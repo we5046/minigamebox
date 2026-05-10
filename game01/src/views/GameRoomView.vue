@@ -1,8 +1,8 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
-import { useToastStore } from '@/stores/toast'
+import { computed, onBeforeUnmount, onMounted, ref, nextTick } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import { useToastStore } from '@/stores/toast';
 import {
   getRoom,
   joinRoom as joinRoomRequest,
@@ -10,32 +10,49 @@ import {
   setPlayerReady,
   subscribeToRoom,
   updateRoom,
-} from '@/api/roomApi'
-import { subscribeToRoomChat, sendRoomChatMessage, normalizeBroadcastMessage } from '@/api/chatApi'
+} from '@/api/roomApi';
+import { subscribeToRoomChat, sendRoomChatMessage, normalizeBroadcastMessage } from '@/api/chatApi';
+import { getFriendships } from '@/api/friendApi';
+import { getRoomInvites, sendRoomInvite } from '@/api/roomInviteApi';
 
 const props = defineProps({
   roomId: {
     type: String,
     required: true,
   },
-})
+});
 
-const router = useRouter()
-const authStore = useAuthStore()
-const toastStore = useToastStore()
-const savedUser = computed(() => authStore.user)
+const route = useRoute();
+const router = useRouter();
+const authStore = useAuthStore();
+const toastStore = useToastStore();
+const savedUser = computed(() => authStore.user);
 
-const room = ref(null)
-const isLoading = ref(false)
-const isUpdating = ref(false)
-const isEditingRoom = ref(false)
-const editRoomTitle = ref('')
-const editRoomDescription = ref('')
-const lastSyncedAt = ref(null)
+const room = ref(null);
+const isLoading = ref(false);
+const isUpdating = ref(false);
+const isEditingRoom = ref(false);
+const editRoomTitle = ref('');
+const editRoomDescription = ref('');
+const editNightTimeSeconds = ref(30);
+const editVoteTimeSeconds = ref(15);
+const editRoleRevealMode = ref('private');
+const editEntryMode = ref('public');
+const lastSyncedAt = ref(null);
+const shouldSyncAfterUpdate = ref(false);
+const friendships = ref([]);
+const sentRoomInvites = ref([]);
+const invitingUserIds = ref(new Set());
+const isLoadingInviteFriends = ref(false);
 
-let unsubscribeRoom = null
-let roomChatSubscription = null
-const chatChannel = ref(null)
+let unsubscribeRoom = null;
+let roomChatSubscription = null;
+let syncTimer = null;
+let sentInviteRefreshTimer = null;
+let inviteCountdownTimer = null;
+const chatChannel = ref(null);
+const hasAnnouncedEntry = ref(false);
+const inviteCountdownTick = ref(Date.now());
 
 const chatMessages = ref([
   {
@@ -44,230 +61,390 @@ const chatMessages = ref([
     content: '게임 방에 입장하셨습니다. 매너 채팅 부탁드립니다.',
     createdAt: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
     isSystem: true,
-  }
-])
-const chatDraft = ref('')
-const chatLogRef = ref(null)
+  },
+]);
+const chatDraft = ref('');
+const chatLogRef = ref(null);
 
-const players = computed(() => room.value?.players || [])
+const players = computed(() => room.value?.players || []);
 const currentPlayer = computed(() => {
-  return players.value.find((player) => player.userId === savedUser.value?.id)
-})
-const isHost = computed(() => currentPlayer.value?.isHost === true)
+  return players.value.find((player) => player.userId === savedUser.value?.id);
+});
+const isHost = computed(() => currentPlayer.value?.isHost === true);
 const canStartGame = computed(() => {
-  const guests = players.value.filter((player) => !player.isHost)
+  const guests = players.value.filter((player) => !player.isHost);
   // 방장을 제외한 나머지 인원이 1명 이상이고, 모두 준비 완료 상태일 때 시작 가능
-  return guests.length > 0 && guests.every((player) => player.isReady)
-})
+  return guests.length > 0 && guests.every((player) => player.isReady);
+});
+const sentInviteMap = computed(() => {
+  return new Map(sentRoomInvites.value.map((invite) => [invite.toUserId, invite]));
+});
+const inviteFriends = computed(() => {
+  const playerIds = new Set(players.value.map((player) => player.userId));
+
+  return friendships.value
+    .filter((friendship) => friendship.status === 'accepted')
+    .filter((friendship) => !playerIds.has(friendship.friend.id))
+    .map((friendship) => ({
+      ...friendship.friend,
+      inviteRemainingSeconds: getInviteRemainingSeconds(sentInviteMap.value.get(friendship.friend.id)),
+      isInvited: getInviteRemainingSeconds(sentInviteMap.value.get(friendship.friend.id)) > 0,
+      isInviting: invitingUserIds.value.has(friendship.friend.id),
+    }));
+});
+
+function getInviteRemainingSeconds(invite) {
+  if (!invite?.expiresAt) {
+    return 0;
+  }
+
+  return Math.max(0, Math.ceil((new Date(invite.expiresAt).getTime() - inviteCountdownTick.value) / 1000));
+}
 
 onMounted(() => {
-  fetchRoom()
+  const sub = subscribeToRoomChat(props.roomId, handleChatEvent);
+  roomChatSubscription = sub.unsubscribe;
+  chatChannel.value = sub.channel;
+
+  fetchRoom();
+  loadInviteFriends();
+  loadSentRoomInvites();
+  sentInviteRefreshTimer = setInterval(loadSentRoomInvites, 10000);
+  inviteCountdownTimer = setInterval(() => {
+    inviteCountdownTick.value = Date.now();
+  }, 1000);
   unsubscribeRoom = subscribeToRoom(props.roomId, () => {
-    syncRoom()
-  })
-  
-  const sub = subscribeToRoomChat(props.roomId, handleChatEvent)
-  roomChatSubscription = sub.unsubscribe
-  chatChannel.value = sub.channel
-})
+    scheduleSyncRoom();
+  });
+});
 
 onBeforeUnmount(() => {
-  unsubscribeRoom?.()
-  roomChatSubscription?.()
-})
+  unsubscribeRoom?.();
+  roomChatSubscription?.();
+  if (syncTimer) {
+    clearTimeout(syncTimer);
+  }
+  if (sentInviteRefreshTimer) {
+    clearInterval(sentInviteRefreshTimer);
+  }
+  if (inviteCountdownTimer) {
+    clearInterval(inviteCountdownTimer);
+  }
+});
 
 function handleChatEvent(payload) {
-  if (payload?.type === 'subscription-status') return
-  if (!payload?.payload) return
+  if (payload?.type === 'subscription-status') return;
+  if (!payload?.payload) return;
 
-  chatMessages.value.push(normalizeBroadcastMessage(payload.payload))
-  scrollToBottom()
+  chatMessages.value.push(normalizeBroadcastMessage(payload.payload));
+  scrollToBottom();
 }
 
 async function submitChat() {
-  const content = chatDraft.value.trim()
-  if (!content || !savedUser.value || !chatChannel.value) return
+  const content = chatDraft.value.trim();
+  if (!content || !savedUser.value || !chatChannel.value) return;
 
   try {
     await sendRoomChatMessage(chatChannel.value, {
       userId: savedUser.value.id,
       nickname: currentPlayer.value?.nickname || savedUser.value.nickname,
       content,
-      isSystem: false
-    })
-    chatDraft.value = ''
+      isSystem: false,
+    });
+    chatDraft.value = '';
   } catch (error) {
-    toastStore.error(error.message)
+    toastStore.error(error.message);
   }
 }
 
 function scrollToBottom() {
   nextTick(() => {
     if (chatLogRef.value) {
-      chatLogRef.value.scrollTop = chatLogRef.value.scrollHeight
+      chatLogRef.value.scrollTop = chatLogRef.value.scrollHeight;
     }
-  })
+  });
 }
 
 async function fetchRoom() {
-  isLoading.value = true
+  isLoading.value = true;
 
   try {
-    room.value = await getRoom(props.roomId)
-    lastSyncedAt.value = new Date()
+    room.value = await getRoom(props.roomId);
+    lastSyncedAt.value = new Date();
 
     if (savedUser.value && !currentPlayer.value) {
-      await joinRoom()
+      await joinRoom();
+    } else if (savedUser.value && route.query.invited === '1') {
+      announceRoomEntry();
+      clearInviteEntryQuery();
     }
   } catch (error) {
-    toastStore.error(error.message)
+    toastStore.error(error.message);
   } finally {
-    isLoading.value = false
+    isLoading.value = false;
+  }
+}
+
+async function loadInviteFriends() {
+  if (!savedUser.value) {
+    friendships.value = [];
+    return;
+  }
+
+  isLoadingInviteFriends.value = true;
+
+  try {
+    friendships.value = await getFriendships(savedUser.value.id);
+  } catch (error) {
+    toastStore.error(error.message);
+  } finally {
+    isLoadingInviteFriends.value = false;
+  }
+}
+
+async function loadSentRoomInvites() {
+  if (!savedUser.value) {
+    sentRoomInvites.value = [];
+    return;
+  }
+
+  try {
+    sentRoomInvites.value = await getRoomInvites(props.roomId, savedUser.value.id);
+  } catch (error) {
+    toastStore.error(error.message);
+  }
+}
+
+async function inviteFriendToRoom(friend) {
+  if (!room.value || room.value.status !== 'waiting' || invitingUserIds.value.has(friend.id)) {
+    return;
+  }
+
+  invitingUserIds.value = new Set([...invitingUserIds.value, friend.id]);
+
+  try {
+    await sendRoomInvite(props.roomId, friend.id);
+    await loadSentRoomInvites();
+    toastStore.success(`${friend.nickname}님에게 방 초대를 보냈습니다.`);
+  } catch (error) {
+    toastStore.error(error.message);
+  } finally {
+    const nextInvitingIds = new Set(invitingUserIds.value);
+    nextInvitingIds.delete(friend.id);
+    invitingUserIds.value = nextInvitingIds;
   }
 }
 
 async function syncRoom() {
   if (isUpdating.value) {
-    return
+    shouldSyncAfterUpdate.value = true;
+    return;
   }
 
   try {
-    room.value = await getRoom(props.roomId)
-    lastSyncedAt.value = new Date()
+    room.value = await getRoom(props.roomId);
+    lastSyncedAt.value = new Date();
   } catch (error) {
-    if (error.message.includes('Not Found')) {
-      router.push('/home')
-      return
+    if (error.message.includes('Not Found') || error.message.includes('Failed to load room')) {
+      router.push('/home');
+      return;
     }
-    toastStore.error(error.message)
+    toastStore.error(error.message);
   }
 }
 
 async function joinRoom() {
   if (!room.value || !savedUser.value) {
-    router.push('/login')
-    return
+    router.push('/login');
+    return;
   }
 
-  room.value = await joinRoomRequest(props.roomId, savedUser.value)
-  lastSyncedAt.value = new Date()
-  
+  room.value = await joinRoomRequest(props.roomId, savedUser.value);
+  lastSyncedAt.value = new Date();
+  announceRoomEntry();
+  return;
+
   // Send enter message
   if (chatChannel.value) {
     sendRoomChatMessage(chatChannel.value, {
       userId: 'system',
       nickname: 'System',
       content: `${savedUser.value.nickname}님이 입장했습니다.`,
-      isSystem: true
-    }).catch(() => {})
+      isSystem: true,
+    }).catch(() => {});
   }
+}
+
+function announceRoomEntry() {
+  if (!savedUser.value || hasAnnouncedEntry.value) {
+    return;
+  }
+
+  if (chatChannel.value) {
+    hasAnnouncedEntry.value = true;
+    sendRoomChatMessage(chatChannel.value, {
+      userId: 'system',
+      nickname: 'System',
+      content: `${savedUser.value.nickname}\uB2D8\uC774 \uC785\uC7A5\uD588\uC2B5\uB2C8\uB2E4.`,
+      isSystem: true,
+    }).catch(() => {});
+  }
+}
+
+function clearInviteEntryQuery() {
+  const nextQuery = { ...route.query };
+  delete nextQuery.invited;
+  router.replace({ path: route.path, query: nextQuery });
+}
+
+function getRoleRevealLabel(mode) {
+  return mode === 'public' ? '공개' : '비공개';
+}
+
+function getEntryModeLabel(mode) {
+  return mode === 'private' ? '초대방' : '공개방';
 }
 
 async function toggleReady() {
   if (!currentPlayer.value || isUpdating.value) {
-    return
+    return;
   }
 
-  isUpdating.value = true
+  isUpdating.value = true;
 
   try {
-    room.value = await setPlayerReady(props.roomId, savedUser.value.id, !currentPlayer.value.isReady)
-    lastSyncedAt.value = new Date()
+    room.value = await setPlayerReady(
+      props.roomId,
+      savedUser.value.id,
+      !currentPlayer.value.isReady,
+    );
+    lastSyncedAt.value = new Date();
   } catch (error) {
-    toastStore.error(error.message)
+    toastStore.error(error.message);
   } finally {
-    isUpdating.value = false
+    isUpdating.value = false;
+    if (shouldSyncAfterUpdate.value) {
+      shouldSyncAfterUpdate.value = false;
+      syncRoom();
+    }
   }
+}
+
+function scheduleSyncRoom() {
+  if (syncTimer) {
+    clearTimeout(syncTimer);
+  }
+
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    syncRoom();
+  }, 120);
 }
 
 function openEditRoomForm() {
-  editRoomTitle.value = room.value?.title || ''
-  editRoomDescription.value = room.value?.description || ''
-  isEditingRoom.value = true
+  editRoomTitle.value = room.value?.title || '';
+  editRoomDescription.value = room.value?.description || '';
+  editNightTimeSeconds.value = room.value?.nightTimeSeconds || 30;
+  editVoteTimeSeconds.value = room.value?.voteTimeSeconds || 15;
+  editRoleRevealMode.value = room.value?.roleRevealMode || 'private';
+  editEntryMode.value = room.value?.entryMode || 'public';
+  isEditingRoom.value = true;
 }
 
 function closeEditRoomForm() {
-  isEditingRoom.value = false
-  editRoomTitle.value = ''
-  editRoomDescription.value = ''
+  isEditingRoom.value = false;
+  editRoomTitle.value = '';
+  editRoomDescription.value = '';
+  editNightTimeSeconds.value = 30;
+  editVoteTimeSeconds.value = 15;
+  editRoleRevealMode.value = 'private';
+  editEntryMode.value = 'public';
 }
 
 async function saveRoomInfo() {
   if (!isHost.value || isUpdating.value) {
-    return
+    return;
   }
 
   if (!editRoomTitle.value.trim()) {
-    toastStore.error('방 제목을 입력하세요.')
-    return
+    toastStore.error('방 제목을 입력하세요.');
+    return;
   }
 
   if (!editRoomDescription.value.trim()) {
-    toastStore.error('방 소개 내용을 입력하세요.')
-    return
+    toastStore.error('방 소개 내용을 입력하세요.');
+    return;
   }
 
-  isUpdating.value = true
+  isUpdating.value = true;
 
   try {
     room.value = await updateRoom(props.roomId, {
       title: editRoomTitle.value,
       description: editRoomDescription.value,
-    })
-    lastSyncedAt.value = new Date()
-    closeEditRoomForm()
+      nightTimeSeconds: Number(editNightTimeSeconds.value),
+      voteTimeSeconds: Number(editVoteTimeSeconds.value),
+      roleRevealMode: editRoleRevealMode.value,
+      entryMode: editEntryMode.value,
+    });
+    lastSyncedAt.value = new Date();
+    closeEditRoomForm();
   } catch (error) {
-    toastStore.error(error.message)
+    toastStore.error(error.message);
   } finally {
-    isUpdating.value = false
+    isUpdating.value = false;
+    if (shouldSyncAfterUpdate.value) {
+      shouldSyncAfterUpdate.value = false;
+      syncRoom();
+    }
   }
 }
 
 async function startGame() {
   if (!isHost.value || !canStartGame.value || isUpdating.value) {
-    return
+    return;
   }
 
-  isUpdating.value = true
+  isUpdating.value = true;
 
   try {
     room.value = await updateRoom(props.roomId, {
       status: 'playing',
       phase: '게임 진행 중',
-    })
-    lastSyncedAt.value = new Date()
+    });
+    lastSyncedAt.value = new Date();
   } catch (error) {
-    toastStore.error(error.message)
+    toastStore.error(error.message);
   } finally {
-    isUpdating.value = false
+    isUpdating.value = false;
   }
 }
 
 async function leaveRoom() {
   if (!currentPlayer.value || isUpdating.value) {
-    router.push('/home')
-    return
+    router.push('/home');
+    return;
   }
 
-  isUpdating.value = true
-  
+  isUpdating.value = true;
+
   // Send leave message
   if (chatChannel.value) {
     await sendRoomChatMessage(chatChannel.value, {
       userId: 'system',
       nickname: 'System',
       content: `${savedUser.value.nickname}님이 퇴장했습니다.`,
-      isSystem: true
-    }).catch(() => {})
+      isSystem: true,
+    }).catch(() => {});
   }
 
   try {
-    await leaveRoomRequest(props.roomId, savedUser.value.id)
-    router.push('/home')
+    await leaveRoomRequest(props.roomId);
+    router.push('/home');
   } catch (error) {
-    toastStore.error(error.message)
+    toastStore.error(error.message);
   } finally {
-    isUpdating.value = false
+    isUpdating.value = false;
   }
 }
 </script>
@@ -275,27 +452,38 @@ async function leaveRoom() {
 <template>
   <section class="page-card room game-lobby-container">
     <div class="lobby-glow"></div>
-    
+
     <p class="eyebrow">Game Room #{{ String(roomId).slice(0, 8) }}</p>
 
     <template v-if="room">
       <div class="room-heading">
         <div class="room-info-cluster">
           <h1 class="room-title">{{ room.title }}</h1>
-          
+
           <div class="room-badges">
-            <span class="badge status-badge" :class="room.status === 'waiting' ? 'waiting' : 'playing'">
+            <span
+              class="badge status-badge"
+              :class="room.status === 'waiting' ? 'waiting' : 'playing'"
+            >
               {{ room.status === 'waiting' ? '🟢 대기중' : '🔴 게임중' }}
             </span>
             <span class="badge mode-badge">
-              {{ room.description === '랭크전' ? '⚔️ 랭크전' : (room.description === '친선전' ? '🤝 친선전' : '🎭 클래식') }}
+              {{
+                room.description === '랭크전'
+                  ? '⚔️ 랭크전'
+                  : room.description === '친선전'
+                    ? '🤝 친선전'
+                    : '🎭 클래식'
+              }}
             </span>
             <span class="badge capacity-badge" :class="{ full: players.length >= room.maxPlayers }">
               👥 {{ players.length }} / {{ room.maxPlayers }}
             </span>
           </div>
 
-          <p class="host-info">방장: <strong class="host-name">{{ room.hostNickname }}</strong></p>
+          <p class="host-info">
+            방장: <strong class="host-name">{{ room.hostNickname }}</strong>
+          </p>
           <p class="atmosphere-quote">"거짓말을 하는 자는 누구인가? 밤이 깊어갑니다..."</p>
         </div>
 
@@ -314,30 +502,61 @@ async function leaveRoom() {
             >
               게임 시작
             </button>
-            
-            <button 
-              v-if="!isHost" 
-              type="button" 
+
+            <button
+              v-if="!isHost"
+              type="button"
               class="action-btn"
               :class="currentPlayer.isReady ? 'secondary-btn' : 'primary-btn pulse-anim'"
-              :disabled="isUpdating" 
+              :disabled="isUpdating"
               @click="toggleReady"
             >
               {{ currentPlayer.isReady ? '준비 취소' : '준비 하기' }}
             </button>
 
-            <button v-if="isHost" type="button" class="action-btn secondary-btn" :disabled="isUpdating" @click="openEditRoomForm">
+            <button
+              v-if="isHost"
+              type="button"
+              class="action-btn secondary-btn"
+              :disabled="isUpdating"
+              @click="openEditRoomForm"
+            >
               방 설정
             </button>
-            
-            <button type="button" class="action-btn danger-btn" :disabled="isUpdating" @click="leaveRoom">
+
+            <button
+              type="button"
+              class="action-btn danger-btn"
+              :disabled="isUpdating"
+              @click="leaveRoom"
+            >
               나가기
             </button>
           </div>
         </div>
       </div>
 
-      <form v-if="isEditingRoom" class="edit-room-form game-styled-form" @submit.prevent="saveRoomInfo">
+      <form
+        v-if="isEditingRoom"
+        class="edit-room-form game-styled-form"
+        @submit.prevent="saveRoomInfo"
+      >
+        <div class="edit-room-header">
+          <div>
+            <p class="eyebrow">Room Setup</p>
+            <h2>방 설정</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-close-btn"
+            :disabled="isUpdating"
+            aria-label="방 설정 닫기"
+            @click="closeEditRoomForm"
+          >
+            X
+          </button>
+        </div>
+
         <div class="form-group">
           <label>방 제목</label>
           <input v-model="editRoomTitle" type="text" placeholder="방 제목" />
@@ -346,30 +565,96 @@ async function leaveRoom() {
         <div class="form-group">
           <label>게임 모드 (소개)</label>
           <div class="option-group">
-            <button 
-              type="button" 
+            <button
+              type="button"
               class="option-btn"
               :class="{ active: editRoomDescription === '클래식' }"
               @click="editRoomDescription = '클래식'"
             >
               🎭 클래식
             </button>
-            <button 
-              type="button" 
+            <button
+              type="button"
               class="option-btn"
               :class="{ active: editRoomDescription === '랭크전' }"
               @click="editRoomDescription = '랭크전'"
             >
               ⚔️ 랭크전
             </button>
-            <button 
-              type="button" 
+            <button
+              type="button"
               class="option-btn"
               :class="{ active: editRoomDescription === '친선전' }"
               @click="editRoomDescription = '친선전'"
             >
               🤝 친선전
             </button>
+          </div>
+        </div>
+
+        <div class="room-custom-grid">
+          <div class="form-group">
+            <label>밤 시간</label>
+            <select v-model.number="editNightTimeSeconds">
+              <option :value="20">20초</option>
+              <option :value="30">30초</option>
+              <option :value="45">45초</option>
+              <option :value="60">60초</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>투표 시간</label>
+            <select v-model.number="editVoteTimeSeconds">
+              <option :value="15">15초</option>
+              <option :value="30">30초</option>
+              <option :value="45">45초</option>
+              <option :value="60">60초</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>역할 공개</label>
+            <div class="option-group">
+              <button
+                type="button"
+                class="option-btn"
+                :class="{ active: editRoleRevealMode === 'private' }"
+                @click="editRoleRevealMode = 'private'"
+              >
+                비공개
+              </button>
+              <button
+                type="button"
+                class="option-btn"
+                :class="{ active: editRoleRevealMode === 'public' }"
+                @click="editRoleRevealMode = 'public'"
+              >
+                공개
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>입장 방식</label>
+            <div class="option-group">
+              <button
+                type="button"
+                class="option-btn"
+                :class="{ active: editEntryMode === 'public' }"
+                @click="editEntryMode = 'public'"
+              >
+                공개방
+              </button>
+              <button
+                type="button"
+                class="option-btn"
+                :class="{ active: editEntryMode === 'private' }"
+                @click="editEntryMode = 'private'"
+              >
+                초대방
+              </button>
+            </div>
           </div>
         </div>
 
@@ -382,6 +667,25 @@ async function leaveRoom() {
       </form>
 
       <div class="room-rules-grid">
+        <article>
+          <strong>밤 시간</strong>
+          <span>{{ room.nightTimeSeconds }}초</span>
+        </article>
+        <article>
+          <strong>투표 시간</strong>
+          <span>{{ room.voteTimeSeconds }}초</span>
+        </article>
+        <article>
+          <strong>역할 공개</strong>
+          <span>{{ getRoleRevealLabel(room.roleRevealMode) }}</span>
+        </article>
+        <article>
+          <strong>입장 방식</strong>
+          <span>{{ getEntryModeLabel(room.entryMode) }}</span>
+        </article>
+      </div>
+
+      <div v-if="false" class="room-rules-grid">
         <article>
           <strong>🌙 밤 시간</strong>
           <span>30초</span>
@@ -400,6 +704,38 @@ async function leaveRoom() {
         </article>
       </div>
 
+      <section class="room-invite-section">
+        <div class="players-heading">
+          <h2>친구 초대</h2>
+          <span class="sync-status">{{ inviteFriends.length }}명 초대 가능</span>
+        </div>
+
+        <div v-if="isLoadingInviteFriends" class="invite-empty">친구 목록을 불러오는 중...</div>
+        <div v-else-if="inviteFriends.length === 0" class="invite-empty">
+          초대 가능한 친구가 없습니다.
+        </div>
+        <ul v-else class="invite-friend-list">
+          <li v-for="friend in inviteFriends" :key="friend.id" class="invite-friend-card">
+            <div>
+              <strong>{{ friend.nickname }}</strong>
+              <span>{{ friend.title }}</span>
+            </div>
+            <button
+              type="button"
+              :disabled="friend.isInvited || friend.isInviting || room.status !== 'waiting'"
+              @click="inviteFriendToRoom(friend)"
+            >
+              <span class="invite-button-label" v-if="friend.isInviting">전송 중</span>
+              <span class="invite-button-label" v-else-if="friend.isInvited">
+                {{ friend.inviteRemainingSeconds }}초
+              </span>
+              <span class="invite-button-label" v-else>초대</span>
+              {{ friend.isInviting ? '전송 중' : friend.isInvited ? '초대됨' : '초대' }}
+            </button>
+          </li>
+        </ul>
+      </section>
+
       <div class="players-section">
         <div class="players-heading">
           <h2>참여 인원 목록</h2>
@@ -408,12 +744,22 @@ async function leaveRoom() {
           </span>
         </div>
         <ul class="player-card-list">
-          <li v-for="player in players" :key="player.userId" class="player-card" :class="{ 'is-me': player.userId === savedUser?.id }">
+          <li
+            v-for="player in players"
+            :key="player.userId"
+            class="player-card"
+            :class="{ 'is-me': player.userId === savedUser?.id }"
+          >
             <div class="player-avatar-wrapper">
-              <img :src="`/avatars/${player.avatar || 'default-mafia'}.png`" alt="Avatar" class="player-avatar" @error="(e) => e.target.style.display='none'" />
+              <img
+                :src="`/avatars/${player.avatar || 'default-mafia'}.png`"
+                alt="Avatar"
+                class="player-avatar"
+                @error="(e) => (e.target.style.display = 'none')"
+              />
               <div class="player-level">Lv.{{ player.level || 1 }}</div>
             </div>
-            
+
             <div class="player-info">
               <div class="player-name-wrapper">
                 <span v-if="player.isHost" class="host-icon">👑</span>
@@ -428,9 +774,13 @@ async function leaveRoom() {
               </span>
             </div>
           </li>
-          
+
           <!-- Empty Slots -->
-          <li v-for="i in Math.max(0, room.maxPlayers - players.length)" :key="'empty-'+i" class="player-card empty-slot">
+          <li
+            v-for="i in Math.max(0, room.maxPlayers - players.length)"
+            :key="'empty-' + i"
+            class="player-card empty-slot"
+          >
             <div class="empty-content">
               <span class="empty-icon">+ EMPTY SLOT</span>
               <span class="empty-text">플레이어 대기 중...</span>
@@ -442,13 +792,21 @@ async function leaveRoom() {
       <div class="room-chat-section">
         <div class="chat-header">대기실 채팅</div>
         <div class="chat-log" ref="chatLogRef">
-          <div v-for="msg in chatMessages" :key="msg.id" class="chat-message" :class="{ 'system-message': msg.isSystem }">
+          <div
+            v-for="msg in chatMessages"
+            :key="msg.id"
+            class="chat-message"
+            :class="{ 'system-message': msg.isSystem }"
+          >
             <span class="chat-time">[{{ msg.createdAt }}]</span>
             <template v-if="msg.isSystem">
               <span class="chat-content system">{{ msg.content }}</span>
             </template>
             <template v-else>
-              <strong class="chat-author" :class="{'me': msg.userId === savedUser?.id, 'host': room.hostUserId === msg.userId}">
+              <strong
+                class="chat-author"
+                :class="{ me: msg.userId === savedUser?.id, host: room.hostUserId === msg.userId }"
+              >
                 {{ msg.nickname }}:
               </strong>
               <span class="chat-content">{{ msg.content }}</span>
@@ -480,7 +838,9 @@ async function leaveRoom() {
   overflow: hidden;
   background: linear-gradient(180deg, rgba(30, 20, 15, 0.9), rgba(15, 10, 8, 0.95));
   border: 1px solid rgba(255, 120, 52, 0.2);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6), inset 0 0 40px rgba(255, 120, 52, 0.05);
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.6),
+    inset 0 0 40px rgba(255, 120, 52, 0.05);
   padding: 2.5rem;
   border-radius: 12px;
   display: flex;
@@ -549,11 +909,29 @@ async function leaveRoom() {
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.status-badge.waiting { color: #86efac; border-color: rgba(34, 197, 94, 0.4); background: rgba(34, 197, 94, 0.1); }
-.status-badge.playing { color: #fca5a5; border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.1); }
-.mode-badge { color: #ffbe55; border-color: rgba(255, 190, 85, 0.4); background: rgba(255, 190, 85, 0.1); }
-.capacity-badge { color: #93c5fd; border-color: rgba(59, 130, 246, 0.4); }
-.capacity-badge.full { color: #fca5a5; border-color: rgba(239, 68, 68, 0.4); }
+.status-badge.waiting {
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.1);
+}
+.status-badge.playing {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+}
+.mode-badge {
+  color: #ffbe55;
+  border-color: rgba(255, 190, 85, 0.4);
+  background: rgba(255, 190, 85, 0.1);
+}
+.capacity-badge {
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.4);
+}
+.capacity-badge.full {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.4);
+}
 
 .host-info {
   color: rgba(255, 245, 224, 0.6);
@@ -582,7 +960,7 @@ async function leaveRoom() {
   flex-direction: column;
   gap: 1rem;
   min-width: 220px;
-  box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
   position: relative;
   z-index: 1;
 }
@@ -631,12 +1009,16 @@ async function leaveRoom() {
 .primary-btn {
   background: linear-gradient(180deg, #ff8a00, #e52e71);
   color: #fff;
-  box-shadow: 0 4px 15px rgba(229, 46, 113, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+  box-shadow:
+    0 4px 15px rgba(229, 46, 113, 0.3),
+    inset 0 1px 1px rgba(255, 255, 255, 0.3);
 }
 
 .primary-btn:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(229, 46, 113, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+  box-shadow:
+    0 6px 20px rgba(229, 46, 113, 0.5),
+    inset 0 1px 1px rgba(255, 255, 255, 0.4);
   filter: brightness(1.1);
 }
 
@@ -671,9 +1053,15 @@ async function leaveRoom() {
 }
 
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(229, 46, 113, 0.4); }
-  70% { box-shadow: 0 0 0 10px rgba(229, 46, 113, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(229, 46, 113, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(229, 46, 113, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(229, 46, 113, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(229, 46, 113, 0);
+  }
 }
 
 .pulse-anim:not(:disabled) {
@@ -716,7 +1104,83 @@ async function leaveRoom() {
   padding: 1.5rem;
   position: relative;
   z-index: 1;
-  box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.room-invite-section {
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(255, 190, 85, 0.12);
+  border-radius: 8px;
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.36);
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  position: relative;
+  z-index: 1;
+}
+
+.invite-friend-list {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.invite-friend-card {
+  align-items: center;
+  background: linear-gradient(135deg, rgba(40, 30, 25, 0.74), rgba(14, 8, 5, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  display: flex;
+  gap: 0.85rem;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0.8rem;
+}
+
+.invite-friend-card div {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.invite-friend-card strong {
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invite-friend-card span,
+.invite-empty {
+  color: rgba(255, 245, 224, 0.52);
+  font-size: 0.82rem;
+}
+
+.invite-friend-card button {
+  background: linear-gradient(180deg, #ffbe55, #c9711d);
+  border: 1px solid rgba(255, 230, 160, 0.3);
+  border-radius: 6px;
+  color: #1a0f08;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 0;
+  font-weight: 900;
+  padding: 0.55rem 0.8rem;
+}
+
+.invite-friend-card button .invite-button-label {
+  color: inherit;
+  font-size: 0.88rem;
+}
+
+.invite-friend-card button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.55);
+  opacity: 0.55;
 }
 
 .players-heading {
@@ -762,14 +1226,16 @@ async function leaveRoom() {
   border: 1px solid rgba(255, 255, 255, 0.08);
   padding: 0.85rem;
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   transition: all 0.2s ease;
 }
 
 .player-card:hover:not(.empty-slot) {
   transform: translateY(-2px);
   border-color: rgba(255, 120, 52, 0.3);
-  box-shadow: 0 8px 16px rgba(0,0,0,0.4), 0 0 12px rgba(255, 120, 52, 0.1);
+  box-shadow:
+    0 8px 16px rgba(0, 0, 0, 0.4),
+    0 0 12px rgba(255, 120, 52, 0.1);
 }
 
 .player-card.is-me {
@@ -990,52 +1456,215 @@ async function leaveRoom() {
 }
 
 .edit-room-form {
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(60, 32, 18, 0.82), rgba(14, 8, 5, 0.96)),
+    radial-gradient(circle at 15% 0%, rgba(255, 138, 0, 0.16), transparent 34%);
+  border: 1px solid rgba(255, 138, 0, 0.28);
+  border-radius: 10px;
+  box-shadow:
+    0 18px 36px rgba(0, 0, 0, 0.45),
+    inset 0 0 24px rgba(255, 120, 52, 0.05);
   display: grid;
-  gap: 0.9rem;
-  padding: 1.5rem;
+  gap: 1rem;
+  padding: 1.25rem;
   position: relative;
   z-index: 1;
 }
 
+.edit-room-form::before {
+  background: linear-gradient(90deg, rgba(255, 190, 85, 0.75), rgba(229, 46, 113, 0));
+  content: '';
+  height: 1px;
+  left: 1.25rem;
+  position: absolute;
+  right: 1.25rem;
+  top: 0;
+}
+
+.edit-room-header {
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(255, 190, 85, 0.16);
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.9rem;
+}
+
+.edit-room-header h2 {
+  color: #fff;
+  font-size: 1.3rem;
+  margin: 0.15rem 0 0;
+  text-shadow: 0 0 14px rgba(255, 138, 0, 0.24);
+}
+
+.icon-close-btn {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 190, 85, 0.24);
+  border-radius: 6px;
+  color: #ffbe55;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 900;
+  height: 34px;
+  justify-content: center;
+  transition:
+    transform 0.16s ease,
+    border-color 0.16s ease,
+    background 0.16s ease;
+  width: 34px;
+}
+
+.icon-close-btn:hover:not(:disabled) {
+  background: rgba(255, 120, 52, 0.12);
+  border-color: rgba(255, 190, 85, 0.55);
+  transform: translateY(-1px);
+}
+
+.edit-room-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.edit-room-summary span {
+  background: rgba(0, 0, 0, 0.36);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  color: rgba(255, 245, 224, 0.75);
+  font-size: 0.8rem;
+  font-weight: 800;
+  padding: 0.35rem 0.55rem;
+}
+
 .edit-room-form label {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.5rem;
   font-weight: 800;
-  color: rgba(255, 245, 224, 0.8);
+  color: rgba(255, 245, 224, 0.78);
+  font-size: 0.9rem;
 }
 
 .edit-room-form input,
 .edit-room-form textarea {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(7, 4, 2, 0.68);
+  border: 1px solid rgba(255, 190, 85, 0.18);
   border-radius: 6px;
   color: #fff;
   font: inherit;
-  padding: 0.8rem 1rem;
+  min-height: 44px;
+  padding: 0.75rem 0.9rem;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
+}
+
+.edit-room-form input:focus,
+.edit-room-form textarea:focus {
+  background: rgba(12, 7, 4, 0.82);
+  border-color: rgba(255, 190, 85, 0.56);
+  box-shadow: 0 0 0 3px rgba(255, 138, 0, 0.12);
+  outline: none;
+}
+
+.option-group {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.room-custom-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.game-styled-form select {
+  background: rgba(12, 8, 6, 0.78);
+  border: 1px solid rgba(255, 190, 85, 0.22);
+  border-radius: 0.65rem;
+  color: #fff1d6;
+  font: inherit;
+  min-height: 2.75rem;
+  padding: 0.65rem 0.8rem;
+  width: 100%;
+}
+
+.option-btn {
+  background: rgba(0, 0, 0, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  color: rgba(255, 245, 224, 0.62);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  min-height: 44px;
+  padding: 0.7rem 0.8rem;
+  transition:
+    transform 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    background 0.16s ease;
+}
+
+.option-btn:hover {
+  background: rgba(255, 138, 0, 0.1);
+  border-color: rgba(255, 190, 85, 0.38);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.option-btn.active {
+  background: linear-gradient(180deg, rgba(255, 138, 0, 0.24), rgba(229, 46, 113, 0.16));
+  border-color: rgba(255, 190, 85, 0.7);
+  box-shadow:
+    0 0 16px rgba(255, 138, 0, 0.16),
+    inset 0 0 12px rgba(255, 255, 255, 0.04);
+  color: #ffdf9e;
 }
 
 .edit-actions {
   display: flex;
+  justify-content: flex-end;
   gap: 0.6rem;
+  padding-top: 0.25rem;
 }
 
 .edit-actions button {
-  padding: 0.75rem 1.5rem;
+  padding: 0.8rem 1.25rem;
   border-radius: 6px;
-  font-weight: bold;
-  border: none;
+  font-weight: 900;
+  border: 1px solid transparent;
   cursor: pointer;
+  min-width: 112px;
+  transition:
+    transform 0.16s ease,
+    filter 0.16s ease,
+    box-shadow 0.16s ease;
 }
-.edit-actions button[type="submit"] {
-  background: #ffbe55;
-  color: #000;
+.edit-actions button[type='submit'] {
+  background: linear-gradient(180deg, #ffbe55, #c9711d);
+  box-shadow:
+    0 8px 18px rgba(201, 113, 29, 0.2),
+    inset 0 1px rgba(255, 255, 255, 0.35);
+  color: #1a0f08;
 }
-.edit-actions button[type="button"] {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+.edit-actions button[type='button'] {
+  background: rgba(0, 0, 0, 0.32);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 245, 224, 0.68);
+}
+
+.edit-actions button:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.edit-actions button:disabled,
+.icon-close-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 @media (max-width: 760px) {

@@ -57,17 +57,9 @@ const router = createRouter({
 
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
-  
-  // Wait for auth to initialize before making routing decisions
+
   if (!authStore.isInitialized) {
-    await new Promise(resolve => {
-      const unwatch = authStore.$subscribe((mutation, state) => {
-        if (state.isInitialized) {
-          unwatch()
-          resolve()
-        }
-      })
-    })
+    await authStore.initialize()
   }
 
   const isAuthenticated = !!authStore.user

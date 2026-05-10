@@ -5,6 +5,7 @@ import { getRooms as getRoomsFromApi } from '@/api/roomApi'
 
 export const useRoomStore = defineStore('room', () => {
   const rooms = ref([])
+  let roomSubscription = null
 
   async function fetchRooms() {
     try {
@@ -15,20 +16,31 @@ export const useRoomStore = defineStore('room', () => {
     }
   }
 
-  // Subscribe to room changes
   function subscribeToRooms() {
-    const roomSubscription = supabase
+    unsubscribeFromRooms()
+
+    roomSubscription = supabase
       .channel('public:rooms')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => {
-        fetchRooms() // Simply refetch on change for simplicity
+        fetchRooms()
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players' }, () => {
         fetchRooms()
       })
       .subscribe()
-      
-    return roomSubscription
+
+    return unsubscribeFromRooms
   }
 
-  return { rooms, fetchRooms, subscribeToRooms }
+  function unsubscribeFromRooms() {
+    if (!roomSubscription) {
+      return
+    }
+
+    const channel = roomSubscription
+    roomSubscription = null
+    supabase.removeChannel(channel)
+  }
+
+  return { rooms, fetchRooms, subscribeToRooms, unsubscribeFromRooms }
 })
