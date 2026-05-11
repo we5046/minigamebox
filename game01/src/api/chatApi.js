@@ -26,10 +26,13 @@ export function normalizeBroadcastMessage(payload) {
   return {
     id: payload.id,
     userId: payload.userId,
+    targetUserId: payload.targetUserId || null,
+    targetNickname: payload.targetNickname || '',
     nickname: payload.nickname || 'Unknown',
     content: payload.content,
     createdAt: formatChatTime(payload.createdAt),
     isSystem: payload.isSystem === true,
+    isWhisper: payload.isWhisper === true,
   }
 }
 
@@ -88,11 +91,37 @@ export async function sendPublicChatMessage(channel, { userId, nickname, content
   return sendChatMessage(channel, { userId, nickname, content, isSystem: false })
 }
 
+export async function sendWhisperChatMessage(
+  channel,
+  { userId, nickname, targetUserId, targetNickname, content },
+) {
+  return sendChatMessage(channel, {
+    userId,
+    nickname,
+    targetUserId,
+    targetNickname,
+    content,
+    isSystem: false,
+    isWhisper: true,
+  })
+}
+
 export async function sendRoomChatMessage(channel, { userId, nickname, content, isSystem = false }) {
   return sendChatMessage(channel, { userId, nickname, content, isSystem })
 }
 
-export async function sendChatMessage(channel, { userId, nickname, content, isSystem = false }) {
+export async function sendChatMessage(
+  channel,
+  {
+    userId,
+    nickname,
+    content,
+    targetUserId = null,
+    targetNickname = '',
+    isSystem = false,
+    isWhisper = false,
+  },
+) {
   if (!channel) {
     throw new Error('채팅 채널이 아직 연결되지 않았습니다.')
   }
@@ -103,10 +132,13 @@ export async function sendChatMessage(channel, { userId, nickname, content, isSy
     payload: {
       id: `${userId}-${Date.now()}`,
       userId,
+      targetUserId,
+      targetNickname,
       nickname,
       content: content.trim(),
       createdAt: new Date().toISOString(),
       isSystem,
+      isWhisper,
     },
   })
 

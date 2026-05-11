@@ -30,6 +30,7 @@ create table if not exists public.rooms (
   vote_time_seconds integer not null default 15,
   role_reveal_mode text not null default 'private',
   entry_mode text not null default 'public',
+  role_config jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
@@ -40,7 +41,8 @@ alter table public.rooms
   add column if not exists night_time_seconds integer not null default 30,
   add column if not exists vote_time_seconds integer not null default 15,
   add column if not exists role_reveal_mode text not null default 'private',
-  add column if not exists entry_mode text not null default 'public';
+  add column if not exists entry_mode text not null default 'public',
+  add column if not exists role_config jsonb not null default '{}'::jsonb;
 
 create table if not exists public.room_players (
   id uuid primary key default gen_random_uuid(),
@@ -652,6 +654,8 @@ $$;
 grant execute on function public.respond_room_invite(uuid, boolean) to authenticated;
 
 drop function if exists public.create_room(text, text, integer);
+drop function if exists public.create_room(text, text, integer, integer, integer, text, text);
+drop function if exists public.create_room(text, text, integer, integer, integer, text, text, jsonb);
 
 create or replace function public.create_room(
   p_title text,
@@ -660,7 +664,8 @@ create or replace function public.create_room(
   p_night_time_seconds integer default 30,
   p_vote_time_seconds integer default 15,
   p_role_reveal_mode text default 'private',
-  p_entry_mode text default 'public'
+  p_entry_mode text default 'public',
+  p_role_config jsonb default '{}'::jsonb
 )
 returns public.rooms
 language plpgsql
@@ -717,7 +722,8 @@ begin
         night_time_seconds,
         vote_time_seconds,
         role_reveal_mode,
-        entry_mode
+        entry_mode,
+        role_config
       ) values (
         trim(p_title),
         coalesce(trim(p_description), ''),
@@ -729,7 +735,8 @@ begin
         p_night_time_seconds,
         p_vote_time_seconds,
         p_role_reveal_mode,
-        p_entry_mode
+        p_entry_mode,
+        coalesce(p_role_config, '{}'::jsonb)
       ) returning * into v_room;
 
       exit;
@@ -757,7 +764,7 @@ begin
 end;
 $$;
 
-grant execute on function public.create_room(text, text, integer, integer, integer, text, text) to authenticated;
+grant execute on function public.create_room(text, text, integer, integer, integer, text, text, jsonb) to authenticated;
 
 create or replace function public.join_room(p_room_id uuid)
 returns public.rooms

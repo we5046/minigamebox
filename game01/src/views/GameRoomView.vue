@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, nextTick } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { useToastStore } from '@/stores/toast';
@@ -34,6 +34,8 @@ const isUpdating = ref(false);
 const isEditingRoom = ref(false);
 const editRoomTitle = ref('');
 const editRoomDescription = ref('');
+const editRoomMaxPlayers = ref(8);
+const editRoomRoleConfig = ref(getDefaultRoleConfig(8));
 const editNightTimeSeconds = ref(30);
 const editVoteTimeSeconds = ref(15);
 const editRoleRevealMode = ref('private');
@@ -93,6 +95,64 @@ const inviteFriends = computed(() => {
     }));
 });
 
+const roleOptions = [
+  { key: 'citizen', label: '시민' },
+  { key: 'mafia', label: '마피아' },
+  { key: 'police', label: '경찰' },
+  { key: 'doctor', label: '의사' },
+];
+const fixedPlayerCounts = [4, 6, 8, 12];
+const isFriendlyEditMode = computed(() => editRoomDescription.value === '친선전');
+const minEditableMaxPlayers = computed(() => Math.max(4, players.value.length));
+const isRecommendedEditRolesEnabled = ref(false);
+const editRoleConfigTotal = computed(() => {
+  return Object.values(editRoomRoleConfig.value).reduce((total, count) => total + Number(count || 0), 0);
+});
+const isEditRoleConfigValid = computed(
+  () => editRoleConfigTotal.value === Number(editRoomMaxPlayers.value),
+);
+const editRoleConfigStatusText = computed(() => {
+  if (editRoomDescription.value === '랭크전') {
+    return '랭크전 규칙 고정';
+  }
+
+  if (editRoomDescription.value === '클래식') {
+    return '기본 밸런스 고정';
+  }
+
+  return '친선전 사용자 설정';
+});
+
+function getDefaultRoleConfig(maxPlayers) {
+  const defaults = {
+    4: { citizen: 2, mafia: 1, police: 1, doctor: 0 },
+    6: { citizen: 3, mafia: 1, police: 1, doctor: 1 },
+    8: { citizen: 4, mafia: 2, police: 1, doctor: 1 },
+    12: { citizen: 7, mafia: 3, police: 1, doctor: 1 },
+  };
+
+  return { ...(defaults[Number(maxPlayers)] || defaults[8]) };
+}
+
+function getRecommendedRoleConfig(maxPlayers) {
+  const playerCount = Number(maxPlayers);
+
+  if (fixedPlayerCounts.includes(playerCount)) {
+    return getDefaultRoleConfig(playerCount);
+  }
+
+  const mafia = Math.max(1, Math.floor(playerCount / 4));
+  const police = 1;
+  const doctor = playerCount >= 6 ? 1 : 0;
+  const citizen = Math.max(0, playerCount - mafia - police - doctor);
+
+  return { citizen, mafia, police, doctor };
+}
+
+function isSameRoleConfig(a, b) {
+  return ['citizen', 'mafia', 'police', 'doctor'].every((key) => Number(a?.[key] || 0) === Number(b?.[key] || 0));
+}
+
 function getInviteRemainingSeconds(invite) {
   if (!invite?.expiresAt) {
     return 0;
@@ -130,6 +190,22 @@ onBeforeUnmount(() => {
   if (inviteCountdownTimer) {
     clearInterval(inviteCountdownTimer);
   }
+});
+
+watch([editRoomMaxPlayers, editRoomDescription], () => {
+  if (!isEditingRoom.value) {
+    return;
+  }
+
+  if (isFriendlyEditMode.value) {
+    if (isRecommendedEditRolesEnabled.value) {
+      editRoomRoleConfig.value = getRecommendedRoleConfig(editRoomMaxPlayers.value);
+    }
+
+    return;
+  }
+
+  editRoomRoleConfig.value = getDefaultRoleConfig(editRoomMaxPlayers.value);
 });
 
 function handleChatEvent(payload) {
@@ -344,6 +420,16 @@ function scheduleSyncRoom() {
 function openEditRoomForm() {
   editRoomTitle.value = room.value?.title || '';
   editRoomDescription.value = room.value?.description || '';
+  editRoomMaxPlayers.value = room.value?.maxPlayers || 8;
+  editRoomRoleConfig.value = room.value?.roleConfig
+    ? { ...getDefaultRoleConfig(room.value?.maxPlayers || 8), ...room.value.roleConfig }
+    : getDefaultRoleConfig(room.value?.maxPlayers || 8);
+  isRecommendedEditRolesEnabled.value =
+    editRoomDescription.value === '친선전' &&
+    isSameRoleConfig(
+      editRoomRoleConfig.value,
+      getRecommendedRoleConfig(editRoomMaxPlayers.value),
+    );
   editNightTimeSeconds.value = room.value?.nightTimeSeconds || 30;
   editVoteTimeSeconds.value = room.value?.voteTimeSeconds || 15;
   editRoleRevealMode.value = room.value?.roleRevealMode || 'private';
@@ -355,10 +441,83 @@ function closeEditRoomForm() {
   isEditingRoom.value = false;
   editRoomTitle.value = '';
   editRoomDescription.value = '';
+  editRoomMaxPlayers.value = 8;
+  editRoomRoleConfig.value = getDefaultRoleConfig(8);
   editNightTimeSeconds.value = 30;
   editVoteTimeSeconds.value = 15;
   editRoleRevealMode.value = 'private';
   editEntryMode.value = 'public';
+  isRecommendedEditRolesEnabled.value = false;
+}
+
+function setEditRoomMaxPlayers(count) {
+  editRoomMaxPlayers.value = Math.min(12, Math.max(minEditableMaxPlayers.value, Number(count)));
+}
+
+function selectEditRoomMode(mode) {
+  editRoomDescription.value = mode;
+
+  if (mode === '친선전') {
+    isRecommendedEditRolesEnabled.value = true;
+    editRoomRoleConfig.value = getRecommendedRoleConfig(editRoomMaxPlayers.value);
+    return;
+  }
+
+  if (!fixedPlayerCounts.includes(Number(editRoomMaxPlayers.value))) {
+    editRoomMaxPlayers.value =
+      fixedPlayerCounts.find((count) => count >= minEditableMaxPlayers.value) || 12;
+  }
+
+  isRecommendedEditRolesEnabled.value = false;
+}
+
+function adjustEditRoomMaxPlayers(amount) {
+  setEditRoomMaxPlayers(editRoomMaxPlayers.value + amount);
+}
+
+function applyRecommendedEditRoomRoles() {
+  editRoomRoleConfig.value = getRecommendedRoleConfig(editRoomMaxPlayers.value);
+}
+
+function toggleRecommendedEditRoomRoles() {
+  isRecommendedEditRolesEnabled.value = !isRecommendedEditRolesEnabled.value;
+
+  if (isRecommendedEditRolesEnabled.value) {
+    applyRecommendedEditRoomRoles();
+  }
+}
+
+function resetEditRoomRoles() {
+  if (isRecommendedEditRolesEnabled.value) {
+    applyRecommendedEditRoomRoles();
+    return;
+  }
+
+  editRoomRoleConfig.value = {
+    citizen: 0,
+    mafia: 0,
+    police: 0,
+    doctor: 0,
+  };
+}
+
+function adjustEditRoomRole(roleKey, amount) {
+  if (!isFriendlyEditMode.value) {
+    return;
+  }
+
+  isRecommendedEditRolesEnabled.value = false;
+  const currentCount = Number(editRoomRoleConfig.value[roleKey] || 0);
+  const nextCount = Math.max(0, currentCount + amount);
+
+  if (amount > 0 && editRoleConfigTotal.value >= Number(editRoomMaxPlayers.value)) {
+    return;
+  }
+
+  editRoomRoleConfig.value = {
+    ...editRoomRoleConfig.value,
+    [roleKey]: nextCount,
+  };
 }
 
 async function saveRoomInfo() {
@@ -376,12 +535,26 @@ async function saveRoomInfo() {
     return;
   }
 
+  if (players.value.length > Number(editRoomMaxPlayers.value)) {
+    toastStore.error(
+      `현재 접속 인원(${players.value.length}명)보다 적은 인원(${editRoomMaxPlayers.value}명)으로 변경할 수 없습니다.`,
+    );
+    return;
+  }
+
+  if (!isEditRoleConfigValid.value) {
+    toastStore.error('역할 인원수 합계가 참가 인원과 같아야 합니다.');
+    return;
+  }
+
   isUpdating.value = true;
 
   try {
     room.value = await updateRoom(props.roomId, {
       title: editRoomTitle.value,
       description: editRoomDescription.value,
+      maxPlayers: Number(editRoomMaxPlayers.value),
+      roleConfig: editRoomRoleConfig.value,
       nightTimeSeconds: Number(editNightTimeSeconds.value),
       voteTimeSeconds: Number(editVoteTimeSeconds.value),
       roleRevealMode: editRoleRevealMode.value,
@@ -538,13 +711,16 @@ async function leaveRoom() {
 
       <form
         v-if="isEditingRoom"
-        class="edit-room-form game-styled-form"
+        class="edit-room-form game-styled-form room-form-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-room-title"
         @submit.prevent="saveRoomInfo"
       >
         <div class="edit-room-header">
           <div>
             <p class="eyebrow">Room Setup</p>
-            <h2>방 설정</h2>
+            <h2 id="edit-room-title">방 설정</h2>
           </div>
           <button
             type="button"
@@ -563,13 +739,62 @@ async function leaveRoom() {
         </div>
 
         <div class="form-group">
+          <label>참가 인원</label>
+          <div v-if="!isFriendlyEditMode" class="option-group">
+            <button
+              v-for="count in fixedPlayerCounts"
+              :key="count"
+              type="button"
+              class="option-btn"
+              :class="{ active: editRoomMaxPlayers === count }"
+              @click="editRoomMaxPlayers = count"
+            >
+              {{ count }}명
+            </button>
+          </div>
+          <div v-else class="friendly-player-control">
+            <div class="friendly-stepper">
+              <button
+                type="button"
+                class="stepper-btn"
+                :disabled="editRoomMaxPlayers <= minEditableMaxPlayers"
+                @click="adjustEditRoomMaxPlayers(-1)"
+              >
+                -
+              </button>
+              <strong>{{ editRoomMaxPlayers }}명</strong>
+              <button
+                type="button"
+                class="stepper-btn"
+                :disabled="editRoomMaxPlayers >= 12"
+                @click="adjustEditRoomMaxPlayers(1)"
+              >
+                +
+              </button>
+            </div>
+            <input
+              v-model.number="editRoomMaxPlayers"
+              class="player-range"
+              type="range"
+              :min="minEditableMaxPlayers"
+              max="12"
+              step="1"
+            />
+            <div class="range-labels">
+              <span>{{ minEditableMaxPlayers }}명</span>
+              <span>12명</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
           <label>게임 모드 (소개)</label>
           <div class="option-group">
             <button
               type="button"
               class="option-btn"
               :class="{ active: editRoomDescription === '클래식' }"
-              @click="editRoomDescription = '클래식'"
+              @click="selectEditRoomMode('클래식')"
             >
               🎭 클래식
             </button>
@@ -577,7 +802,7 @@ async function leaveRoom() {
               type="button"
               class="option-btn"
               :class="{ active: editRoomDescription === '랭크전' }"
-              @click="editRoomDescription = '랭크전'"
+              @click="selectEditRoomMode('랭크전')"
             >
               ⚔️ 랭크전
             </button>
@@ -585,7 +810,7 @@ async function leaveRoom() {
               type="button"
               class="option-btn"
               :class="{ active: editRoomDescription === '친선전' }"
-              @click="editRoomDescription = '친선전'"
+              @click="selectEditRoomMode('친선전')"
             >
               🤝 친선전
             </button>
@@ -658,8 +883,71 @@ async function leaveRoom() {
           </div>
         </div>
 
+        <section
+          class="role-config-section"
+          :class="{ invalid: !isEditRoleConfigValid, locked: !isFriendlyEditMode }"
+        >
+          <div class="role-config-header">
+            <div>
+              <p class="eyebrow">Roles</p>
+              <h3>역할 구성</h3>
+            </div>
+            <div>
+              <span class="role-lock-status">{{ editRoleConfigStatusText }}</span>
+              <strong :class="{ valid: isEditRoleConfigValid, invalid: !isEditRoleConfigValid }">
+                역할 합계 {{ editRoleConfigTotal }} / {{ editRoomMaxPlayers }}
+              </strong>
+            </div>
+          </div>
+
+          <p v-if="isFriendlyEditMode" class="role-config-intro">
+            친선전은 역할 구성을 자유롭게 변경할 수 있습니다.
+          </p>
+
+          <div class="role-config-list">
+            <article v-for="role in roleOptions" :key="role.key" class="role-config-row">
+              <span>{{ role.label }}</span>
+              <div class="role-stepper">
+                <button
+                  type="button"
+                  :disabled="!isFriendlyEditMode || editRoomRoleConfig[role.key] <= 0"
+                  @click="adjustEditRoomRole(role.key, -1)"
+                >
+                  -
+                </button>
+                <strong>{{ editRoomRoleConfig[role.key] }}</strong>
+                <button
+                  type="button"
+                  :disabled="!isFriendlyEditMode || editRoleConfigTotal >= editRoomMaxPlayers"
+                  @click="adjustEditRoomRole(role.key, 1)"
+                >
+                  +
+                </button>
+              </div>
+            </article>
+          </div>
+
+          <div v-if="isFriendlyEditMode" class="role-config-actions">
+            <button
+              type="button"
+              :class="{ active: isRecommendedEditRolesEnabled }"
+              @click="toggleRecommendedEditRoomRoles"
+            >
+              추천 구성 적용
+            </button>
+            <button type="button" @click="resetEditRoomRoles">초기화</button>
+          </div>
+
+          <p v-if="!isFriendlyEditMode" class="role-config-help">
+            {{ editRoleConfigStatusText }}으로 역할 인원수는 수정할 수 없습니다.
+          </p>
+          <p v-else-if="!isEditRoleConfigValid" class="role-config-warning">
+            역할 인원수 합계가 참가 인원과 같아야 저장할 수 있습니다.
+          </p>
+        </section>
+
         <div class="edit-actions">
-          <button type="submit" class="submit-btn" :disabled="isUpdating">
+          <button type="submit" class="submit-btn" :disabled="isUpdating || !isEditRoleConfigValid">
             {{ isUpdating ? '저장 중...' : '저장' }}
           </button>
           <button type="button" :disabled="isUpdating" @click="closeEditRoomForm">취소</button>
@@ -1471,6 +1759,47 @@ async function leaveRoom() {
   z-index: 1;
 }
 
+.edit-room-form.room-form-modal {
+  isolation: isolate;
+  left: 50%;
+  max-height: min(86vh, 760px);
+  max-width: 760px;
+  overflow-y: auto;
+  position: fixed;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100vw - 2rem), 760px);
+  z-index: 70;
+  box-shadow:
+    0 32px 90px rgba(0, 0, 0, 0.62),
+    0 0 26px rgba(255, 143, 54, 0.12);
+  scrollbar-color: rgba(255, 190, 85, 0.5) rgba(20, 14, 11, 0.7);
+  scrollbar-width: thin;
+}
+
+.edit-room-form.room-form-modal::after {
+  background: rgba(0, 0, 0, 0.72);
+  content: '';
+  inset: 0;
+  position: fixed;
+  z-index: -1;
+}
+
+.edit-room-form.room-form-modal::-webkit-scrollbar {
+  width: 0.62rem;
+}
+
+.edit-room-form.room-form-modal::-webkit-scrollbar-track {
+  background: rgba(20, 14, 11, 0.72);
+  border-radius: 999px;
+}
+
+.edit-room-form.room-form-modal::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(255, 190, 85, 0.74), rgba(201, 113, 29, 0.72));
+  border: 2px solid rgba(20, 14, 11, 0.72);
+  border-radius: 999px;
+}
+
 .edit-room-form::before {
   background: linear-gradient(90deg, rgba(255, 190, 85, 0.75), rgba(229, 46, 113, 0));
   content: '';
@@ -1624,11 +1953,249 @@ async function leaveRoom() {
   color: #ffdf9e;
 }
 
+.friendly-player-control {
+  background:
+    linear-gradient(180deg, rgba(255, 190, 85, 0.06), rgba(12, 7, 4, 0.34)), rgba(9, 5, 3, 0.58);
+  border: 1px solid rgba(255, 190, 85, 0.14);
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+}
+
+.friendly-stepper {
+  align-items: center;
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: 2.35rem minmax(4rem, 1fr) 2.35rem;
+}
+
+.friendly-stepper strong {
+  color: #ffd28a;
+  font-size: 1.08rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.stepper-btn {
+  align-self: center;
+  background: rgba(0, 0, 0, 0.34);
+  border: 1px solid rgba(255, 190, 85, 0.28);
+  border-radius: 0.45rem;
+  color: #ffd28a;
+  cursor: pointer;
+  font-size: 1.15rem;
+  font-weight: 900;
+  min-height: 2.2rem;
+  padding: 0;
+}
+
+.stepper-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.player-range {
+  accent-color: #f59e0b;
+  cursor: pointer;
+  min-height: auto;
+  padding: 0;
+}
+
+.range-labels {
+  color: rgba(255, 245, 224, 0.5);
+  display: flex;
+  font-size: 0.78rem;
+  font-weight: 800;
+  justify-content: space-between;
+}
+
+.role-config-section {
+  background:
+    linear-gradient(135deg, rgba(60, 32, 18, 0.48), rgba(14, 8, 5, 0.76)),
+    radial-gradient(circle at 12% 0%, rgba(255, 138, 0, 0.09), transparent 38%),
+    rgba(14, 8, 5, 0.74);
+  border: 1px solid rgba(255, 138, 0, 0.22);
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.8rem;
+  padding: 0.85rem;
+}
+
+.role-config-section.invalid {
+  border-color: rgba(248, 113, 113, 0.5);
+  box-shadow: 0 0 18px rgba(248, 113, 113, 0.1);
+}
+
+.role-config-section.locked {
+  background:
+    linear-gradient(135deg, rgba(49, 28, 18, 0.42), rgba(14, 8, 5, 0.8)),
+    radial-gradient(circle at 12% 0%, rgba(255, 138, 0, 0.06), transparent 38%),
+    rgba(14, 8, 5, 0.78);
+}
+
+.role-config-header {
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 190, 85, 0.1);
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding-bottom: 0.62rem;
+}
+
+.role-config-header h3 {
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 900;
+  margin: 0.12rem 0 0;
+}
+
+.role-config-header > div:last-child {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
+.role-config-header strong {
+  color: #ffd28a;
+  font-size: 0.86rem;
+}
+
+.role-config-header strong.valid {
+  color: #ffd28a;
+  text-shadow: 0 0 10px rgba(255, 190, 85, 0.22);
+}
+
+.role-config-header strong.invalid {
+  color: #fca5a5;
+}
+
+.role-lock-status {
+  background: rgba(255, 190, 85, 0.1);
+  border: 1px solid rgba(255, 190, 85, 0.22);
+  border-radius: 999px;
+  color: rgba(255, 245, 224, 0.76);
+  font-size: 0.74rem;
+  font-weight: 900;
+  padding: 0.25rem 0.5rem;
+}
+
+.role-config-list {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.role-config-row {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 190, 85, 0.1);
+  border-radius: 0.6rem;
+  display: flex;
+  gap: 0.55rem;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0.5rem 0.55rem;
+}
+
+.role-config-row > span {
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.role-stepper {
+  align-items: center;
+  display: grid;
+  gap: 0.25rem;
+  grid-template-columns: 1.8rem 1.85rem 1.8rem;
+}
+
+.role-stepper button {
+  align-self: center;
+  background: rgba(0, 0, 0, 0.34);
+  border: 1px solid rgba(255, 190, 85, 0.2);
+  border-radius: 0.45rem;
+  color: #ffd28a;
+  font-size: 1rem;
+  min-height: 1.8rem;
+  padding: 0;
+}
+
+.role-stepper button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.role-stepper strong {
+  color: #fff1d6;
+  text-align: center;
+}
+
+.role-config-intro {
+  color: rgba(255, 224, 168, 0.72);
+  font-size: 0.82rem;
+  font-weight: 800;
+  margin: 0;
+}
+
+.role-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.role-config-actions button {
+  align-self: center;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 190, 85, 0.22);
+  border-radius: 0.45rem;
+  color: #ffd28a;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 900;
+  min-height: 2.25rem;
+  padding: 0.52rem 0.75rem;
+}
+
+.role-config-actions button:hover {
+  background: rgba(255, 138, 0, 0.11);
+  border-color: rgba(255, 190, 85, 0.42);
+}
+
+.role-config-actions button.active {
+  background: linear-gradient(180deg, rgba(255, 138, 0, 0.28), rgba(229, 46, 113, 0.16));
+  border-color: rgba(255, 190, 85, 0.66);
+  box-shadow:
+    0 0 16px rgba(255, 138, 0, 0.14),
+    inset 0 0 12px rgba(255, 255, 255, 0.04);
+  color: #ffdf9e;
+}
+
+.role-config-help,
+.role-config-warning {
+  font-size: 0.82rem;
+  font-weight: 800;
+  margin: 0 0 0.18rem;
+  padding: 0.08rem 0.1rem 0.25rem;
+}
+
+.role-config-help {
+  color: rgba(255, 245, 224, 0.6);
+}
+
+.role-config-warning {
+  color: #fca5a5;
+}
+
 .edit-actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.6rem;
-  padding-top: 0.25rem;
+  padding-top: 0.65rem;
 }
 
 .edit-actions button {
@@ -1681,6 +2248,11 @@ async function leaveRoom() {
   .action-btn {
     flex: 1;
     text-align: center;
+  }
+
+  .role-config-list,
+  .room-custom-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

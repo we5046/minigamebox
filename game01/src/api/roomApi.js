@@ -36,6 +36,7 @@ export function normalizeRoom(room) {
     voteTimeSeconds: room.vote_time_seconds || 15,
     roleRevealMode: room.role_reveal_mode || 'private',
     entryMode: room.entry_mode || 'public',
+    roleConfig: room.role_config || null,
     currentPlayers: players.length,
     phase: room.phase,
     createdAt: room.created_at,
@@ -90,6 +91,7 @@ export async function createRoom({
   voteTimeSeconds = 15,
   roleRevealMode = 'private',
   entryMode = 'public',
+  roleConfig = null,
 }) {
   const { data: room, error } = await supabase.rpc('create_room', {
     p_title: title.trim(),
@@ -99,6 +101,7 @@ export async function createRoom({
     p_vote_time_seconds: voteTimeSeconds,
     p_role_reveal_mode: roleRevealMode,
     p_entry_mode: entryMode,
+    p_role_config: roleConfig,
   })
 
   if (error) {
@@ -149,10 +152,12 @@ export async function updateRoom(roomId, payload) {
   if (payload.hostUserId) roomPayload.host_user_id = payload.hostUserId
   if (payload.status) roomPayload.status = payload.status
   if (payload.phase) roomPayload.phase = payload.phase
+  if (payload.maxPlayers) roomPayload.max_players = payload.maxPlayers
   if (payload.nightTimeSeconds) roomPayload.night_time_seconds = payload.nightTimeSeconds
   if (payload.voteTimeSeconds) roomPayload.vote_time_seconds = payload.voteTimeSeconds
   if (payload.roleRevealMode) roomPayload.role_reveal_mode = payload.roleRevealMode
   if (payload.entryMode) roomPayload.entry_mode = payload.entryMode
+  if (payload.roleConfig) roomPayload.role_config = payload.roleConfig
 
   if (Object.keys(roomPayload).length > 0) {
     const { error } = await supabase.from('rooms').update(roomPayload).eq('id', roomId)
