@@ -1,9 +1,17 @@
 <script setup>
-import { RouterLink, RouterView, useRouter } from 'vue-router'
+import { computed } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { logoutUser } from '@/api/authApi'
 import ToastNotification from '@/components/ToastNotification.vue'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const route = useRoute()
+const authStore = useAuthStore()
+
+const isAuthenticated = computed(() => !!authStore.user)
+const showAppNav = computed(() => isAuthenticated.value && !route.meta.requiresGuest)
+const brandTarget = computed(() => (isAuthenticated.value ? '/home' : '/login'))
 
 async function logout() {
   await logoutUser()
@@ -14,9 +22,9 @@ async function logout() {
 <template>
   <ToastNotification />
   <header class="app-header">
-    <RouterLink class="brand" to="/home">Mafia Night</RouterLink>
+    <RouterLink class="brand" :to="brandTarget">Mafia Night</RouterLink>
 
-    <nav class="app-nav" aria-label="Main navigation">
+    <nav v-if="showAppNav" class="app-nav" aria-label="Main navigation">
       <RouterLink to="/home">Home</RouterLink>
       <RouterLink to="/shop">상점</RouterLink>
       <RouterLink to="/mypage">마이페이지</RouterLink>
@@ -46,7 +54,7 @@ async function logout() {
   flex: 0 0 auto;
   font-size: 1.4rem;
   font-weight: 800;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .app-nav {

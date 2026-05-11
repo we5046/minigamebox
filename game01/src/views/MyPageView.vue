@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { getMyPageData } from '@/api/myPageApi'
+import GameSettingsModal from '@/components/GameSettingsModal.vue'
 
 const authStore = useAuthStore()
 const savedUser = computed(() => authStore.user)
@@ -15,6 +16,17 @@ const roleRecords = ref([])
 const recentMatches = ref([])
 const achievements = ref([])
 const cosmetics = ref([])
+
+const myPageSettingsSections = [
+  {
+    title: '계정',
+    items: ['닉네임 변경', '비밀번호 변경', '대표 칭호 변경'],
+  },
+  {
+    title: '꾸미기',
+    items: ['닉네임 색상 변경', '프로필 테두리 변경', '프로필 배경 변경'],
+  },
+]
 
 const settingSections = [
   { title: '계정', items: ['닉네임 변경', '비밀번호 변경', '대표 칭호 변경'] },
@@ -195,26 +207,11 @@ watch(savedUser, (newUser) => {
       </section>
     </template>
 
-    <div v-if="isSettingsOpen" class="modal-backdrop" @click.self="isSettingsOpen = false">
-      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-        <header>
-          <div>
-            <p class="eyebrow">Settings</p>
-            <h2 id="settings-title">게임 설정</h2>
-          </div>
-          <button type="button" class="ghost-button" @click="isSettingsOpen = false">닫기</button>
-        </header>
-
-        <div class="settings-grid">
-          <article v-for="section in settingSections" :key="section.title">
-            <h3>{{ section.title }}</h3>
-            <button v-for="item in section.items" :key="item" type="button">
-              {{ item }}
-            </button>
-          </article>
-        </div>
-      </section>
-    </div>
+    <GameSettingsModal
+      v-model="isSettingsOpen"
+      title="마이페이지 설정"
+      :extra-sections="myPageSettingsSections"
+    />
   </section>
 </template>
 

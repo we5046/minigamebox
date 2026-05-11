@@ -6,6 +6,7 @@ import { supabase } from '@/api/supabaseClient';
 import { useAuthStore } from '@/stores/auth';
 import { useRoomStore } from '@/stores/room';
 import { useToastStore } from '@/stores/toast';
+import GameSettingsModal from '@/components/GameSettingsModal.vue';
 import {
   normalizeBroadcastMessage,
   sendPublicChatMessage,
@@ -45,6 +46,7 @@ const newRoomEntryMode = ref('public');
 const ROOMS_PER_PAGE = 5;
 const currentRoomPage = ref(1);
 const selectedRoomId = ref(null);
+const roomFilter = ref('all');
 const presenceUsers = ref([]);
 const friendships = ref([]);
 const roomInvites = ref([]);
@@ -52,13 +54,15 @@ const friendNickname = ref('');
 const isLoadingFriends = ref(false);
 const isSendingFriendRequest = ref(false);
 const isNotificationOpen = ref(false);
+const isLobbySettingsOpen = ref(false);
 const publicChatDraft = ref('');
 const publicChatNotice = ref('');
 const publicChatMessages = ref([
   {
     id: 'welcome',
     nickname: 'System',
-    content: '공용 채팅방이 준비되었습니다. 다음 단계에서 Supabase Realtime을 연결합니다.',
+    content:
+      '공용 채팅방이 준비되었습니다. 다음 단계에서 Supabase Realtime을 연결합니다.',
     createdAt: '방금 전',
     isSystem: true,
   },
@@ -73,42 +77,65 @@ let roomInviteRefreshTimer = null;
 let roomInvitePollTimer = null;
 let lobbyPresenceChannel = null;
 
+const lobbySettingsSections = [
+  {
+    title: '로비',
+    items: ['방 목록 밀도', '온라인 유저 표시', '초대 알림 표시'],
+  },
+  {
+    title: '채팅',
+    items: ['공개 채팅 표시', '시스템 메시지 강조', '채팅 시간 표시'],
+  },
+];
+
 const character = computed(() => ({
   nickname: savedUser.value?.nickname || 'GuestPlayer',
   title: savedUser.value?.character?.name || 'Rookie Mafia',
-  coin: savedUser.value?.character?.coin || savedUser.value?.coin || 0,
-  level: savedUser.value?.level || savedUser.value?.character?.level || 12,
-  expPercent: savedUser.value?.expPercent || savedUser.value?.experiencePercent || 68,
-  rank: savedUser.value?.rank?.tier || savedUser.value?.rankTier || 'Bronze II',
+  coin: savedUser.value?.character?.coin ?? savedUser.value?.coin ?? 0,
+  level: savedUser.value?.character?.level ?? savedUser.value?.level ?? 1,
+  expPercent:
+    savedUser.value?.experiencePercent ?? savedUser.value?.expPercent ?? 0,
+  rank: savedUser.value?.rank?.tier || savedUser.value?.rankTier || 'Unranked',
   representativeTitle: savedUser.value?.representativeTitle || '침묵의 추리자',
   quote: savedUser.value?.quote || '오늘 밤, 누가 거짓말을 하고 있을까?',
-  winRate: savedUser.value?.winRate || '0%',
-  winStreak: savedUser.value?.winStreak || 3,
+  winRate:
+    savedUser.value?.stats?.winRate !== undefined
+      ? `${Math.round(Number(savedUser.value.stats.winRate || 0))}%`
+      : savedUser.value?.winRate || '0%',
+  winStreak: savedUser.value?.winStreak ?? 0,
 }));
 
 const onlineUsers = computed(() => presenceUsers.value);
-const onlineUserIds = computed(() => new Set(presenceUsers.value.map((user) => user.id)));
+const onlineUserIds = computed(
+  () => new Set(presenceUsers.value.map((user) => user.id)),
+);
 const acceptedFriends = computed(() => {
   return friendships.value
     .filter((friendship) => friendship.status === 'accepted')
     .map((friendship) => ({
       ...friendship,
       isOnline: onlineUserIds.value.has(friendship.friend.id),
-      statusText: onlineUserIds.value.has(friendship.friend.id) ? '온라인' : '오프라인',
+      statusText: onlineUserIds.value.has(friendship.friend.id)
+        ? '온라인'
+        : '오프라인',
     }));
 });
 const incomingFriendRequests = computed(() => {
   return friendships.value.filter(
-    (friendship) => friendship.status === 'pending' && friendship.direction === 'incoming',
+    (friendship) =>
+      friendship.status === 'pending' && friendship.direction === 'incoming',
   );
 });
 const outgoingFriendRequests = computed(() => {
   return friendships.value.filter(
-    (friendship) => friendship.status === 'pending' && friendship.direction === 'outgoing',
+    (friendship) =>
+      friendship.status === 'pending' && friendship.direction === 'outgoing',
   );
 });
 const incomingRoomInvites = computed(() => roomInvites.value);
-const notificationCount = computed(() => incomingRoomInvites.value.length + incomingFriendRequests.value.length);
+const notificationCount = computed(
+  () => incomingRoomInvites.value.length + incomingFriendRequests.value.length,
+);
 
 const waitingRoomCount = computed(() => {
   return rooms.value.filter((room) => room.status === 'waiting').length;
@@ -118,13 +145,31 @@ const playingRoomCount = computed(() => {
   return rooms.value.filter((room) => room.status !== 'waiting').length;
 });
 
+const roomFilterOptions = computed(() => [
+  { value: 'all', label: '전체', count: rooms.value.length },
+  { value: 'waiting', label: '대기', count: waitingRoomCount.value },
+  { value: 'playing', label: '게임중', count: playingRoomCount.value },
+]);
+
+const filteredRooms = computed(() => {
+  if (roomFilter.value === 'waiting') {
+    return rooms.value.filter((room) => room.status === 'waiting');
+  }
+
+  if (roomFilter.value === 'playing') {
+    return rooms.value.filter((room) => room.status !== 'waiting');
+  }
+
+  return rooms.value;
+});
+
 const roomPageCount = computed(() => {
-  return Math.max(1, Math.ceil(rooms.value.length / ROOMS_PER_PAGE));
+  return Math.max(1, Math.ceil(filteredRooms.value.length / ROOMS_PER_PAGE));
 });
 
 const paginatedRooms = computed(() => {
   const startIndex = (currentRoomPage.value - 1) * ROOMS_PER_PAGE;
-  return rooms.value.slice(startIndex, startIndex + ROOMS_PER_PAGE);
+  return filteredRooms.value.slice(startIndex, startIndex + ROOMS_PER_PAGE);
 });
 
 const quickJoinPath = computed(() => {
@@ -150,7 +195,9 @@ onMounted(async () => {
   setupRoomInviteRealtime();
   roomInvitePollTimer = setInterval(loadRoomInvites, 10000);
   unsubscribeRooms = roomStore.subscribeToRooms();
-  const publicChatSubscription = subscribeToPublicChat(handlePublicChatRealtimeEvent);
+  const publicChatSubscription = subscribeToPublicChat(
+    handlePublicChatRealtimeEvent,
+  );
   publicChatChannel.value = publicChatSubscription.channel;
   unsubscribePublicChat = publicChatSubscription.unsubscribe;
 });
@@ -208,8 +255,16 @@ watch(savedUser, async (nextUser, previousUser) => {
   }
 });
 
+watch([rooms, roomFilter], () => {
+  clampRoomPage();
+  clampSelectedRoom();
+});
+
 function handlePublicChatRealtimeEvent(payload) {
-  if (payload?.type === 'subscription-status' && payload.status !== 'SUBSCRIBED') {
+  if (
+    payload?.type === 'subscription-status' &&
+    payload.status !== 'SUBSCRIBED'
+  ) {
     return;
   }
 
@@ -289,7 +344,10 @@ function clampRoomPage() {
 }
 
 function clampSelectedRoom() {
-  if (selectedRoomId.value && !rooms.value.some((room) => room.id === selectedRoomId.value)) {
+  if (
+    selectedRoomId.value &&
+    !filteredRooms.value.some((room) => room.id === selectedRoomId.value)
+  ) {
     selectedRoomId.value = null;
   }
 }
@@ -300,12 +358,22 @@ function goToPreviousRoomPage() {
 }
 
 function goToNextRoomPage() {
-  currentRoomPage.value = Math.min(roomPageCount.value, currentRoomPage.value + 1);
+  currentRoomPage.value = Math.min(
+    roomPageCount.value,
+    currentRoomPage.value + 1,
+  );
+  selectedRoomId.value = null;
+}
+
+function setRoomFilter(nextFilter) {
+  roomFilter.value = nextFilter;
+  currentRoomPage.value = 1;
   selectedRoomId.value = null;
 }
 
 function setupLobbyPresence() {
-  const presenceKey = savedUser.value?.id || `guest-${Math.random().toString(36).slice(2)}`;
+  const presenceKey =
+    savedUser.value?.id || `guest-${Math.random().toString(36).slice(2)}`;
 
   lobbyPresenceChannel = supabase.channel('lobby-presence', {
     config: {
@@ -363,13 +431,16 @@ function setupFriendshipRealtime() {
     return;
   }
 
-  unsubscribeFriendships = subscribeToFriendships(savedUser.value.id, (payload) => {
-    if (payload?.type === 'subscription-status') {
-      return;
-    }
+  unsubscribeFriendships = subscribeToFriendships(
+    savedUser.value.id,
+    (payload) => {
+      if (payload?.type === 'subscription-status') {
+        return;
+      }
 
-    scheduleFriendshipsRefresh();
-  });
+      scheduleFriendshipsRefresh();
+    },
+  );
 }
 
 function scheduleFriendshipsRefresh() {
@@ -401,13 +472,16 @@ function setupRoomInviteRealtime() {
     return;
   }
 
-  unsubscribeRoomInvites = subscribeToRoomInvites(savedUser.value.id, (payload) => {
-    if (payload?.type === 'subscription-status') {
-      return;
-    }
+  unsubscribeRoomInvites = subscribeToRoomInvites(
+    savedUser.value.id,
+    (payload) => {
+      if (payload?.type === 'subscription-status') {
+        return;
+      }
 
-    scheduleRoomInvitesRefresh();
-  });
+      scheduleRoomInvitesRefresh();
+    },
+  );
 }
 
 function scheduleRoomInvitesRefresh() {
@@ -426,7 +500,10 @@ async function acceptRoomInvite(invite) {
     const updatedInvite = await respondRoomInvite(invite.id, true);
     await loadRoomInvites();
     isNotificationOpen.value = false;
-    router.push({ path: `/rooms/${updatedInvite.roomId}`, query: { invited: '1' } });
+    router.push({
+      path: `/rooms/${updatedInvite.roomId}`,
+      query: { invited: '1' },
+    });
   } catch (error) {
     toastStore.error(error.message);
   }
@@ -446,7 +523,11 @@ function toggleNotifications() {
 }
 
 function openLobbySettings() {
-  toastStore.info('濡쒕퉬 ?ㅼ젙 湲곕뒫??以鍮??묒엯?덈떎.');
+  isLobbySettingsOpen.value = true;
+}
+
+function handleLobbySettingSelect({ section, item }) {
+  toastStore.info(`${section} - ${item} 설정은 준비 중입니다.`);
 }
 
 async function submitFriendRequest() {
@@ -489,7 +570,9 @@ async function rejectFriendRequest(friendshipId) {
 }
 
 async function deleteFriend(friendship) {
-  const confirmed = window.confirm(`${friendship.friend.nickname}님을 친구 목록에서 삭제할까요?`);
+  const confirmed = window.confirm(
+    `${friendship.friend.nickname}님을 친구 목록에서 삭제할까요?`,
+  );
 
   if (!confirmed) {
     return;
@@ -529,7 +612,10 @@ function getPlayerSlots(room) {
   const currentPlayers = room.players?.length || room.currentPlayers || 0;
   const maxPlayers = room.maxPlayers || 8;
 
-  return Array.from({ length: maxPlayers }, (_, index) => index < currentPlayers);
+  return Array.from(
+    { length: maxPlayers },
+    (_, index) => index < currentPlayers,
+  );
 }
 
 async function submitPublicChat() {
@@ -600,17 +686,27 @@ async function logout() {
 
           <div class="notification-section">
             <p>Room Invites</p>
-            <article v-for="invite in incomingRoomInvites" :key="invite.id" class="notification-row">
+            <article
+              v-for="invite in incomingRoomInvites"
+              :key="invite.id"
+              class="notification-row"
+            >
               <div>
                 <strong>{{ invite.room.title }}</strong>
                 <span>{{ invite.inviter.nickname }}</span>
               </div>
               <div class="notification-actions">
-                <button type="button" @click="acceptRoomInvite(invite)">Enter</button>
-                <button type="button" @click="rejectRoomInvite(invite.id)">Decline</button>
+                <button type="button" @click="acceptRoomInvite(invite)">
+                  Enter
+                </button>
+                <button type="button" @click="rejectRoomInvite(invite.id)">
+                  Decline
+                </button>
               </div>
             </article>
-            <small v-if="incomingRoomInvites.length === 0">No room invites.</small>
+            <small v-if="incomingRoomInvites.length === 0"
+              >No room invites.</small
+            >
           </div>
 
           <div class="notification-section">
@@ -625,11 +721,17 @@ async function logout() {
                 <span>Friend request</span>
               </div>
               <div class="notification-actions">
-                <button type="button" @click="acceptFriendRequest(request.id)">Accept</button>
-                <button type="button" @click="rejectFriendRequest(request.id)">Decline</button>
+                <button type="button" @click="acceptFriendRequest(request.id)">
+                  Accept
+                </button>
+                <button type="button" @click="rejectFriendRequest(request.id)">
+                  Decline
+                </button>
               </div>
             </article>
-            <small v-if="incomingFriendRequests.length === 0">No friend requests.</small>
+            <small v-if="incomingFriendRequests.length === 0"
+              >No friend requests.</small
+            >
           </div>
         </div>
       </div>
@@ -643,10 +745,15 @@ async function logout() {
               <p class="eyebrow">Create</p>
               <h2>새 게임방</h2>
             </div>
-            <button type="button" @click="isCreateFormOpen = false">닫기</button>
+            <button type="button" @click="isCreateFormOpen = false">
+              닫기
+            </button>
           </div>
 
-          <form class="create-room-form game-styled-form" @submit.prevent="createRoom">
+          <form
+            class="create-room-form game-styled-form"
+            @submit.prevent="createRoom"
+          >
             <div class="form-group">
               <label>방 제목</label>
               <input
@@ -774,7 +881,10 @@ async function logout() {
           </form>
         </section>
 
-        <section class="page-card room-board" aria-labelledby="room-board-title">
+        <section
+          class="page-card room-board"
+          aria-labelledby="room-board-title"
+        >
           <div class="section-heading">
             <div>
               <p class="eyebrow">Rooms</p>
@@ -785,10 +895,25 @@ async function logout() {
                 <span>게임중 {{ playingRoomCount }}</span>
               </div>
             </div>
+            <div class="room-filter-summary" aria-label="Room filters">
+              <button
+                v-for="option in roomFilterOptions"
+                :key="option.value"
+                type="button"
+                :class="{ active: roomFilter === option.value }"
+                @click="setRoomFilter(option.value)"
+              >
+                {{ option.label }} {{ option.count }}
+              </button>
+            </div>
             <div class="room-tools">
               <div class="room-actions">
-                <RouterLink class="primary" :to="quickJoinPath">빠른 입장</RouterLink>
-                <button type="button" @click="isCreateFormOpen = true">방 만들기</button>
+                <RouterLink class="primary" :to="quickJoinPath"
+                  >빠른 입장</RouterLink
+                >
+                <button type="button" @click="isCreateFormOpen = true">
+                  방 만들기
+                </button>
               </div>
             </div>
           </div>
@@ -804,8 +929,12 @@ async function logout() {
 
           <div class="room-table">
             <p v-if="roomMessage" class="message">{{ roomMessage }}</p>
-            <p v-else-if="isLoadingRooms" class="muted">방 목록을 불러오는 중입니다.</p>
-            <p v-else-if="rooms.length === 0" class="muted">아직 생성된 방이 없습니다.</p>
+            <p v-else-if="isLoadingRooms" class="muted">
+              방 목록을 불러오는 중입니다.
+            </p>
+            <p v-else-if="filteredRooms.length === 0" class="muted">
+              아직 생성된 방이 없습니다.
+            </p>
 
             <article
               v-for="room in paginatedRooms"
@@ -814,7 +943,13 @@ async function logout() {
               :class="{ expanded: selectedRoomId === room.id }"
             >
               <div class="room-row">
-                <button class="join-pill" type="button" @click="enterRoom(room.id)">입장</button>
+                <button
+                  class="join-pill"
+                  type="button"
+                  @click="enterRoom(room.id)"
+                >
+                  입장
+                </button>
                 <button
                   class="room-detail-trigger"
                   type="button"
@@ -844,9 +979,11 @@ async function logout() {
                     <b class="status-badge" :class="getRoomStatusClass(room)">
                       {{ getRoomStatusLabel(room) }}
                     </b>
-                    <b class="status-badge" :class="getModeClass(room.description)">{{
-                      room.description || '클래식'
-                    }}</b>
+                    <b
+                      class="status-badge"
+                      :class="getModeClass(room.description)"
+                      >{{ room.description || '클래식' }}</b
+                    >
                   </span>
                 </button>
               </div>
@@ -854,14 +991,21 @@ async function logout() {
               <div v-if="selectedRoomId === room.id" class="room-details">
                 <div class="room-details-heading">
                   <strong>참여 인원</strong>
-                  <span>{{ room.players?.length || 0 }} / {{ room.maxPlayers }}</span>
+                  <span
+                    >{{ room.players?.length || 0 }} /
+                    {{ room.maxPlayers }}</span
+                  >
                 </div>
 
                 <ul v-if="room.players?.length">
                   <li v-for="player in room.players" :key="player.userId">
                     <span>{{ player.nickname }}</span>
                     <small>{{
-                      player.isHost ? '방장' : player.isReady ? '준비 완료' : '대기 중'
+                      player.isHost
+                        ? '방장'
+                        : player.isReady
+                          ? '준비 완료'
+                          : '대기 중'
                     }}</small>
                   </li>
                 </ul>
@@ -870,8 +1014,16 @@ async function logout() {
             </article>
           </div>
 
-          <div v-if="rooms.length > ROOMS_PER_PAGE" class="room-pagination" aria-label="Room pages">
-            <button type="button" :disabled="currentRoomPage === 1" @click="goToPreviousRoomPage">
+          <div
+            v-if="filteredRooms.length > ROOMS_PER_PAGE"
+            class="room-pagination"
+            aria-label="Room pages"
+          >
+            <button
+              type="button"
+              :disabled="currentRoomPage === 1"
+              @click="goToPreviousRoomPage"
+            >
               이전
             </button>
             <span>{{ currentRoomPage }} / {{ roomPageCount }}</span>
@@ -883,9 +1035,19 @@ async function logout() {
               다음
             </button>
           </div>
+
+          <div class="room-board-footer">
+            <div class="room-actions">
+              <RouterLink class="primary" :to="quickJoinPath">빠른 입장</RouterLink>
+              <button type="button" @click="isCreateFormOpen = true">방 만들기</button>
+            </div>
+          </div>
         </section>
 
-        <section class="page-card chat-card" aria-labelledby="public-chat-title">
+        <section
+          class="page-card chat-card"
+          aria-labelledby="public-chat-title"
+        >
           <div class="section-heading">
             <div>
               <p class="eyebrow">Public Chat</p>
@@ -907,7 +1069,9 @@ async function logout() {
             </article>
           </div>
 
-          <p v-if="publicChatNotice" class="chat-notice">{{ publicChatNotice }}</p>
+          <p v-if="publicChatNotice" class="chat-notice">
+            {{ publicChatNotice }}
+          </p>
 
           <form class="chat-form" @submit.prevent="submitPublicChat">
             <input
@@ -942,7 +1106,9 @@ async function logout() {
               <span>{{ character.expPercent }}%</span>
             </div>
             <div class="exp-track">
-              <i :style="{ width: `${Math.min(100, character.expPercent)}%` }"></i>
+              <i
+                :style="{ width: `${Math.min(100, character.expPercent)}%` }"
+              ></i>
             </div>
           </div>
 
@@ -988,8 +1154,13 @@ async function logout() {
             </li>
           </ul>
 
-          <button v-if="false" class="invite-button" type="button">친구 초대</button>
-          <div v-if="false && incomingRoomInvites.length" class="room-invite-panel">
+          <button v-if="false" class="invite-button" type="button">
+            친구 초대
+          </button>
+          <div
+            v-if="false && incomingRoomInvites.length"
+            class="room-invite-panel"
+          >
             <div class="friend-heading">
               <div>
                 <p class="eyebrow">Invites</p>
@@ -998,14 +1169,22 @@ async function logout() {
               <span>{{ incomingRoomInvites.length }}</span>
             </div>
 
-            <article v-for="invite in incomingRoomInvites" :key="invite.id" class="room-invite-row">
+            <article
+              v-for="invite in incomingRoomInvites"
+              :key="invite.id"
+              class="room-invite-row"
+            >
               <div>
                 <strong>{{ invite.room.title }}</strong>
                 <span>{{ invite.inviter.nickname }}님의 초대</span>
               </div>
               <div class="friend-actions">
-                <button type="button" @click="acceptRoomInvite(invite)">입장</button>
-                <button type="button" @click="rejectRoomInvite(invite.id)">거절</button>
+                <button type="button" @click="acceptRoomInvite(invite)">
+                  입장
+                </button>
+                <button type="button" @click="rejectRoomInvite(invite.id)">
+                  거절
+                </button>
               </div>
             </article>
           </div>
@@ -1019,41 +1198,80 @@ async function logout() {
               <span>{{ acceptedFriends.length }}</span>
             </div>
 
-            <form class="friend-request-form" @submit.prevent="submitFriendRequest">
+            <form
+              class="friend-request-form"
+              @submit.prevent="submitFriendRequest"
+            >
               <input
                 v-model="friendNickname"
                 type="text"
                 placeholder="닉네임으로 친구 추가"
                 :disabled="isSendingFriendRequest"
               />
-              <button type="submit" :disabled="!friendNickname.trim() || isSendingFriendRequest">
+              <button
+                type="submit"
+                :disabled="!friendNickname.trim() || isSendingFriendRequest"
+              >
                 요청
               </button>
             </form>
 
-            <div v-if="false && incomingFriendRequests.length" class="friend-request-list">
+            <div
+              v-if="false && incomingFriendRequests.length"
+              class="friend-request-list"
+            >
               <p>받은 요청</p>
-              <article v-for="request in incomingFriendRequests" :key="request.id" class="friend-row request">
+              <article
+                v-for="request in incomingFriendRequests"
+                :key="request.id"
+                class="friend-row request"
+              >
                 <strong>{{ request.friend.nickname }}</strong>
                 <div class="friend-actions">
-                  <button type="button" @click="acceptFriendRequest(request.id)">수락</button>
-                  <button type="button" @click="rejectFriendRequest(request.id)">거절</button>
+                  <button
+                    type="button"
+                    @click="acceptFriendRequest(request.id)"
+                  >
+                    수락
+                  </button>
+                  <button
+                    type="button"
+                    @click="rejectFriendRequest(request.id)"
+                  >
+                    거절
+                  </button>
                 </div>
               </article>
             </div>
 
             <ul class="friend-list">
-              <li v-if="isLoadingFriends" class="friend-empty">친구 목록을 불러오는 중...</li>
+              <li v-if="isLoadingFriends" class="friend-empty">
+                친구 목록을 불러오는 중...
+              </li>
               <li v-else-if="acceptedFriends.length === 0" class="friend-empty">
                 아직 등록된 친구가 없습니다.
               </li>
-              <li v-for="friendship in acceptedFriends" v-else :key="friendship.id" class="friend-row">
+              <li
+                v-for="friendship in acceptedFriends"
+                v-else
+                :key="friendship.id"
+                class="friend-row"
+              >
                 <strong>
-                  <i :class="{ offline: !friendship.isOnline }" aria-hidden="true"></i>
+                  <i
+                    :class="{ offline: !friendship.isOnline }"
+                    aria-hidden="true"
+                  ></i>
                   {{ friendship.friend.nickname }}
                 </strong>
                 <span>{{ friendship.statusText }}</span>
-                <button type="button" aria-label="친구 삭제" @click="deleteFriend(friendship)">삭제</button>
+                <button
+                  type="button"
+                  aria-label="친구 삭제"
+                  @click="deleteFriend(friendship)"
+                >
+                  삭제
+                </button>
               </li>
             </ul>
 
@@ -1064,6 +1282,13 @@ async function logout() {
         </section>
       </aside>
     </div>
+
+    <GameSettingsModal
+      v-model="isLobbySettingsOpen"
+      title="로비 설정"
+      :extra-sections="lobbySettingsSections"
+      @select="handleLobbySettingSelect"
+    />
   </section>
 </template>
 
@@ -1081,7 +1306,8 @@ async function logout() {
 .lobby-layout :deep(.page-card),
 .lobby-layout .page-card {
   background:
-    linear-gradient(180deg, rgba(80, 46, 30, 0.44), rgba(20, 14, 11, 0.78)), rgba(20, 17, 15, 0.86);
+    linear-gradient(180deg, rgba(80, 46, 30, 0.44), rgba(20, 14, 11, 0.78)),
+    rgba(20, 17, 15, 0.86);
   border: 1px solid rgba(255, 190, 85, 0.16);
   border-radius: clamp(0.85rem, 1.5vw, 1.35rem);
   box-shadow: var(--pc-panel-shadow);
@@ -1099,7 +1325,12 @@ async function logout() {
 }
 
 .lobby-hero::after {
-  background: linear-gradient(90deg, transparent, rgba(255, 132, 38, 0.12), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 132, 38, 0.12),
+    transparent
+  );
   content: '';
   inset: 0;
   pointer-events: none;
@@ -1121,7 +1352,11 @@ async function logout() {
 
 .lobby-icon-button {
   align-items: center;
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.12), rgba(48, 20, 16, 0.72));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.12),
+    rgba(48, 20, 16, 0.72)
+  );
   border: 1px solid rgba(255, 190, 85, 0.28);
   border-radius: 0.7rem;
   color: #ffd49a;
@@ -1141,7 +1376,11 @@ async function logout() {
 
 .lobby-icon-button:hover,
 .lobby-icon-button.active {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.2), rgba(84, 27, 22, 0.78));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.2),
+    rgba(84, 27, 22, 0.78)
+  );
   border-color: rgba(255, 202, 118, 0.58);
   box-shadow: 0 0 18px rgba(255, 129, 48, 0.2);
   transform: translateY(-1px);
@@ -1165,11 +1404,16 @@ async function logout() {
 }
 
 .notification-popover {
-  background:
-    linear-gradient(180deg, rgba(73, 34, 22, 0.96), rgba(13, 9, 7, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(73, 34, 22, 0.96),
+    rgba(13, 9, 7, 0.98)
+  );
   border: 1px solid rgba(255, 190, 85, 0.24);
   border-radius: 0.95rem;
-  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.42), 0 0 24px rgba(255, 106, 42, 0.12);
+  box-shadow:
+    0 22px 55px rgba(0, 0, 0, 0.42),
+    0 0 24px rgba(255, 106, 42, 0.12);
   display: grid;
   gap: 0.85rem;
   max-height: min(31rem, 72vh);
@@ -1312,13 +1556,27 @@ h2 {
   justify-content: flex-end;
 }
 
+.room-board > .section-heading > .room-tools {
+  display: none;
+}
+
+.room-board-footer {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
 .room-actions a,
 .room-actions button,
 .section-heading button,
 .chat-form button,
 .room-pagination button,
 .invite-button {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.11), rgba(80, 31, 21, 0.22));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.11),
+    rgba(80, 31, 21, 0.22)
+  );
   border: 1px solid rgba(255, 190, 85, 0.28);
   border-radius: 0.65rem;
   color: var(--color-text);
@@ -1417,7 +1675,7 @@ h2 {
   align-items: flex-start;
 }
 
-.room-summary,
+.room-filter-summary,
 .room-tools,
 .chat-status,
 .user-count {
@@ -1427,11 +1685,20 @@ h2 {
   gap: 0.5rem;
 }
 
+.room-filter-summary {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
 .room-tools {
   justify-content: flex-end;
 }
 
-.room-summary span,
+.room-summary {
+  display: none;
+}
+
+.room-filter-summary button,
 .chat-status,
 .user-count {
   background: rgba(255, 190, 85, 0.12);
@@ -1442,6 +1709,29 @@ h2 {
   font-weight: 800;
   padding: 0.35rem 0.65rem;
   white-space: nowrap;
+}
+
+.room-filter-summary button {
+  cursor: pointer;
+  font: inherit;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.room-filter-summary button:hover,
+.room-filter-summary button.active {
+  background: linear-gradient(180deg, #ffbe55, #c87127);
+  border-color: rgba(255, 210, 130, 0.42);
+  box-shadow: 0 0 16px rgba(255, 143, 54, 0.18);
+  color: #17100b;
+}
+
+.room-filter-summary button:active {
+  transform: translateY(1px);
 }
 
 .room-board,
@@ -1463,12 +1753,16 @@ h2 {
   font-size: 0.86rem;
   font-weight: 800;
   gap: 0.8rem;
-  grid-template-columns: 4.25rem 5rem minmax(10rem, 1fr) minmax(5.5rem, 7rem) minmax(
-      7.5rem,
-      9rem
-    ) 7rem;
+  grid-template-columns:
+    5rem minmax(10rem, 1fr) minmax(5.5rem, 7rem) minmax(7.5rem, 9rem) 7rem
+    4.25rem;
   min-width: 0;
   padding: 0.65rem 0.8rem;
+}
+
+.room-table-header span:first-child {
+  order: 1;
+  text-align: right;
 }
 
 .room-table {
@@ -1489,13 +1783,17 @@ h2 {
 
 .room-row {
   align-items: center;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(0, 0, 0, 0.05));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.075),
+    rgba(0, 0, 0, 0.05)
+  );
   border: 1px solid var(--color-border);
   border-radius: 0.75rem;
   color: var(--color-text);
   display: grid;
   gap: 0.8rem;
-  grid-template-columns: 4.25rem minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 4.25rem;
   min-height: var(--room-row-height);
   min-width: 0;
   padding: 0.78rem 0.8rem;
@@ -1507,7 +1805,11 @@ h2 {
 
 .room-row:hover,
 .room-row:focus-within {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.13), rgba(90, 28, 18, 0.18));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.13),
+    rgba(90, 28, 18, 0.18)
+  );
   border-color: rgba(255, 190, 85, 0.38);
   box-shadow: 0 0 22px rgba(255, 132, 38, 0.12);
 }
@@ -1525,8 +1827,12 @@ h2 {
   display: grid;
   font: inherit;
   gap: 0.8rem;
-  grid-template-columns: 5rem minmax(10rem, 1fr) minmax(5.5rem, 7rem) minmax(7.5rem, 9rem) 7rem;
+  grid-template-columns: 5rem minmax(10rem, 1fr) minmax(5.5rem, 7rem) minmax(
+      7.5rem,
+      9rem
+    ) 7rem;
   min-width: 0;
+  order: 0;
   padding: 0;
   text-align: left;
 }
@@ -1553,7 +1859,8 @@ h2 {
   font: inherit;
   font-size: 0.82rem;
   font-weight: 900;
-  justify-self: start;
+  justify-self: end;
+  order: 1;
   padding: 0.35rem 0.68rem;
   transition:
     transform 0.16s ease,
@@ -1710,7 +2017,10 @@ h2 {
 .create-room-form {
   display: grid;
   gap: 0.75rem;
-  grid-template-columns: minmax(10rem, 1fr) minmax(14rem, 1.35fr) minmax(7rem, 0.45fr) auto;
+  grid-template-columns: minmax(10rem, 1fr) minmax(14rem, 1.35fr) minmax(
+      7rem,
+      0.45fr
+    ) auto;
   min-width: 0;
 }
 
@@ -2093,7 +2403,11 @@ dd {
 .friend-request-form button,
 .friend-actions button,
 .friend-row > button {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.14), rgba(80, 31, 21, 0.24));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.14),
+    rgba(80, 31, 21, 0.24)
+  );
   border: 1px solid rgba(255, 190, 85, 0.24);
   border-radius: 0.55rem;
   color: var(--color-text);
@@ -2278,7 +2592,7 @@ dd {
   }
 
   .join-pill {
-    justify-self: start;
+    justify-self: end;
   }
 
   .room-detail-trigger > span:not(.slot-meter):not(.status-stack) {
@@ -2322,7 +2636,7 @@ dd {
     width: 100%;
   }
 
-  .room-summary {
+  .room-filter-summary {
     width: 100%;
   }
 
@@ -2358,6 +2672,11 @@ dd {
     width: 3.75rem;
   }
 }
+
+.room-board-footer .room-actions {
+  justify-content: flex-end;
+}
+
 .game-styled-form {
   display: grid;
   gap: 1.25rem;
@@ -2403,7 +2722,11 @@ dd {
 }
 
 .option-btn.active {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.2), rgba(255, 132, 38, 0.2)) !important;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.2),
+    rgba(255, 132, 38, 0.2)
+  ) !important;
   border-color: #ffbe55 !important;
   box-shadow: 0 0 12px rgba(255, 190, 85, 0.2) !important;
   color: #ffbe55 !important;

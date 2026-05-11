@@ -6,10 +6,30 @@ function toAuthEmail(loginId) {
 }
 
 export function toCurrentUser(profile) {
+  const stats = profile.stats || {}
+  const rank = profile.rank || {}
+
   return {
     id: profile.id,
     loginId: profile.login_id,
     nickname: profile.nickname,
+    representativeTitle: profile.representative_title,
+    quote: profile.profile_quote,
+    experiencePercent: profile.experience_percent,
+    rank: {
+      tier: rank.tier,
+      rp: rank.rp,
+      topPercent: rank.top_percent,
+      emblem: rank.emblem,
+    },
+    stats: {
+      totalGames: stats.total_games,
+      winRate: stats.overall_win_rate,
+      citizenWinRate: stats.citizen_win_rate,
+      mafiaWinRate: stats.mafia_win_rate,
+      survivalRate: stats.survival_rate,
+      averageSurvivalTurn: stats.average_survival_turn,
+    },
     character: {
       name: profile.character_name,
       level: profile.level,
@@ -20,13 +40,21 @@ export function toCurrentUser(profile) {
 }
 
 export async function getProfile(userId) {
-  const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single()
+  const [profileResult, rankResult, statsResult] = await Promise.all([
+    supabase.from('profiles').select('*').eq('id', userId).single(),
+    supabase.from('player_ranks').select('*').eq('user_id', userId).maybeSingle(),
+    supabase.from('player_stats').select('*').eq('user_id', userId).maybeSingle(),
+  ])
 
-  if (error) {
+  if (profileResult.error) {
     throw new Error('프로필 정보를 불러오지 못했습니다.')
   }
 
-  return data
+  return {
+    ...profileResult.data,
+    rank: rankResult.data,
+    stats: statsResult.data,
+  }
 }
 
 export async function loginUser({ loginId, password }) {

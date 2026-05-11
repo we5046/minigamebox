@@ -939,3 +939,48 @@ exception
   when duplicate_object then null;
 end;
 $$;
+
+update public.profiles
+set
+  character_name = 'Lobby Master',
+  level = 12,
+  coin = 1200,
+  avatar = 'default-mafia',
+  representative_title = '침묵을 읽는 방장',
+  profile_quote = '오늘 밤, 진실은 침묵하는 사람의 눈빛에 숨어 있다.',
+  experience_percent = 68
+where login_id = 'host';
+
+insert into public.player_ranks (user_id, tier, rp, top_percent, emblem)
+select id, 'Bronze II', 420, 72, 'B'
+from public.profiles
+where login_id = 'host'
+on conflict (user_id) do update
+set
+  tier = excluded.tier,
+  rp = excluded.rp,
+  top_percent = excluded.top_percent,
+  emblem = excluded.emblem,
+  updated_at = now();
+
+insert into public.player_stats (
+  user_id,
+  total_games,
+  overall_win_rate,
+  citizen_win_rate,
+  mafia_win_rate,
+  survival_rate,
+  average_survival_turn
+)
+select id, 24, 58, 61, 50, 67, 4.2
+from public.profiles
+where login_id = 'host'
+on conflict (user_id) do update
+set
+  total_games = excluded.total_games,
+  overall_win_rate = excluded.overall_win_rate,
+  citizen_win_rate = excluded.citizen_win_rate,
+  mafia_win_rate = excluded.mafia_win_rate,
+  survival_rate = excluded.survival_rate,
+  average_survival_turn = excluded.average_survival_turn,
+  updated_at = now();
