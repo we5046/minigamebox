@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { supabase } from '@/api/supabaseClient'
 import { getProfile, toCurrentUser } from '@/api/authApi'
+import { clearCurrentUser, setCurrentUser } from '@/api/session'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
@@ -9,42 +10,60 @@ export const useAuthStore = defineStore('auth', () => {
   let initializePromise = null
   let authSubscription = null
 
+  function setUser(nextUser) {
+    user.value = nextUser
+  }
+
   async function fetchUser(sessionUser) {
     if (!sessionUser) {
-      user.value = null
+      setUser(null)
+      clearCurrentUser()
       return
     }
     try {
       const profile = await getProfile(sessionUser.id)
-      user.value = toCurrentUser(profile)
+      setUser(toCurrentUser(profile))
+      setCurrentUser(user.value)
     } catch (error) {
       console.error('Failed to fetch user profile:', error)
-      user.value = null
+      setUser(null)
+      clearCurrentUser()
     }
   }
 
-  function initialize() {
+  async function initialize() {
     if (initializePromise) {
       return initializePromise
     }
 
-    initializePromise = supabase.auth.getSession().then(async ({ data: { session } }) => {
-      await fetchUser(session?.user)
-      if (!authSubscription) {
-        const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-          fetchUser(nextSession?.user)
-        })
-        authSubscription = data.subscription
+    initializePromise = (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        await fetchUser(session?.user)
+
+        if (!authSubscription) {
+          const { data } = supabase.auth.onAuthStateChange(async (event, nextSession) => {
+            if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+              await fetchUser(nextSession?.user)
+              return
+            }
+
+            if (event === 'SIGNED_OUT') {
+              await fetchUser(null)
+            }
+          })
+          authSubscription = data.subscription
+        }
+      } finally {
+        isInitialized.value = true
       }
-    }).finally(() => {
-      isInitialized.value = true
-    })
+    })()
 
     return initializePromise
   }
 
   function reset() {
-    user.value = null
+    setUser(null)
     isInitialized.value = false
     initializePromise = null
     if (authSubscription) {
@@ -53,5 +72,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { user, isInitialized, initialize, reset }
+  return { user, isInitialized, initialize, reset, setUser }
 })

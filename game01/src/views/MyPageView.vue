@@ -1,21 +1,24 @@
-<script setup>
+﻿<script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { getMyPageData } from '@/api/myPageApi'
+import { useProfileStore } from '@/stores/profile'
+import { useToastStore } from '@/stores/toast'
 import GameSettingsModal from '@/components/GameSettingsModal.vue'
 
 const authStore = useAuthStore()
+const profileStore = useProfileStore()
+const toastStore = useToastStore()
 const savedUser = computed(() => authStore.user)
+const profile = computed(() => profileStore.profile)
+const rank = computed(() => profileStore.rank)
+const stats = computed(() => profileStore.stats)
+const roleRecords = computed(() => profileStore.roleRecords)
+const recentMatches = computed(() => profileStore.recentMatches)
+const achievements = computed(() => profileStore.achievements)
+const cosmetics = computed(() => profileStore.cosmetics)
 
 const isSettingsOpen = ref(false)
 const isLoading = ref(true)
-const profile = ref({})
-const rank = ref({})
-const stats = ref([])
-const roleRecords = ref([])
-const recentMatches = ref([])
-const achievements = ref([])
-const cosmetics = ref([])
 
 const myPageSettingsSections = [
   {
@@ -37,30 +40,80 @@ const settingSections = [
 ]
 
 async function loadData() {
-  if (!savedUser.value) return
-  isLoading.value = true
-  const data = await getMyPageData(savedUser.value)
+  if (!savedUser.value?.id) {
+    profileStore.resetProfile()
+    isLoading.value = false
+    return
+  }
 
-  profile.value = data.profile
-  rank.value = data.rank
-  stats.value = data.stats
-  roleRecords.value = data.roleRecords
-  recentMatches.value = data.recentMatches
-  achievements.value = data.achievements
-  cosmetics.value = data.cosmetics
+  isLoading.value = true
+  await profileStore.reloadProfile(savedUser.value.id)
   isLoading.value = false
 }
 
-onMounted(() => {
-  if (savedUser.value) {
-    loadData()
+async function handleSettingSelect({ item }) {
+  try {
+    if (item === '닉네임 변경') {
+      const nextNickname = window.prompt('새 닉네임을 입력하세요.', profile.value.nickname)
+      if (!nextNickname?.trim()) return
+      await profileStore.updateProfileFields({ nickname: nextNickname })
+      toastStore.success('닉네임을 저장했습니다.')
+      return
+    }
+
+    if (item === '대표 칭호 변경') {
+      const nextTitle = window.prompt(
+        '대표 칭호를 입력하세요.',
+        profile.value.representativeTitle || profile.value.title,
+      )
+      if (!nextTitle?.trim()) return
+      await profileStore.updateProfileFields({ representativeTitle: nextTitle })
+      toastStore.success('대표 칭호를 저장했습니다.')
+      return
+    }
+
+    if (item === '닉네임 색상 변경') {
+      const nextValue = window.prompt('닉네임 색상 값을 입력하세요.', 'red')
+      if (!nextValue?.trim()) return
+      await profileStore.updateCosmetic('닉네임 색상', nextValue.trim(), 4)
+      toastStore.success('닉네임 색상을 저장했습니다.')
+      return
+    }
+
+    if (item === '프로필 테두리 변경') {
+      const nextValue = window.prompt('프로필 테두리 값을 입력하세요.', '기본 테두리')
+      if (!nextValue?.trim()) return
+      await profileStore.updateCosmetic('프로필 테두리', nextValue.trim(), 1)
+      toastStore.success('프로필 테두리를 저장했습니다.')
+      return
+    }
+
+    if (item === '프로필 배경 변경') {
+      const nextValue = window.prompt('프로필 배경 값을 입력하세요.', '기본 배경')
+      if (!nextValue?.trim()) return
+      await profileStore.updateCosmetic('프로필 배경', nextValue.trim(), 2)
+      toastStore.success('프로필 배경을 저장했습니다.')
+      return
+    }
+
+    if (item === '비밀번호 변경') {
+      toastStore.error('비밀번호 변경은 별도 인증 흐름이 필요합니다.')
+    }
+  } catch (error) {
+    toastStore.error(error.message)
   }
+}
+
+onMounted(() => {
+  loadData()
 })
 
-watch(savedUser, (newUser) => {
-  if (newUser) {
-    loadData()
+watch(savedUser, (nextUser, previousUser) => {
+  if (nextUser?.id === previousUser?.id) {
+    return
   }
+
+  loadData()
 })
 </script>
 
@@ -93,7 +146,6 @@ watch(savedUser, (newUser) => {
         </button>
         <div class="avatar-wrap">
           <div class="avatar">{{ profile.nickname.slice(0, 1).toUpperCase() }}</div>
-          <span class="online-dot">{{ profile.status }}</span>
         </div>
 
         <div class="profile-info">
@@ -211,6 +263,7 @@ watch(savedUser, (newUser) => {
       v-model="isSettingsOpen"
       title="마이페이지 설정"
       :extra-sections="myPageSettingsSections"
+      @select="handleSettingSelect"
     />
   </section>
 </template>

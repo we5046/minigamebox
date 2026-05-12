@@ -28,8 +28,17 @@ create table if not exists public.rooms (
   phase text not null default 'before_start',
   night_time_seconds integer not null default 30,
   vote_time_seconds integer not null default 15,
+  discussion_time_seconds integer not null default 60,
+  min_start_players integer not null default 4,
+  tie_vote_rule text not null default 'no_execution',
+  dead_chat_enabled boolean not null default false,
+  spectator_allowed boolean not null default false,
+  host_auto_transfer boolean not null default true,
+  afk_auto_handle boolean not null default false,
+  first_night_ability_allowed boolean not null default true,
   role_reveal_mode text not null default 'private',
   entry_mode text not null default 'public',
+  entry_password text not null default '',
   role_config jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
@@ -40,9 +49,38 @@ alter table public.rooms
   add column if not exists updated_at timestamptz not null default now(),
   add column if not exists night_time_seconds integer not null default 30,
   add column if not exists vote_time_seconds integer not null default 15,
+  add column if not exists discussion_time_seconds integer not null default 60,
+  add column if not exists min_start_players integer not null default 4,
+  add column if not exists tie_vote_rule text not null default 'no_execution',
+  add column if not exists dead_chat_enabled boolean not null default false,
+  add column if not exists spectator_allowed boolean not null default false,
+  add column if not exists host_auto_transfer boolean not null default true,
+  add column if not exists afk_auto_handle boolean not null default false,
+  add column if not exists first_night_ability_allowed boolean not null default true,
   add column if not exists role_reveal_mode text not null default 'private',
   add column if not exists entry_mode text not null default 'public',
+  add column if not exists entry_password text not null default '',
   add column if not exists role_config jsonb not null default '{}'::jsonb;
+
+update public.rooms
+set
+  discussion_time_seconds = coalesce(discussion_time_seconds, 60),
+  min_start_players = coalesce(min_start_players, 4),
+  tie_vote_rule = coalesce(tie_vote_rule, 'no_execution'),
+  dead_chat_enabled = coalesce(dead_chat_enabled, false),
+  spectator_allowed = coalesce(spectator_allowed, false),
+  host_auto_transfer = coalesce(host_auto_transfer, true),
+  afk_auto_handle = coalesce(afk_auto_handle, false),
+  first_night_ability_allowed = coalesce(first_night_ability_allowed, true)
+where
+  discussion_time_seconds is null
+  or min_start_players is null
+  or tie_vote_rule is null
+  or dead_chat_enabled is null
+  or spectator_allowed is null
+  or host_auto_transfer is null
+  or afk_auto_handle is null
+  or first_night_ability_allowed is null;
 
 create table if not exists public.room_players (
   id uuid primary key default gen_random_uuid(),
@@ -59,10 +97,10 @@ alter table public.room_players replica identity full;
 
 create table if not exists public.player_ranks (
   user_id uuid primary key references public.profiles(id) on delete cascade,
-  tier text not null default 'Bronze II',
+  tier text not null default 'Unranked',
   rp integer not null default 0,
   top_percent integer not null default 100,
-  emblem text not null default 'B',
+  emblem text not null default '-',
   updated_at timestamptz not null default now()
 );
 
@@ -118,6 +156,9 @@ create table if not exists public.player_cosmetics (
   value text not null,
   sort_order integer not null default 0
 );
+
+create unique index if not exists player_cosmetics_unique_label_idx
+  on public.player_cosmetics (user_id, label);
 
 create table if not exists public.friendships (
   id uuid primary key default gen_random_uuid(),
@@ -176,6 +217,212 @@ create unique index if not exists room_invites_pending_unique_idx
   where status = 'pending';
 
 alter table public.room_invites replica identity full;
+
+create or replace function public.initialize_profile_progress()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.player_ranks (user_id, tier, rp, top_percent, emblem)
+  values (new.id, 'Unranked', 0, 100, '-')
+  on conflict (user_id) do nothing;
+
+  insert into public.player_stats (
+    user_id,
+    total_games,
+    overall_win_rate,
+    citizen_win_rate,
+    mafia_win_rate,
+    survival_rate,
+    average_survival_turn
+  )
+  values (new.id, 0, 0, 0, 0, 0, 0)
+  on conflict (user_id) do nothing;
+
+  insert into public.player_role_stats (
+    user_id,
+    role_name,
+    icon,
+    games_played,
+    win_rate,
+    is_most_played
+  )
+  select
+    new.id,
+    seed.role_name,
+    seed.icon,
+    0,
+    0,
+    false
+  from (
+    values
+      ('시민', 'C'),
+      ('마피아', 'M'),
+      ('경찰', 'P'),
+      ('의사', 'D')
+  ) as seed(role_name, icon)
+  on conflict (user_id, role_name) do nothing;
+
+  insert into public.player_achievements (
+    user_id,
+    name,
+    icon,
+    rarity,
+    unlocked,
+    unlocked_at,
+    description
+  )
+  select
+    new.id,
+    seed.name,
+    seed.icon,
+    seed.rarity,
+    false,
+    'locked',
+    seed.description
+  from (
+    values
+      ('첫 로그인', '⭐', 'Common', '계정 생성 후 처음 접속했습니다.'),
+      ('첫 승리', '🏆', 'Rare', '게임에서 첫 승리를 달성했습니다.'),
+      ('추리 시작', '🔎', 'Common', '첫 게임 참여를 완료했습니다.'),
+      ('숙련자', '🎖️', 'Epic', '누적 플레이를 통해 실력을 증명했습니다.')
+  ) as seed(name, icon, rarity, description)
+  on conflict (user_id, name) do nothing;
+
+  insert into public.player_cosmetics (
+    user_id,
+    label,
+    value,
+    sort_order
+  )
+  select
+    new.id,
+    seed.label,
+    seed.value,
+    seed.sort_order
+  from (
+    values
+      ('프로필 테두리', '기본 테두리', 1),
+      ('프로필 배경', '기본 배경', 2),
+      ('채팅 효과', '기본 효과', 3),
+      ('닉네임 색상', '기본 색상', 4)
+  ) as seed(label, value, sort_order)
+  on conflict (user_id, label) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_initialize_profile_progress on public.profiles;
+
+create trigger profiles_initialize_profile_progress
+after insert on public.profiles
+for each row
+execute function public.initialize_profile_progress();
+
+insert into public.player_ranks (user_id, tier, rp, top_percent, emblem)
+select id, 'Unranked', 0, 100, '-'
+from public.profiles
+where not exists (
+  select 1
+  from public.player_ranks
+  where player_ranks.user_id = public.profiles.id
+)
+on conflict (user_id) do nothing;
+
+insert into public.player_stats (
+  user_id,
+  total_games,
+  overall_win_rate,
+  citizen_win_rate,
+  mafia_win_rate,
+  survival_rate,
+  average_survival_turn
+)
+select id, 0, 0, 0, 0, 0, 0
+from public.profiles
+where not exists (
+  select 1
+  from public.player_stats
+  where player_stats.user_id = public.profiles.id
+)
+on conflict (user_id) do nothing;
+
+insert into public.player_role_stats (
+  user_id,
+  role_name,
+  icon,
+  games_played,
+  win_rate,
+  is_most_played
+)
+select p.id, seed.role_name, seed.icon, 0, 0, false
+from public.profiles p
+cross join (
+  values
+    ('시민', 'C'),
+    ('마피아', 'M'),
+    ('경찰', 'P'),
+    ('의사', 'D')
+) as seed(role_name, icon)
+where not exists (
+  select 1
+  from public.player_role_stats
+  where player_role_stats.user_id = p.id
+    and player_role_stats.role_name = seed.role_name
+)
+on conflict (user_id, role_name) do nothing;
+
+insert into public.player_achievements (
+  user_id,
+  name,
+  icon,
+  rarity,
+  unlocked,
+  unlocked_at,
+  description
+)
+select p.id, seed.name, seed.icon, seed.rarity, false, 'locked', seed.description
+from public.profiles p
+cross join (
+  values
+    ('첫 로그인', '⭐', 'Common', '계정 생성 후 처음 접속했습니다.'),
+    ('첫 승리', '🏆', 'Rare', '게임에서 첫 승리를 달성했습니다.'),
+    ('추리 시작', '🔎', 'Common', '첫 게임 참여를 완료했습니다.'),
+    ('숙련자', '🎖️', 'Epic', '누적 플레이를 통해 실력을 증명했습니다.')
+) as seed(name, icon, rarity, description)
+where not exists (
+  select 1
+  from public.player_achievements
+  where player_achievements.user_id = p.id
+    and player_achievements.name = seed.name
+)
+on conflict (user_id, name) do nothing;
+
+insert into public.player_cosmetics (
+  user_id,
+  label,
+  value,
+  sort_order
+)
+select p.id, seed.label, seed.value, seed.sort_order
+from public.profiles p
+cross join (
+  values
+    ('프로필 테두리', '기본 테두리', 1),
+    ('프로필 배경', '기본 배경', 2),
+    ('채팅 효과', '기본 효과', 3),
+    ('닉네임 색상', '기본 색상', 4)
+) as seed(label, value, sort_order)
+where not exists (
+  select 1
+  from public.player_cosmetics
+  where player_cosmetics.user_id = p.id
+    and player_cosmetics.label = seed.label
+)
+on conflict (user_id, label) do nothing;
 
 alter table public.profiles enable row level security;
 alter table public.rooms enable row level security;
@@ -656,6 +903,8 @@ grant execute on function public.respond_room_invite(uuid, boolean) to authentic
 drop function if exists public.create_room(text, text, integer);
 drop function if exists public.create_room(text, text, integer, integer, integer, text, text);
 drop function if exists public.create_room(text, text, integer, integer, integer, text, text, jsonb);
+drop function if exists public.create_room(text, text, integer, integer, integer, text, text, text, jsonb);
+drop function if exists public.create_room(text, text, integer, integer, integer, integer, integer, text, boolean, boolean, boolean, boolean, boolean, text, text, text, jsonb);
 
 create or replace function public.create_room(
   p_title text,
@@ -663,8 +912,17 @@ create or replace function public.create_room(
   p_max_players integer,
   p_night_time_seconds integer default 30,
   p_vote_time_seconds integer default 15,
+  p_discussion_time_seconds integer default 60,
+  p_min_start_players integer default 4,
+  p_tie_vote_rule text default 'no_execution',
+  p_dead_chat_enabled boolean default false,
+  p_spectator_allowed boolean default false,
+  p_host_auto_transfer boolean default true,
+  p_afk_auto_handle boolean default false,
+  p_first_night_ability_allowed boolean default true,
   p_role_reveal_mode text default 'private',
   p_entry_mode text default 'public',
+  p_entry_password text default '',
   p_role_config jsonb default '{}'::jsonb
 )
 returns public.rooms
@@ -698,12 +956,24 @@ begin
     raise exception 'Vote time must be between 10 and 90 seconds';
   end if;
 
+  if p_discussion_time_seconds is null or p_discussion_time_seconds < 30 or p_discussion_time_seconds > 180 then
+    raise exception 'Discussion time must be between 30 and 180 seconds';
+  end if;
+
+  if p_min_start_players is null or p_min_start_players < 2 or p_min_start_players > p_max_players then
+    raise exception 'Minimum start players must be between 2 and the room max players';
+  end if;
+
   if p_role_reveal_mode not in ('private', 'public') then
     raise exception 'Invalid role reveal mode';
   end if;
 
   if p_entry_mode not in ('public', 'private') then
     raise exception 'Invalid entry mode';
+  end if;
+
+  if p_entry_mode = 'private' and nullif(trim(p_entry_password), '') is null then
+    raise exception 'Room password is required for private rooms';
   end if;
 
   loop
@@ -721,8 +991,17 @@ begin
         phase,
         night_time_seconds,
         vote_time_seconds,
+        discussion_time_seconds,
+        min_start_players,
+        tie_vote_rule,
+        dead_chat_enabled,
+        spectator_allowed,
+        host_auto_transfer,
+        afk_auto_handle,
+        first_night_ability_allowed,
         role_reveal_mode,
         entry_mode,
+        entry_password,
         role_config
       ) values (
         trim(p_title),
@@ -734,8 +1013,17 @@ begin
         'before_start',
         p_night_time_seconds,
         p_vote_time_seconds,
+        p_discussion_time_seconds,
+        p_min_start_players,
+        coalesce(nullif(trim(p_tie_vote_rule), ''), 'no_execution'),
+        coalesce(p_dead_chat_enabled, false),
+        coalesce(p_spectator_allowed, false),
+        coalesce(p_host_auto_transfer, true),
+        coalesce(p_afk_auto_handle, false),
+        coalesce(p_first_night_ability_allowed, true),
         p_role_reveal_mode,
         p_entry_mode,
+        case when p_entry_mode = 'private' then trim(p_entry_password) else '' end,
         coalesce(p_role_config, '{}'::jsonb)
       ) returning * into v_room;
 
@@ -764,7 +1052,7 @@ begin
 end;
 $$;
 
-grant execute on function public.create_room(text, text, integer, integer, integer, text, text, jsonb) to authenticated;
+grant execute on function public.create_room(text, text, integer, integer, integer, integer, integer, text, boolean, boolean, boolean, boolean, boolean, text, text, text, jsonb) to authenticated;
 
 create or replace function public.join_room(p_room_id uuid)
 returns public.rooms
@@ -959,7 +1247,7 @@ set
 where login_id = 'host';
 
 insert into public.player_ranks (user_id, tier, rp, top_percent, emblem)
-select id, 'Bronze II', 420, 72, 'B'
+select id, 'Unranked', 0, 100, '-'
 from public.profiles
 where login_id = 'host'
 on conflict (user_id) do update

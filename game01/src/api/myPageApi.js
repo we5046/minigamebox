@@ -9,6 +9,7 @@ function getEmptyMyPage(user) {
       loginId: user?.loginId || 'guest',
       level: user?.character?.level || 1,
       title: user?.character?.name || 'Rookie Mafia',
+      avatar: user?.character?.avatar || 'default-mafia',
       coin: user?.character?.coin || 0,
       exp: 0,
       status: user ? 'Online' : 'Guest',
@@ -70,6 +71,7 @@ function normalizeMyPageData(user, rows) {
       loginId: profileRow?.login_id || empty.profile.loginId,
       level: profileRow?.level ?? empty.profile.level,
       title: profileRow?.representative_title || profileRow?.character_name || empty.profile.title,
+      avatar: profileRow?.avatar || empty.profile.avatar,
       coin: profileRow?.coin ?? empty.profile.coin,
       exp: profileRow?.experience_percent ?? empty.profile.exp,
       quote: profileRow?.profile_quote || empty.profile.quote,
@@ -141,6 +143,70 @@ async function selectMaybe(query) {
   return data
 }
 
+function normalizeProfileUpdatePayload(payload) {
+  const profilePayload = {}
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'nickname')) {
+    profilePayload.nickname = payload.nickname.trim()
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'representativeTitle')) {
+    profilePayload.representative_title = payload.representativeTitle.trim()
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'characterName')) {
+    profilePayload.character_name = payload.characterName.trim()
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'quote')) {
+    profilePayload.profile_quote = payload.quote.trim()
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'avatar')) {
+    profilePayload.avatar = payload.avatar.trim()
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'experiencePercent')) {
+    profilePayload.experience_percent = Number(payload.experiencePercent)
+  }
+
+  return profilePayload
+}
+
+export async function updateMyPageProfile(userId, payload) {
+  const profilePayload = normalizeProfileUpdatePayload(payload)
+
+  if (Object.keys(profilePayload).length === 0) {
+    return null
+  }
+
+  const { error } = await supabase.from('profiles').update(profilePayload).eq('id', userId)
+
+  if (error) {
+    throw new Error('프로필 저장에 실패했습니다.')
+  }
+
+  return selectMaybe(supabase.from('profiles').select('*').eq('id', userId).maybeSingle())
+}
+
+export async function upsertMyPageCosmetic(userId, label, value, sortOrder = 0) {
+  const { error } = await supabase.from('player_cosmetics').upsert(
+    {
+      user_id: userId,
+      label,
+      value,
+      sort_order: sortOrder,
+    },
+    {
+      onConflict: 'user_id,label',
+    },
+  )
+
+  if (error) {
+    throw new Error('꾸미기 정보를 저장하지 못했습니다.')
+  }
+}
+
 export async function getMyPageData(user) {
   if (!user?.id) {
     return getEmptyMyPage(user)
@@ -148,20 +214,38 @@ export async function getMyPageData(user) {
 
   try {
     const [profile, stats, rank, roles, matches, achievements, cosmetics] = await Promise.all([
-      selectMaybe(supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()),
-      selectMaybe(supabase.from('player_stats').select('*').eq('user_id', user.id).maybeSingle()),
-      selectMaybe(supabase.from('player_ranks').select('*').eq('user_id', user.id).maybeSingle()),
+      selectMaybe(
+        supabase
+          .from('profiles')
+          .select('id, login_id, nickname, character_name, level, coin, avatar, representative_title, profile_quote, experience_percent')
+          .eq('id', user.id)
+          .maybeSingle(),
+      ),
+      selectMaybe(
+        supabase
+          .from('player_stats')
+          .select('user_id, total_games, overall_win_rate, citizen_win_rate, mafia_win_rate, survival_rate, average_survival_turn')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+      ),
+      selectMaybe(
+        supabase
+          .from('player_ranks')
+          .select('user_id, tier, rp, top_percent, emblem')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+      ),
       selectMaybe(
         supabase
           .from('player_role_stats')
-          .select('*')
+          .select('user_id, role_name, icon, games_played, win_rate, is_most_played')
           .eq('user_id', user.id)
           .order('games_played', { ascending: false }),
       ),
       selectMaybe(
         supabase
           .from('player_recent_matches')
-          .select('*')
+          .select('id, user_id, role_name, role_icon, won, summary, detail, played_at')
           .eq('user_id', user.id)
           .order('played_at', { ascending: false })
           .limit(5),
@@ -169,14 +253,14 @@ export async function getMyPageData(user) {
       selectMaybe(
         supabase
           .from('player_achievements')
-          .select('*')
+          .select('id, user_id, name, icon, rarity, unlocked, unlocked_at, description')
           .eq('user_id', user.id)
           .order('unlocked_at', { ascending: false }),
       ),
       selectMaybe(
         supabase
           .from('player_cosmetics')
-          .select('*')
+          .select('id, user_id, label, value, sort_order')
           .eq('user_id', user.id)
           .order('sort_order', { ascending: true }),
       ),

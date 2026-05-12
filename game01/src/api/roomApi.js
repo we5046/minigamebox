@@ -4,6 +4,16 @@ const roomListChannels = new Map()
 const roomDetailChannels = new Map()
 const ROOM_LIST_CHANNEL_KEY = 'rooms-list'
 
+export const DEFAULT_ROOM_DETAIL_SETTINGS = {
+  nightTimeSeconds: 30,
+  discussionTimeSeconds: 60,
+  voteTimeSeconds: 15,
+  minStartPlayers: 4,
+  tieVoteRule: 'no_execution',
+  spectatorAllowed: false,
+  firstNightAbilityAllowed: true,
+}
+
 function toPlayer(row) {
   return {
     userId: row.user_id,
@@ -32,8 +42,20 @@ export function normalizeRoom(room) {
     hostNickname: hostPlayer?.nickname || room.host_nickname || 'Unknown',
     status: room.status,
     maxPlayers: room.max_players,
-    nightTimeSeconds: room.night_time_seconds || 30,
-    voteTimeSeconds: room.vote_time_seconds || 15,
+    nightTimeSeconds:
+      room.night_time_seconds ?? DEFAULT_ROOM_DETAIL_SETTINGS.nightTimeSeconds,
+    voteTimeSeconds:
+      room.vote_time_seconds ?? DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds,
+    discussionTimeSeconds:
+      room.discussion_time_seconds ?? DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds,
+    minStartPlayers:
+      room.min_start_players ?? DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers,
+    tieVoteRule: room.tie_vote_rule || DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule,
+    spectatorAllowed:
+      room.spectator_allowed ?? DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed,
+    firstNightAbilityAllowed:
+      room.first_night_ability_allowed ??
+      DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed,
     roleRevealMode: room.role_reveal_mode || 'private',
     entryMode: room.entry_mode || 'public',
     roleConfig: room.role_config || null,
@@ -45,7 +67,26 @@ export function normalizeRoom(room) {
 }
 
 const roomSelect = `
-  *,
+  id,
+  title,
+  description,
+  code,
+  host_user_id,
+  status,
+  max_players,
+  phase,
+  night_time_seconds,
+  vote_time_seconds,
+  discussion_time_seconds,
+  min_start_players,
+  tie_vote_rule,
+  spectator_allowed,
+  first_night_ability_allowed,
+  role_reveal_mode,
+  entry_mode,
+  role_config,
+  updated_at,
+  created_at,
   room_players (
     user_id,
     is_host,
@@ -87,10 +128,16 @@ export async function createRoom({
   title,
   description,
   maxPlayers,
-  nightTimeSeconds = 30,
-  voteTimeSeconds = 15,
+  nightTimeSeconds = DEFAULT_ROOM_DETAIL_SETTINGS.nightTimeSeconds,
+  voteTimeSeconds = DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds,
+  discussionTimeSeconds = DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds,
+  minStartPlayers = DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers,
+  tieVoteRule = DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule,
+  spectatorAllowed = DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed,
+  firstNightAbilityAllowed = DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed,
   roleRevealMode = 'private',
   entryMode = 'public',
+  entryPassword = '',
   roleConfig = null,
 }) {
   const { data: room, error } = await supabase.rpc('create_room', {
@@ -99,8 +146,14 @@ export async function createRoom({
     p_max_players: maxPlayers,
     p_night_time_seconds: nightTimeSeconds,
     p_vote_time_seconds: voteTimeSeconds,
+    p_discussion_time_seconds: discussionTimeSeconds,
+    p_min_start_players: minStartPlayers,
+    p_tie_vote_rule: tieVoteRule,
+    p_spectator_allowed: spectatorAllowed,
+    p_first_night_ability_allowed: firstNightAbilityAllowed,
     p_role_reveal_mode: roleRevealMode,
     p_entry_mode: entryMode,
+    p_entry_password: entryPassword,
     p_role_config: roleConfig,
   })
 
@@ -153,10 +206,32 @@ export async function updateRoom(roomId, payload) {
   if (payload.status) roomPayload.status = payload.status
   if (payload.phase) roomPayload.phase = payload.phase
   if (payload.maxPlayers) roomPayload.max_players = payload.maxPlayers
-  if (payload.nightTimeSeconds) roomPayload.night_time_seconds = payload.nightTimeSeconds
-  if (payload.voteTimeSeconds) roomPayload.vote_time_seconds = payload.voteTimeSeconds
+  if (Object.prototype.hasOwnProperty.call(payload, 'nightTimeSeconds')) {
+    roomPayload.night_time_seconds = payload.nightTimeSeconds
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'voteTimeSeconds')) {
+    roomPayload.vote_time_seconds = payload.voteTimeSeconds
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'discussionTimeSeconds')) {
+    roomPayload.discussion_time_seconds = payload.discussionTimeSeconds
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'minStartPlayers')) {
+    roomPayload.min_start_players = payload.minStartPlayers
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'tieVoteRule')) {
+    roomPayload.tie_vote_rule = payload.tieVoteRule
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'spectatorAllowed')) {
+    roomPayload.spectator_allowed = payload.spectatorAllowed
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'firstNightAbilityAllowed')) {
+    roomPayload.first_night_ability_allowed = payload.firstNightAbilityAllowed
+  }
   if (payload.roleRevealMode) roomPayload.role_reveal_mode = payload.roleRevealMode
   if (payload.entryMode) roomPayload.entry_mode = payload.entryMode
+  if (Object.prototype.hasOwnProperty.call(payload, 'entryPassword')) {
+    roomPayload.entry_password = payload.entryPassword || ''
+  }
   if (payload.roleConfig) roomPayload.role_config = payload.roleConfig
 
   if (Object.keys(roomPayload).length > 0) {

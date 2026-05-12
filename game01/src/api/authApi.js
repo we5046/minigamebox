@@ -41,9 +41,17 @@ export function toCurrentUser(profile) {
 
 export async function getProfile(userId) {
   const [profileResult, rankResult, statsResult] = await Promise.all([
-    supabase.from('profiles').select('*').eq('id', userId).single(),
-    supabase.from('player_ranks').select('*').eq('user_id', userId).maybeSingle(),
-    supabase.from('player_stats').select('*').eq('user_id', userId).maybeSingle(),
+    supabase
+      .from('profiles')
+      .select('id, login_id, nickname, character_name, level, coin, avatar, representative_title, profile_quote, experience_percent')
+      .eq('id', userId)
+      .single(),
+    supabase.from('player_ranks').select('user_id, tier, rp, top_percent, emblem').eq('user_id', userId).maybeSingle(),
+    supabase
+      .from('player_stats')
+      .select('user_id, total_games, overall_win_rate, citizen_win_rate, mafia_win_rate, survival_rate, average_survival_turn')
+      .eq('user_id', userId)
+      .maybeSingle(),
   ])
 
   if (profileResult.error) {

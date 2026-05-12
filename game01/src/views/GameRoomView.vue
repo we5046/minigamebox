@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed, onBeforeUnmount, onMounted, ref, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
@@ -12,7 +12,7 @@ import {
   updateRoom,
 } from '@/api/roomApi';
 import { subscribeToRoomChat, sendRoomChatMessage, normalizeBroadcastMessage } from '@/api/chatApi';
-import { setCurrentUserPresence } from '@/api/presenceApi';
+import { setCurrentUserPresence, subscribeToPresenceUsers } from '@/api/presenceApi';
 import { getFriendships } from '@/api/friendApi';
 import { getRoomInvites, sendRoomInvite } from '@/api/roomInviteApi';
 
@@ -47,12 +47,16 @@ const friendships = ref([]);
 const sentRoomInvites = ref([]);
 const invitingUserIds = ref(new Set());
 const isLoadingInviteFriends = ref(false);
+const presenceUsers = ref([]);
+const isInviteModalOpen = ref(false);
+const inviteSearchQuery = ref('');
 
 let unsubscribeRoom = null;
 let roomChatSubscription = null;
 let syncTimer = null;
 let sentInviteRefreshTimer = null;
 let inviteCountdownTimer = null;
+let unsubscribePresenceUsers = null;
 const chatChannel = ref(null);
 const hasAnnouncedEntry = ref(false);
 const inviteCountdownTick = ref(Date.now());
@@ -84,16 +88,30 @@ const sentInviteMap = computed(() => {
 });
 const inviteFriends = computed(() => {
   const playerIds = new Set(players.value.map((player) => player.userId));
+  const onlineUserIds = new Set(presenceUsers.value.map((user) => user.id));
 
   return friendships.value
     .filter((friendship) => friendship.status === 'accepted')
     .filter((friendship) => !playerIds.has(friendship.friend.id))
     .map((friendship) => ({
       ...friendship.friend,
+      isOnline: onlineUserIds.has(friendship.friend.id),
       inviteRemainingSeconds: getInviteRemainingSeconds(sentInviteMap.value.get(friendship.friend.id)),
       isInvited: getInviteRemainingSeconds(sentInviteMap.value.get(friendship.friend.id)) > 0,
       isInviting: invitingUserIds.value.has(friendship.friend.id),
     }));
+});
+
+const filteredInviteFriends = computed(() => {
+  const query = inviteSearchQuery.value.trim().toLowerCase();
+
+  if (!query) {
+    return inviteFriends.value;
+  }
+
+  return inviteFriends.value.filter((friend) => {
+    return String(friend.nickname || '').toLowerCase().includes(query);
+  });
 });
 
 const roleOptions = [
@@ -177,6 +195,10 @@ async function syncRoomPresence() {
 }
 
 onMounted(() => {
+  unsubscribePresenceUsers = subscribeToPresenceUsers((users) => {
+    presenceUsers.value = users;
+  });
+
   const sub = subscribeToRoomChat(props.roomId, handleChatEvent);
   roomChatSubscription = sub.unsubscribe;
   chatChannel.value = sub.channel;
@@ -196,6 +218,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unsubscribeRoom?.();
   roomChatSubscription?.();
+  unsubscribePresenceUsers?.();
   if (syncTimer) {
     clearTimeout(syncTimer);
   }
@@ -309,7 +332,27 @@ async function loadSentRoomInvites() {
 }
 
 async function inviteFriendToRoom(friend) {
-  if (!room.value || room.value.status !== 'waiting' || invitingUserIds.value.has(friend.id)) {
+  if (!room.value || room.value.status !== 'waiting') {
+    toastStore.error('대기중인 방에서만 초대할 수 있습니다.');
+    return;
+  }
+
+  if (friend.isOnline === false) {
+    toastStore.error('오프라인 유저는 초대할 수 없습니다.');
+    return;
+  }
+
+  if (players.value.some((player) => player.userId === friend.id)) {
+    toastStore.error('이미 방에 있는 유저는 초대할 수 없습니다.');
+    return;
+  }
+
+  if (friend.isInvited) {
+    toastStore.error('초대 쿨타임이 아직 남아 있습니다.');
+    return;
+  }
+
+  if (invitingUserIds.value.has(friend.id)) {
     return;
   }
 
@@ -326,6 +369,50 @@ async function inviteFriendToRoom(friend) {
     nextInvitingIds.delete(friend.id);
     invitingUserIds.value = nextInvitingIds;
   }
+}
+
+function openInviteModal() {
+  if (!room.value || room.value.status !== 'waiting') {
+    toastStore.error('초대는 대기중인 방에서만 사용할 수 있습니다.');
+    return;
+  }
+
+  isInviteModalOpen.value = true;
+  inviteSearchQuery.value = '';
+}
+
+function closeInviteModal() {
+  isInviteModalOpen.value = false;
+  inviteSearchQuery.value = '';
+}
+
+async function inviteByNickname() {
+  const query = inviteSearchQuery.value.trim();
+
+  if (!query) {
+    return;
+  }
+
+  const exactMatch = filteredInviteFriends.value.find(
+    (friend) => String(friend.nickname || '').trim().toLowerCase() === query.toLowerCase(),
+  );
+
+  if (exactMatch) {
+    await inviteFriendToRoom(exactMatch);
+    return;
+  }
+
+  if (filteredInviteFriends.value.length === 1) {
+    await inviteFriendToRoom(filteredInviteFriends.value[0]);
+    return;
+  }
+
+  if (filteredInviteFriends.value.length === 0) {
+    toastStore.error('초대할 수 있는 친구를 찾지 못했습니다.');
+    return;
+  }
+
+  toastStore.error('검색 결과가 여러 명입니다. 목록에서 대상을 선택하세요.');
 }
 
 async function syncRoom() {
@@ -1012,38 +1099,6 @@ async function leaveRoom() {
         </article>
       </div>
 
-      <section class="room-invite-section">
-        <div class="players-heading">
-          <h2>친구 초대</h2>
-          <span class="sync-status">{{ inviteFriends.length }}명 초대 가능</span>
-        </div>
-
-        <div v-if="isLoadingInviteFriends" class="invite-empty">친구 목록을 불러오는 중...</div>
-        <div v-else-if="inviteFriends.length === 0" class="invite-empty">
-          초대 가능한 친구가 없습니다.
-        </div>
-        <ul v-else class="invite-friend-list">
-          <li v-for="friend in inviteFriends" :key="friend.id" class="invite-friend-card">
-            <div>
-              <strong>{{ friend.nickname }}</strong>
-              <span>{{ friend.title }}</span>
-            </div>
-            <button
-              type="button"
-              :disabled="friend.isInvited || friend.isInviting || room.status !== 'waiting'"
-              @click="inviteFriendToRoom(friend)"
-            >
-              <span class="invite-button-label" v-if="friend.isInviting">전송 중</span>
-              <span class="invite-button-label" v-else-if="friend.isInvited">
-                {{ friend.inviteRemainingSeconds }}초
-              </span>
-              <span class="invite-button-label" v-else>초대</span>
-              {{ friend.isInviting ? '전송 중' : friend.isInvited ? '초대됨' : '초대' }}
-            </button>
-          </li>
-        </ul>
-      </section>
-
       <div class="players-section">
         <div class="players-heading">
           <h2>참여 인원 목록</h2>
@@ -1089,10 +1144,20 @@ async function leaveRoom() {
             :key="'empty-' + i"
             class="player-card empty-slot"
           >
-            <div class="empty-content">
-              <span class="empty-icon">+ EMPTY SLOT</span>
-              <span class="empty-text">플레이어 대기 중...</span>
-            </div>
+            <button
+              type="button"
+              class="empty-slot-button"
+              :disabled="room.status !== 'waiting'"
+              aria-label="친구 초대"
+              @click="openInviteModal"
+            >
+              <span class="empty-content">
+                <span class="empty-icon">+ EMPTY SLOT</span>
+                <span class="empty-text">
+                  {{ room.status === 'waiting' ? '친구 초대' : '대기 중에만 가능' }}
+                </span>
+              </span>
+            </button>
           </li>
         </ul>
       </div>
@@ -1133,6 +1198,94 @@ async function leaveRoom() {
             전송
           </button>
         </form>
+      </div>
+
+      <div
+        v-if="isInviteModalOpen"
+        class="invite-modal-backdrop"
+        @click.self="closeInviteModal"
+      >
+        <section
+          class="invite-modal room-form-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="invite-modal-title"
+        >
+          <div class="edit-room-header">
+            <div>
+              <p class="eyebrow">Invite</p>
+              <h2 id="invite-modal-title">친구 초대</h2>
+            </div>
+            <button
+              type="button"
+              class="icon-close-btn"
+              aria-label="초대 모달 닫기"
+              @click="closeInviteModal"
+            >
+              X
+            </button>
+          </div>
+
+          <form class="invite-search-form" @submit.prevent="inviteByNickname">
+            <label for="invite-search">닉네임 검색/입력</label>
+            <div class="invite-search-row">
+              <input
+                id="invite-search"
+                v-model="inviteSearchQuery"
+                type="text"
+                class="text-input"
+                placeholder="친구 닉네임을 입력하세요"
+              />
+              <button type="submit" :disabled="!inviteSearchQuery.trim()">
+                초대
+              </button>
+            </div>
+          </form>
+
+          <div class="invite-modal-meta">
+            <span>초대 가능 친구 {{ filteredInviteFriends.length }}명</span>
+            <span>쿨타임 중 {{ inviteFriends.filter((friend) => friend.isInvited).length }}명</span>
+          </div>
+
+          <div v-if="isLoadingInviteFriends" class="invite-empty">친구 목록을 불러오는 중...</div>
+          <div v-else-if="filteredInviteFriends.length === 0" class="invite-empty">
+            초대할 수 있는 친구가 없습니다.
+          </div>
+          <ul v-else class="invite-friend-list">
+            <li
+              v-for="friend in filteredInviteFriends"
+              :key="friend.id"
+              class="invite-friend-card"
+              :class="{
+                disabled: friend.isInvited || !friend.isOnline,
+                online: friend.isOnline,
+              }"
+            >
+              <button
+                type="button"
+                class="invite-friend-main"
+                :disabled="friend.isInvited || !friend.isOnline"
+                @click="inviteFriendToRoom(friend)"
+              >
+                <div>
+                  <strong>{{ friend.nickname }}</strong>
+                  <span>{{ friend.title }}</span>
+                </div>
+                <small>
+                  {{
+                    players.some((player) => player.userId === friend.id)
+                      ? '이미 방에 있음'
+                      : !friend.isOnline
+                        ? '오프라인'
+                        : friend.isInvited
+                          ? `${friend.inviteRemainingSeconds}초 쿨타임`
+                          : '초대 가능'
+                  }}
+                </small>
+              </button>
+            </li>
+          </ul>
+        </section>
       </div>
     </template>
 
@@ -1415,18 +1568,6 @@ async function leaveRoom() {
   box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
 }
 
-.room-invite-section {
-  background: rgba(0, 0, 0, 0.24);
-  border: 1px solid rgba(255, 190, 85, 0.12);
-  border-radius: 8px;
-  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.36);
-  display: grid;
-  gap: 1rem;
-  padding: 1.25rem;
-  position: relative;
-  z-index: 1;
-}
-
 .invite-friend-list {
   display: grid;
   gap: 0.75rem;
@@ -1442,15 +1583,15 @@ async function leaveRoom() {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   display: flex;
-  gap: 0.85rem;
+  gap: 0.95rem;
   justify-content: space-between;
   min-width: 0;
-  padding: 0.8rem;
+  padding: 0.95rem;
 }
 
 .invite-friend-card div {
   display: grid;
-  gap: 0.18rem;
+  gap: 0.32rem;
   min-width: 0;
 }
 
@@ -1467,28 +1608,217 @@ async function leaveRoom() {
   font-size: 0.82rem;
 }
 
-.invite-friend-card button {
+.invite-friend-main {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  font: inherit;
+  font-weight: 900;
+  padding: 0.85rem;
+  text-align: left;
+  width: 100%;
+}
+
+.invite-friend-main div {
+  display: grid;
+  gap: 0.32rem;
+  min-width: 0;
+}
+
+.invite-friend-main strong {
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invite-friend-main span,
+.invite-empty {
+  color: rgba(255, 245, 224, 0.52);
+  font-size: 0.82rem;
+}
+
+.invite-friend-main small {
+  color: rgba(255, 245, 224, 0.7);
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.invite-friend-main:hover:not(:disabled) {
+  background: rgba(255, 190, 85, 0.08);
+}
+
+.invite-friend-main:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.invite-friend-card.disabled {
+  border-color: rgba(255, 255, 255, 0.05);
+  opacity: 0.68;
+}
+
+.invite-friend-card.online .invite-friend-main small {
+  color: #86efac;
+}
+
+.invite-modal-backdrop {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 1.5rem;
+  position: fixed;
+  z-index: 85;
+}
+
+.invite-modal {
+  max-width: 760px;
+  width: min(100%, 760px);
+}
+
+.invite-modal.room-form-modal {
+  background:
+    linear-gradient(180deg, rgba(46, 28, 18, 0.98), rgba(18, 11, 8, 0.99)),
+    rgba(18, 11, 8, 0.99);
+  border: 1px solid rgba(255, 190, 85, 0.2);
+  display: grid;
+  gap: 0;
+  left: auto;
+  max-height: min(86vh, 760px);
+  padding: 2.25rem 2.35rem 2.35rem;
+  overflow-y: auto;
+  position: relative;
+  top: auto;
+  transform: none;
+  box-shadow:
+    0 36px 100px rgba(0, 0, 0, 0.78),
+    0 0 26px rgba(255, 143, 54, 0.16);
+}
+
+.invite-modal .edit-room-header {
+  margin-bottom: 1.5rem;
+}
+
+.invite-modal.room-form-modal::after {
+  background: rgba(0, 0, 0, 0.2);
+  content: '';
+  inset: 0;
+  position: absolute;
+  z-index: -1;
+}
+
+.invite-search-form {
+  display: grid;
+  gap: 0.85rem;
+  margin-bottom: 0;
+}
+
+.invite-search-form label {
+  color: rgba(255, 245, 224, 0.7);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.invite-search-row {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-bottom: 0.875rem;
+}
+
+.invite-search-row input {
+  background:
+    linear-gradient(180deg, rgba(10, 6, 4, 0.92), rgba(22, 14, 10, 0.96)),
+    rgba(10, 6, 4, 0.92);
+  border: 1px solid rgba(255, 190, 85, 0.24);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 18px rgba(0, 0, 0, 0.18);
+  color: #fff4db;
+  min-height: 48px;
+  padding: 0.85rem 1rem;
+}
+
+.invite-search-row input::placeholder {
+  color: rgba(255, 245, 224, 0.42);
+}
+
+.invite-search-row input:focus {
+  background:
+    linear-gradient(180deg, rgba(14, 8, 5, 0.98), rgba(24, 15, 10, 0.98)),
+    rgba(14, 8, 5, 0.98);
+  border-color: rgba(255, 190, 85, 0.62);
+  box-shadow:
+    0 0 0 3px rgba(255, 138, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+  outline: none;
+}
+
+.invite-search-row button {
+  align-self: stretch;
   background: linear-gradient(180deg, #ffbe55, #c9711d);
   border: 1px solid rgba(255, 230, 160, 0.3);
   border-radius: 6px;
   color: #1a0f08;
-  cursor: pointer;
-  flex: 0 0 auto;
-  font: inherit;
-  font-size: 0;
   font-weight: 900;
-  padding: 0.55rem 0.8rem;
+  min-width: 88px;
+  padding: 0.65rem 0.95rem;
 }
 
-.invite-friend-card button .invite-button-label {
-  color: inherit;
-  font-size: 0.88rem;
-}
-
-.invite-friend-card button:disabled {
+.invite-search-row button:disabled {
   cursor: not-allowed;
-  filter: grayscale(0.55);
-  opacity: 0.55;
+  opacity: 0.48;
+}
+
+.invite-modal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.125rem;
+}
+
+.invite-modal-meta span {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 190, 85, 0.14);
+  border-radius: 999px;
+  color: rgba(255, 245, 224, 0.68);
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0.3rem 0.55rem;
+}
+
+.invite-room-badges {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+}
+
+.invite-room-badge {
+  background: rgba(255, 190, 85, 0.08);
+  border: 1px solid rgba(255, 190, 85, 0.18);
+  border-radius: 999px;
+  color: #ffd28a;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 0.2rem 0.5rem;
+}
+
+.invite-room-badge.private {
+  background: rgba(252, 165, 165, 0.12);
+  border-color: rgba(252, 165, 165, 0.24);
+  color: #fca5a5;
 }
 
 .players-heading {
@@ -1637,6 +1967,44 @@ async function leaveRoom() {
   border: 1px dashed rgba(255, 255, 255, 0.15);
   justify-content: center;
   opacity: 0.6;
+  padding: 0;
+}
+
+.empty-slot-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  padding: 0.85rem;
+  width: 100%;
+}
+
+.empty-slot:hover {
+  border-color: rgba(255, 190, 85, 0.32);
+  box-shadow:
+    0 8px 16px rgba(0, 0, 0, 0.4),
+    0 0 12px rgba(255, 120, 52, 0.08);
+}
+
+.empty-slot-button:disabled {
+  cursor: not-allowed;
+}
+
+.empty-slot-button:hover:not(:disabled) .empty-icon,
+.empty-slot-button:focus-visible:not(:disabled) .empty-icon {
+  color: #ffd28a;
+}
+
+.empty-slot-button:hover:not(:disabled) .empty-text,
+.empty-slot-button:focus-visible:not(:disabled) .empty-text {
+  color: rgba(255, 224, 168, 0.9);
+}
+
+.empty-slot-button .empty-content {
+  pointer-events: none;
 }
 
 .empty-content {
@@ -1773,8 +2141,8 @@ async function leaveRoom() {
     0 18px 36px rgba(0, 0, 0, 0.45),
     inset 0 0 24px rgba(255, 120, 52, 0.05);
   display: grid;
-  gap: 1rem;
-  padding: 1.25rem;
+  gap: 1.35rem;
+  padding: 2rem 2.1rem 2.15rem;
   position: relative;
   z-index: 1;
 }
@@ -1835,8 +2203,8 @@ async function leaveRoom() {
   border-bottom: 1px solid rgba(255, 190, 85, 0.16);
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
-  padding-bottom: 0.9rem;
+  gap: 1.2rem;
+  padding-bottom: 1.15rem;
 }
 
 .edit-room-header h2 {
@@ -1873,7 +2241,7 @@ async function leaveRoom() {
 .edit-room-summary {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
+  gap: 0.7rem;
 }
 
 .edit-room-summary span {
@@ -1888,7 +2256,7 @@ async function leaveRoom() {
 
 .edit-room-form label {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.65rem;
   font-weight: 800;
   color: rgba(255, 245, 224, 0.78);
   font-size: 0.9rem;
@@ -1919,13 +2287,13 @@ async function leaveRoom() {
 
 .option-group {
   display: grid;
-  gap: 0.6rem;
+  gap: 0.85rem;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .room-custom-grid {
   display: grid;
-  gap: 0.9rem;
+  gap: 1.15rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -1979,8 +2347,8 @@ async function leaveRoom() {
   border: 1px solid rgba(255, 190, 85, 0.14);
   border-radius: 0.75rem;
   display: grid;
-  gap: 0.55rem;
-  padding: 0.75rem;
+  gap: 0.8rem;
+  padding: 1rem;
 }
 
 .friendly-stepper {
@@ -2038,8 +2406,8 @@ async function leaveRoom() {
   border: 1px solid rgba(255, 138, 0, 0.22);
   border-radius: 0.75rem;
   display: grid;
-  gap: 0.8rem;
-  padding: 0.85rem;
+  gap: 1rem;
+  padding: 1.05rem;
 }
 
 .role-config-section.invalid {
@@ -2058,9 +2426,9 @@ async function leaveRoom() {
   align-items: center;
   border-bottom: 1px solid rgba(255, 190, 85, 0.1);
   display: flex;
-  gap: 0.75rem;
+  gap: 0.95rem;
   justify-content: space-between;
-  padding-bottom: 0.62rem;
+  padding-bottom: 0.85rem;
 }
 
 .role-config-header h3 {
@@ -2104,7 +2472,7 @@ async function leaveRoom() {
 
 .role-config-list {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.75rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -2114,10 +2482,10 @@ async function leaveRoom() {
   border: 1px solid rgba(255, 190, 85, 0.1);
   border-radius: 0.6rem;
   display: flex;
-  gap: 0.55rem;
+  gap: 0.75rem;
   justify-content: space-between;
   min-width: 0;
-  padding: 0.5rem 0.55rem;
+  padding: 0.75rem 0.8rem;
 }
 
 .role-config-row > span {

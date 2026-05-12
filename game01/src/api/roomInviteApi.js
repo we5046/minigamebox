@@ -6,7 +6,13 @@ const inviteSelect = `
     id,
     title,
     status,
-    max_players
+    max_players,
+    description,
+    host_nickname,
+    entry_mode,
+    room_players (
+      user_id
+    )
   ),
   inviter:profiles!room_invites_from_user_id_fkey (
     id,
@@ -25,6 +31,8 @@ const inviteSelect = `
 const inviteChannels = new Map()
 
 export function normalizeRoomInvite(row) {
+  const roomPlayers = row.room?.room_players || []
+
   return {
     id: row.id,
     roomId: row.room_id,
@@ -39,6 +47,10 @@ export function normalizeRoomInvite(row) {
       title: row.room?.title || 'Unknown Room',
       status: row.room?.status || 'waiting',
       maxPlayers: row.room?.max_players || 8,
+      description: row.room?.description || '',
+      hostNickname: row.room?.host_nickname || 'Unknown',
+      entryMode: row.room?.entry_mode || 'public',
+      currentPlayers: roomPlayers.length,
     },
     inviter: {
       id: row.inviter?.id || row.from_user_id,

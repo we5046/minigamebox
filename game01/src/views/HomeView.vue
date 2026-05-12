@@ -10,6 +10,7 @@ import {
 import { useRouter } from 'vue-router';
 import { logoutUser } from '@/api/authApi';
 import { useAuthStore } from '@/stores/auth';
+import { useProfileStore } from '@/stores/profile';
 import { useRoomStore } from '@/stores/room';
 import { useToastStore } from '@/stores/toast';
 import GameSettingsModal from '@/components/GameSettingsModal.vue';
@@ -24,7 +25,10 @@ import {
   setCurrentUserPresence,
   subscribeToPresenceUsers,
 } from '@/api/presenceApi';
-import { createRoom as createRoomRequest } from '@/api/roomApi';
+import {
+  DEFAULT_ROOM_DETAIL_SETTINGS,
+  createRoom as createRoomRequest,
+} from '@/api/roomApi';
 import {
   getFriendships,
   removeFriend,
@@ -40,6 +44,7 @@ import {
 
 const router = useRouter();
 const authStore = useAuthStore();
+const profileStore = useProfileStore();
 const roomStore = useRoomStore();
 const toastStore = useToastStore();
 
@@ -51,12 +56,29 @@ const isCreateFormOpen = ref(false);
 const newRoomTitle = ref('');
 const newRoomDescription = ref('클래식');
 const newRoomMaxPlayers = ref(8);
-const newRoomNightTimeSeconds = ref(30);
-const newRoomVoteTimeSeconds = ref(15);
+const newRoomNightTimeSeconds = ref(
+  DEFAULT_ROOM_DETAIL_SETTINGS.nightTimeSeconds,
+);
+const newRoomVoteTimeSeconds = ref(DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds);
+const newRoomDiscussionTimeSeconds = ref(
+  DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds,
+);
+const newRoomMinStartPlayers = ref(
+  DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers,
+);
+const newRoomTieVoteRule = ref(DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule);
+const newRoomSpectatorAllowed = ref(
+  DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed,
+);
+const newRoomFirstNightAbilityAllowed = ref(
+  DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed,
+);
 const newRoomRoleRevealMode = ref('private');
 const newRoomEntryMode = ref('public');
+const newRoomEntryPassword = ref('');
 const newRoomRoleConfig = ref(getDefaultRoleConfig(8));
 const isRecommendedRolesEnabled = ref(false);
+const isNewRoomAdvancedOpen = ref(false);
 const ROOMS_PER_PAGE = 5;
 const currentRoomPage = ref(1);
 const selectedRoomId = ref(null);
@@ -107,22 +129,7 @@ const lobbySettingsSections = [
   },
 ];
 
-const character = computed(() => ({
-  nickname: savedUser.value?.nickname || 'GuestPlayer',
-  title: savedUser.value?.character?.name || 'Rookie Mafia',
-  coin: savedUser.value?.character?.coin ?? savedUser.value?.coin ?? 0,
-  level: savedUser.value?.character?.level ?? savedUser.value?.level ?? 1,
-  expPercent:
-    savedUser.value?.experiencePercent ?? savedUser.value?.expPercent ?? 0,
-  rank: savedUser.value?.rank?.tier || savedUser.value?.rankTier || 'Unranked',
-  representativeTitle: savedUser.value?.representativeTitle || '침착한 추리꾼',
-  quote: savedUser.value?.quote || '오늘 밤 누가 거짓말을 하고 있을까?',
-  winRate:
-    savedUser.value?.stats?.winRate !== undefined
-      ? `${Math.round(Number(savedUser.value.stats.winRate || 0))}%`
-      : savedUser.value?.winRate || '0%',
-  winStreak: savedUser.value?.winStreak ?? 0,
-}));
+const character = computed(() => profileStore.profile);
 
 const onlineUsers = computed(() => presenceUsers.value);
 const presenceByUserId = computed(() => {
@@ -163,7 +170,8 @@ const acceptedFriends = computed(() => {
         presenceStatusByUserId.value.get(friendship.friend.id) || 'offline',
       ),
       canReceiveWhisper:
-        presenceByUserId.value.get(friendship.friend.id)?.canReceiveWhisper === true,
+        presenceByUserId.value.get(friendship.friend.id)?.canReceiveWhisper ===
+        true,
     }));
 });
 const incomingFriendRequests = computed(() => {
@@ -234,6 +242,19 @@ const roleOptions = [
   { key: 'doctor', label: '의사' },
 ];
 const fixedPlayerCounts = [4, 6, 8, 12];
+const nightTimeOptions = [20, 30, 45, 60];
+const discussionTimeOptions = [30, 45, 60, 90, 120];
+const voteTimeOptions = [15, 30, 45, 60];
+const tieVoteOptions = [
+  { value: 'no_execution', label: '처형 없음' },
+  { value: 'revote', label: '재투표' },
+];
+const newRoomMinStartPlayerOptions = computed(() =>
+  Array.from(
+    { length: Math.max(1, Number(newRoomMaxPlayers.value) - 1) },
+    (_, index) => index + 2,
+  ),
+);
 
 const isFriendlyRoomMode = computed(
   () => newRoomDescription.value === '친선전',
@@ -256,7 +277,7 @@ const roleConfigStatusText = computed(() => {
     return '기본 밸런스 고정';
   }
 
-  return '친선전 사용자 설정';
+  return '커스텀 사용자 설정';
 });
 
 function getDefaultRoleConfig(maxPlayers) {
@@ -309,6 +330,7 @@ onMounted(async () => {
   unsubscribePublicChat = publicChatSubscription.unsubscribe;
 
   if (savedUser.value) {
+    await profileStore.reloadProfile(savedUser.value.id);
     await setCurrentUserPresence({
       userId: savedUser.value.id,
       nickname: character.value.nickname,
@@ -359,6 +381,7 @@ watch(savedUser, async (nextUser, previousUser) => {
   }
 
   if (nextUser) {
+    await profileStore.reloadProfile(nextUser.id);
     await loadFriendships();
     setupFriendshipRealtime();
     await loadRoomInvites();
@@ -373,6 +396,7 @@ watch(savedUser, async (nextUser, previousUser) => {
       canReceiveWhisper: true,
     });
   } else {
+    profileStore.resetProfile();
     await clearCurrentUserPresence();
   }
 });
@@ -394,6 +418,16 @@ watch([newRoomMaxPlayers, newRoomDescription], () => {
   }
 
   newRoomRoleConfig.value = getDefaultRoleConfig(newRoomMaxPlayers.value);
+});
+
+watch([newRoomMaxPlayers, newRoomMinStartPlayers], () => {
+  if (newRoomMinStartPlayers.value < 2) {
+    newRoomMinStartPlayers.value = 2;
+  }
+
+  if (newRoomMinStartPlayers.value > newRoomMaxPlayers.value) {
+    newRoomMinStartPlayers.value = newRoomMaxPlayers.value;
+  }
 });
 
 function handlePublicChatRealtimeEvent(payload) {
@@ -465,6 +499,24 @@ async function createRoom() {
     return;
   }
 
+  if (newRoomMinStartPlayers.value < 2) {
+    toastStore.error('최소 시작 인원은 2명 이상이어야 합니다.');
+    return;
+  }
+
+  if (newRoomMinStartPlayers.value > newRoomMaxPlayers.value) {
+    toastStore.error('최소 시작 인원은 참가 인원보다 많을 수 없습니다.');
+    return;
+  }
+
+  if (
+    newRoomEntryMode.value === 'private' &&
+    !newRoomEntryPassword.value.trim()
+  ) {
+    toastStore.error('비공개방은 비밀번호를 입력해야 합니다.');
+    return;
+  }
+
   isCreatingRoom.value = true;
 
   try {
@@ -475,19 +527,33 @@ async function createRoom() {
       maxPlayers: Number(newRoomMaxPlayers.value),
       nightTimeSeconds: Number(newRoomNightTimeSeconds.value),
       voteTimeSeconds: Number(newRoomVoteTimeSeconds.value),
+      discussionTimeSeconds: Number(newRoomDiscussionTimeSeconds.value),
+      minStartPlayers: Number(newRoomMinStartPlayers.value),
+      tieVoteRule: newRoomTieVoteRule.value,
+      spectatorAllowed: newRoomSpectatorAllowed.value,
+      firstNightAbilityAllowed: newRoomFirstNightAbilityAllowed.value,
       roleRevealMode: newRoomRoleRevealMode.value,
       entryMode: newRoomEntryMode.value,
+      entryPassword: newRoomEntryPassword.value.trim(),
       roleConfig: newRoomRoleConfig.value,
     });
     newRoomTitle.value = '';
     newRoomDescription.value = '클래식';
     newRoomMaxPlayers.value = 8;
-    newRoomNightTimeSeconds.value = 30;
-    newRoomVoteTimeSeconds.value = 15;
+    newRoomNightTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.nightTimeSeconds;
+    newRoomVoteTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds;
+    newRoomDiscussionTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds;
+    newRoomMinStartPlayers.value = DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers;
+    newRoomTieVoteRule.value = DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule;
+    newRoomSpectatorAllowed.value = DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed;
+    newRoomFirstNightAbilityAllowed.value =
+      DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed;
     newRoomRoleRevealMode.value = 'private';
     newRoomEntryMode.value = 'public';
+    newRoomEntryPassword.value = '';
     newRoomRoleConfig.value = getDefaultRoleConfig(8);
     isRecommendedRolesEnabled.value = false;
+    isNewRoomAdvancedOpen.value = false;
     isCreateFormOpen.value = false;
     await roomStore.fetchRooms();
     currentRoomPage.value = 1;
@@ -497,6 +563,28 @@ async function createRoom() {
   } finally {
     isCreatingRoom.value = false;
   }
+}
+
+function selectNewRoomEntryMode(mode) {
+  newRoomEntryMode.value = mode;
+
+  if (mode === 'public') {
+    newRoomEntryPassword.value = '';
+  }
+}
+
+function toggleNewRoomAdvancedSettings() {
+  isNewRoomAdvancedOpen.value = !isNewRoomAdvancedOpen.value;
+}
+
+function openCreateRoomForm() {
+  isCreateFormOpen.value = true;
+  isNewRoomAdvancedOpen.value = false;
+}
+
+function closeCreateRoomForm() {
+  isCreateFormOpen.value = false;
+  isNewRoomAdvancedOpen.value = false;
 }
 
 function clampRoomPage() {
@@ -1017,7 +1105,7 @@ function getModeClass(description) {
 
 function getModeDisplayLabel(description) {
   if (description === '랭크전') return '랭크전';
-  if (description === '친선전') return '친선전';
+  if (description === '친선전') return '커스텀';
   return '클래식';
 }
 
@@ -1192,8 +1280,17 @@ async function logout() {
               class="notification-row"
             >
               <div>
-                <strong>{{ invite.room.title }}</strong>
-                <span>{{ invite.inviter.nickname }}</span>
+                <strong>{{ invite.inviter.nickname }}님이 [{{ invite.room.title }}] 방으로 초대했습니다.</strong>
+                <span>
+                  방장 {{ invite.room.hostNickname }} ·
+                  {{ getModeDisplayLabel(invite.room.description) }} ·
+                  {{ invite.room.currentPlayers }} / {{ invite.room.maxPlayers }}
+                </span>
+                <div class="invite-room-badges">
+                  <b v-if="invite.room.entryMode === 'private'" class="invite-room-badge private">
+                    비공개방
+                  </b>
+                </div>
               </div>
               <div class="notification-actions">
                 <button type="button" @click="acceptRoomInvite(invite)">
@@ -1251,7 +1348,7 @@ async function logout() {
               <p class="eyebrow">Create</p>
               <h2 id="create-room-title">새 게임방</h2>
             </div>
-            <button type="button" @click="isCreateFormOpen = false">
+            <button type="button" @click="closeCreateRoomForm">
               닫기
             </button>
           </div>
@@ -1349,32 +1446,12 @@ async function logout() {
                   :class="{ active: newRoomDescription === '친선전' }"
                   @click="selectNewRoomMode('친선전')"
                 >
-                  🤝 친선전
+                  🛠 커스텀
                 </button>
               </div>
             </div>
 
             <div class="room-custom-grid">
-              <div class="form-group">
-                <label>밤 시간</label>
-                <select v-model.number="newRoomNightTimeSeconds">
-                  <option :value="20">20초</option>
-                  <option :value="30">30초</option>
-                  <option :value="45">45초</option>
-                  <option :value="60">60초</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label>투표 시간</label>
-                <select v-model.number="newRoomVoteTimeSeconds">
-                  <option :value="15">15초</option>
-                  <option :value="30">30초</option>
-                  <option :value="45">45초</option>
-                  <option :value="60">60초</option>
-                </select>
-              </div>
-
               <div class="form-group">
                 <label>역할 공개</label>
                 <div class="option-group">
@@ -1404,7 +1481,7 @@ async function logout() {
                     type="button"
                     class="option-btn"
                     :class="{ active: newRoomEntryMode === 'public' }"
-                    @click="newRoomEntryMode = 'public'"
+                    @click="selectNewRoomEntryMode('public')"
                   >
                     공개방
                   </button>
@@ -1412,13 +1489,148 @@ async function logout() {
                     type="button"
                     class="option-btn"
                     :class="{ active: newRoomEntryMode === 'private' }"
-                    @click="newRoomEntryMode = 'private'"
+                    @click="selectNewRoomEntryMode('private')"
                   >
-                    초대방
+                    비공개방
                   </button>
                 </div>
               </div>
+
+              <div v-if="newRoomEntryMode === 'private'" class="form-group">
+                <label for="new-room-entry-password">비밀번호</label>
+                <input
+                  id="new-room-entry-password"
+                  v-model="newRoomEntryPassword"
+                  type="password"
+                  class="text-input"
+                  placeholder="비공개방 비밀번호를 입력하세요"
+                  autocomplete="new-password"
+                />
+              </div>
             </div>
+
+            <section class="advanced-settings-panel">
+              <button
+                type="button"
+                class="advanced-settings-toggle"
+                :class="{ active: isNewRoomAdvancedOpen }"
+                @click="toggleNewRoomAdvancedSettings"
+              >
+                <span>세부 설정</span>
+                <strong>{{ isNewRoomAdvancedOpen ? '접기' : '펼치기' }}</strong>
+              </button>
+
+              <div v-if="isNewRoomAdvancedOpen" class="advanced-settings-grid">
+                <div class="form-group">
+                  <label>밤 시간</label>
+                  <select v-model.number="newRoomNightTimeSeconds">
+                    <option
+                      v-for="seconds in nightTimeOptions"
+                      :key="`night-${seconds}`"
+                      :value="seconds"
+                    >
+                      {{ seconds }}초
+                    </option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>토론 시간</label>
+                  <select v-model.number="newRoomDiscussionTimeSeconds">
+                    <option
+                      v-for="seconds in discussionTimeOptions"
+                      :key="`discussion-${seconds}`"
+                      :value="seconds"
+                    >
+                      {{ seconds }}초
+                    </option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>최소 시작 인원</label>
+                  <select v-model.number="newRoomMinStartPlayers">
+                    <option
+                      v-for="count in newRoomMinStartPlayerOptions"
+                      :key="`start-${count}`"
+                      :value="count"
+                    >
+                      {{ count }}명
+                    </option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>투표 시간</label>
+                  <select v-model.number="newRoomVoteTimeSeconds">
+                    <option
+                      v-for="seconds in voteTimeOptions"
+                      :key="`vote-${seconds}`"
+                      :value="seconds"
+                    >
+                      {{ seconds }}초
+                    </option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>동점 투표</label>
+                  <select v-model="newRoomTieVoteRule">
+                    <option
+                      v-for="option in tieVoteOptions"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>관전 허용</label>
+                  <div class="option-group">
+                    <button
+                      type="button"
+                      class="option-btn"
+                      :class="{ active: newRoomSpectatorAllowed }"
+                      @click="newRoomSpectatorAllowed = true"
+                    >
+                      활성화
+                    </button>
+                    <button
+                      type="button"
+                      class="option-btn"
+                      :class="{ active: !newRoomSpectatorAllowed }"
+                      @click="newRoomSpectatorAllowed = false"
+                    >
+                      비활성화
+                    </button>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label>첫날 밤 능력 사용</label>
+                  <div class="option-group">
+                    <button
+                      type="button"
+                      class="option-btn"
+                      :class="{ active: newRoomFirstNightAbilityAllowed }"
+                      @click="newRoomFirstNightAbilityAllowed = true"
+                    >
+                      활성화
+                    </button>
+                    <button
+                      type="button"
+                      class="option-btn"
+                      :class="{ active: !newRoomFirstNightAbilityAllowed }"
+                      @click="newRoomFirstNightAbilityAllowed = false"
+                    >
+                      비활성화
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
 
             <section
               class="role-config-section"
@@ -1448,7 +1660,7 @@ async function logout() {
               </div>
 
               <p v-if="isFriendlyRoomMode" class="role-config-intro">
-                친선전은 역할 구성을 자유롭게 변경할 수 있습니다.
+                커스텀은 역할 구성을 자유롭게 변경할 수 있습니다.
               </p>
 
               <div class="role-config-list">
@@ -1542,7 +1754,7 @@ async function logout() {
                 <RouterLink class="primary" :to="quickJoinPath"
                   >빠른 입장</RouterLink
                 >
-                <button type="button" @click="isCreateFormOpen = true">
+                <button type="button" @click="openCreateRoomForm">
                   방 만들기
                 </button>
               </div>
@@ -1667,20 +1879,12 @@ async function logout() {
                   <h4>게임 설정</h4>
                   <dl>
                     <div>
+                      <dt>참가 인원</dt>
+                      <dd>{{ room.maxPlayers }}명</dd>
+                    </div>
+                    <div>
                       <dt>게임 모드</dt>
                       <dd>{{ getModeDisplayLabel(room.description) }}</dd>
-                    </div>
-                    <div>
-                      <dt>밤 시간</dt>
-                      <dd>{{ room.nightTimeSeconds || 30 }}초</dd>
-                    </div>
-                    <div>
-                      <dt>토론 시간</dt>
-                      <dd>기본</dd>
-                    </div>
-                    <div>
-                      <dt>투표 시간</dt>
-                      <dd>{{ room.voteTimeSeconds || 15 }}초</dd>
                     </div>
                     <div>
                       <dt>역할 공개</dt>
@@ -1691,8 +1895,8 @@ async function logout() {
                       </dd>
                     </div>
                     <div>
-                      <dt>관전</dt>
-                      <dd>불가</dd>
+                      <dt>입장 방식</dt>
+                      <dd>{{ getEntryModeLabel(room.entryMode) }}</dd>
                     </div>
                   </dl>
                 </section>
@@ -1788,7 +1992,7 @@ async function logout() {
               <RouterLink class="primary" :to="quickJoinPath"
                 >빠른 입장</RouterLink
               >
-              <button type="button" @click="isCreateFormOpen = true">
+              <button type="button" @click="openCreateRoomForm">
                 방 만들기
               </button>
             </div>
@@ -1804,7 +2008,6 @@ async function logout() {
               <p class="eyebrow">Public Chat</p>
               <h2 id="public-chat-title">공용 채팅방</h2>
             </div>
-            <span class="chat-status">UI 준비</span>
           </div>
 
           <div class="chat-log" aria-live="polite">
@@ -1880,7 +2083,7 @@ async function logout() {
 
           <div class="profile-tags">
             <span>{{ character.rank }}</span>
-            <span>{{ character.representativeTitle }}</span>
+            <span>{{ character.characterName }}</span>
           </div>
 
           <p class="profile-quote">"{{ character.quote }}"</p>
@@ -2315,6 +2518,29 @@ async function logout() {
   font-size: 0.82rem;
 }
 
+.invite-room-badges {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+}
+
+.invite-room-badge {
+  background: rgba(255, 190, 85, 0.08);
+  border: 1px solid rgba(255, 190, 85, 0.18);
+  border-radius: 999px;
+  color: var(--color-accent);
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 0.2rem 0.5rem;
+}
+
+.invite-room-badge.private {
+  background: rgba(252, 165, 165, 0.12);
+  border-color: rgba(252, 165, 165, 0.24);
+  color: #fca5a5;
+}
+
 .notification-actions {
   flex: 0 0 auto;
   gap: 0.38rem;
@@ -2435,6 +2661,69 @@ h2 {
   display: grid;
   gap: 0.85rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.advanced-settings-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 190, 85, 0.05), rgba(12, 7, 4, 0.5)),
+    rgba(10, 6, 4, 0.76);
+  border: 1px solid rgba(255, 190, 85, 0.12);
+  border-radius: 0.7rem;
+  display: grid;
+  gap: 0.8rem;
+  padding: 0.85rem;
+}
+
+.advanced-settings-toggle {
+  align-items: center;
+  background: linear-gradient(180deg, #3b1f12, #24110a);
+  border: 1px solid rgba(255, 166, 77, 0.24);
+  border-radius: 0.65rem;
+  color: #f8e7c0;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-weight: 800;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0.75rem 0.8rem;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+  width: 100%;
+}
+
+.advanced-settings-toggle strong {
+  color: #ffcc7a;
+}
+
+.advanced-settings-toggle:hover {
+  background: linear-gradient(180deg, #5a2b16, #32170d);
+  border-color: rgba(255, 166, 77, 0.35);
+  box-shadow:
+    0 0 12px rgba(255, 128, 47, 0.14),
+    inset 0 0 10px rgba(255, 255, 255, 0.02);
+}
+
+.advanced-settings-toggle.active {
+  background: linear-gradient(180deg, #6f3518, #3d1b0e);
+  border-color: rgba(255, 166, 77, 0.42);
+  box-shadow:
+    0 0 14px rgba(255, 128, 47, 0.16),
+    inset 0 0 12px rgba(255, 204, 122, 0.04);
+}
+
+.advanced-settings-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.advanced-settings-grid .form-group {
+  margin: 0;
 }
 
 .game-styled-form select {
@@ -2570,10 +2859,14 @@ h2 {
   transform: translate(-50%, -50%);
   width: min(calc(100vw - 2rem), 760px);
   z-index: 70;
+  background:
+    linear-gradient(180deg, rgba(61, 34, 20, 0.98), rgba(18, 10, 7, 0.99)),
+    rgba(18, 10, 7, 0.98);
+  border: 1px solid rgba(255, 190, 85, 0.18);
   box-shadow:
     0 32px 90px rgba(0, 0, 0, 0.62),
-    0 0 26px rgba(255, 143, 54, 0.12);
-  scrollbar-color: rgba(255, 190, 85, 0.5) rgba(20, 14, 11, 0.7);
+    0 0 22px rgba(255, 143, 54, 0.08);
+  scrollbar-color: rgba(255, 190, 85, 0.45) rgba(20, 14, 11, 0.84);
   scrollbar-width: thin;
 }
 
@@ -2602,10 +2895,10 @@ h2 {
 .create-room-panel.room-form-modal::-webkit-scrollbar-thumb {
   background: linear-gradient(
     180deg,
-    rgba(255, 190, 85, 0.74),
-    rgba(201, 113, 29, 0.72)
+    rgba(255, 190, 85, 0.66),
+    rgba(201, 113, 29, 0.66)
   );
-  border: 2px solid rgba(20, 14, 11, 0.72);
+  border: 2px solid rgba(20, 14, 11, 0.84);
   border-radius: 999px;
 }
 
@@ -2619,10 +2912,8 @@ h2 {
   font-weight: 800;
   gap: 0.8rem;
   grid-template-columns:
-    5rem minmax(8rem, 0.9fr) minmax(5.25rem, 6.5rem) minmax(
-      8.75rem,
-      10.5rem
-    ) 7rem
+    5rem minmax(8rem, 0.9fr) minmax(5.25rem, 6.5rem) minmax(8.75rem, 10.5rem)
+    7rem
     4.25rem;
   min-width: 0;
   padding: 0.65rem 0.8rem;
@@ -3162,8 +3453,8 @@ h2 {
 .create-room-form input,
 .create-room-form textarea,
 .chat-form input {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid var(--color-border);
+  background: rgba(14, 9, 6, 0.82);
+  border: 1px solid rgba(255, 190, 85, 0.18);
   border-radius: 0.75rem;
   color: var(--color-text);
   font: inherit;
@@ -3176,8 +3467,9 @@ h2 {
 .create-room-form input:focus,
 .create-room-form textarea:focus,
 .chat-form input:focus {
-  border-color: rgba(255, 190, 85, 0.5);
-  box-shadow: 0 0 0 3px rgba(255, 190, 85, 0.1);
+  background: rgba(18, 11, 7, 0.92);
+  border-color: rgba(255, 190, 85, 0.42);
+  box-shadow: 0 0 0 3px rgba(255, 190, 85, 0.08);
   outline: 0;
 }
 
@@ -3186,6 +3478,17 @@ h2 {
   border-radius: 0.75rem;
   cursor: pointer;
   padding: 0.8rem 1rem;
+}
+
+.create-room-panel.room-form-modal .section-heading button {
+  background: linear-gradient(180deg, rgba(52, 29, 18, 0.96), rgba(28, 16, 10, 0.98));
+  border: 1px solid rgba(255, 190, 85, 0.18);
+  color: #ffe1ab;
+}
+
+.create-room-panel.room-form-modal .section-heading button:hover {
+  border-color: rgba(255, 190, 85, 0.34);
+  box-shadow: 0 0 14px rgba(255, 138, 0, 0.08);
 }
 
 .friendly-player-control {
@@ -4163,6 +4466,10 @@ dd {
   .chat-line,
   .chat-form,
   .side-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .advanced-settings-grid {
     grid-template-columns: 1fr;
   }
 

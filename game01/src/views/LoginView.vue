@@ -2,9 +2,11 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { loginUser } from '@/api/authApi'
+import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const toastStore = useToastStore()
 const loginId = ref('')
 const password = ref('')
@@ -19,12 +21,13 @@ async function login() {
   isLoading.value = true
 
   try {
-    await loginUser({
+    const currentUser = await loginUser({
       loginId: loginId.value.trim(),
       password: password.value,
     })
+    authStore.setUser(currentUser)
     toastStore.success('로그인 되었습니다.')
-    router.push('/home')
+    router.replace({ name: 'home' })
   } catch (error) {
     toastStore.error(error.message)
   } finally {
