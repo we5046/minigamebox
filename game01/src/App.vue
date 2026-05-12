@@ -1,7 +1,8 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { logoutUser } from '@/api/authApi'
+import { clearCurrentUserPresence, setCurrentUserPresence } from '@/api/presenceApi'
 import ToastNotification from '@/components/ToastNotification.vue'
 import { useAuthStore } from '@/stores/auth'
 
@@ -13,7 +14,26 @@ const isAuthenticated = computed(() => !!authStore.user)
 const showAppNav = computed(() => isAuthenticated.value && !route.meta.requiresGuest)
 const brandTarget = computed(() => (isAuthenticated.value ? '/home' : '/login'))
 
+watch(
+  () => route.name,
+  async (nextRouteName) => {
+    if (!authStore.user?.id) {
+      return
+    }
+
+    if (nextRouteName === 'shop' || nextRouteName === 'mypage') {
+      await setCurrentUserPresence({
+        userId: authStore.user.id,
+        nickname: authStore.user.nickname,
+        canReceiveWhisper: false,
+      })
+    }
+  },
+  { immediate: true },
+)
+
 async function logout() {
+  await clearCurrentUserPresence()
   await logoutUser()
   router.push('/login')
 }

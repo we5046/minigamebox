@@ -12,6 +12,7 @@ import {
   updateRoom,
 } from '@/api/roomApi';
 import { subscribeToRoomChat, sendRoomChatMessage, normalizeBroadcastMessage } from '@/api/chatApi';
+import { setCurrentUserPresence } from '@/api/presenceApi';
 import { getFriendships } from '@/api/friendApi';
 import { getRoomInvites, sendRoomInvite } from '@/api/roomInviteApi';
 
@@ -161,6 +162,20 @@ function getInviteRemainingSeconds(invite) {
   return Math.max(0, Math.ceil((new Date(invite.expiresAt).getTime() - inviteCountdownTick.value) / 1000));
 }
 
+async function syncRoomPresence() {
+  if (!savedUser.value || !room.value) {
+    return;
+  }
+
+  await setCurrentUserPresence({
+    userId: savedUser.value.id,
+    nickname: savedUser.value.nickname,
+    status: room.value.status === 'playing' ? 'playing' : 'room',
+    roomId: props.roomId,
+    canReceiveWhisper: true,
+  });
+}
+
 onMounted(() => {
   const sub = subscribeToRoomChat(props.roomId, handleChatEvent);
   roomChatSubscription = sub.unsubscribe;
@@ -254,6 +269,8 @@ async function fetchRoom() {
       announceRoomEntry();
       clearInviteEntryQuery();
     }
+
+    await syncRoomPresence();
   } catch (error) {
     toastStore.error(error.message);
   } finally {
@@ -320,6 +337,7 @@ async function syncRoom() {
   try {
     room.value = await getRoom(props.roomId);
     lastSyncedAt.value = new Date();
+    await syncRoomPresence();
   } catch (error) {
     if (error.message.includes('Not Found') || error.message.includes('Failed to load room')) {
       router.push('/home');
@@ -338,6 +356,7 @@ async function joinRoom() {
   room.value = await joinRoomRequest(props.roomId, savedUser.value);
   lastSyncedAt.value = new Date();
   announceRoomEntry();
+  await syncRoomPresence();
   return;
 
   // Send enter message
@@ -395,6 +414,7 @@ async function toggleReady() {
       !currentPlayer.value.isReady,
     );
     lastSyncedAt.value = new Date();
+    await syncRoomPresence();
   } catch (error) {
     toastStore.error(error.message);
   } finally {

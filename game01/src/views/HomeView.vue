@@ -1,8 +1,14 @@
-<script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+﻿<script setup>
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue';
 import { useRouter } from 'vue-router';
 import { logoutUser } from '@/api/authApi';
-import { supabase } from '@/api/supabaseClient';
 import { useAuthStore } from '@/stores/auth';
 import { useRoomStore } from '@/stores/room';
 import { useToastStore } from '@/stores/toast';
@@ -13,6 +19,11 @@ import {
   sendWhisperChatMessage,
   subscribeToPublicChat,
 } from '@/api/chatApi';
+import {
+  clearCurrentUserPresence,
+  setCurrentUserPresence,
+  subscribeToPresenceUsers,
+} from '@/api/presenceApi';
 import { createRoom as createRoomRequest } from '@/api/roomApi';
 import {
   getFriendships,
@@ -83,7 +94,7 @@ let unsubscribeRoomInvites = null;
 let friendshipRefreshTimer = null;
 let roomInviteRefreshTimer = null;
 let roomInvitePollTimer = null;
-let lobbyPresenceChannel = null;
+let unsubscribePresenceUsers = null;
 
 const lobbySettingsSections = [
   {
@@ -101,7 +112,8 @@ const character = computed(() => ({
   title: savedUser.value?.character?.name || 'Rookie Mafia',
   coin: savedUser.value?.character?.coin ?? savedUser.value?.coin ?? 0,
   level: savedUser.value?.character?.level ?? savedUser.value?.level ?? 1,
-  expPercent: savedUser.value?.experiencePercent ?? savedUser.value?.expPercent ?? 0,
+  expPercent:
+    savedUser.value?.experiencePercent ?? savedUser.value?.expPercent ?? 0,
   rank: savedUser.value?.rank?.tier || savedUser.value?.rankTier || 'Unranked',
   representativeTitle: savedUser.value?.representativeTitle || '침착한 추리꾼',
   quote: savedUser.value?.quote || '오늘 밤 누가 거짓말을 하고 있을까?',
@@ -113,7 +125,22 @@ const character = computed(() => ({
 }));
 
 const onlineUsers = computed(() => presenceUsers.value);
-const onlineUserIds = computed(() => new Set(presenceUsers.value.map((user) => user.id)));
+const presenceByUserId = computed(() => {
+  return new Map(presenceUsers.value.map((user) => [user.id, user]));
+});
+const presenceStatusByUserId = computed(() => {
+  return new Map(
+    presenceUsers.value.map((user) => [user.id, user.status || 'offline']),
+  );
+});
+const isUserOnline = (userId) =>
+  presenceStatusByUserId.value.get(userId) !== 'offline';
+function getPresenceStatusLabel(status) {
+  if (status === 'lobby') return '로비';
+  if (status === 'room') return '게임방';
+  if (status === 'playing') return '게임중';
+  return '오프라인';
+}
 const friendshipByUserId = computed(() => {
   return friendships.value.reduce((map, friendship) => {
     if (friendship.friend?.id) {
@@ -128,18 +155,27 @@ const acceptedFriends = computed(() => {
     .filter((friendship) => friendship.status === 'accepted')
     .map((friendship) => ({
       ...friendship,
-      isOnline: onlineUserIds.value.has(friendship.friend.id),
-      statusText: onlineUserIds.value.has(friendship.friend.id) ? '온라인' : '오프라인',
+      status:
+        presenceStatusByUserId.value.get(friendship.friend.id) || 'offline',
+      isOnline:
+        presenceStatusByUserId.value.get(friendship.friend.id) !== 'offline',
+      statusText: getPresenceStatusLabel(
+        presenceStatusByUserId.value.get(friendship.friend.id) || 'offline',
+      ),
+      canReceiveWhisper:
+        presenceByUserId.value.get(friendship.friend.id)?.canReceiveWhisper === true,
     }));
 });
 const incomingFriendRequests = computed(() => {
   return friendships.value.filter(
-    (friendship) => friendship.status === 'pending' && friendship.direction === 'incoming',
+    (friendship) =>
+      friendship.status === 'pending' && friendship.direction === 'incoming',
   );
 });
 const outgoingFriendRequests = computed(() => {
   return friendships.value.filter(
-    (friendship) => friendship.status === 'pending' && friendship.direction === 'outgoing',
+    (friendship) =>
+      friendship.status === 'pending' && friendship.direction === 'outgoing',
   );
 });
 const incomingRoomInvites = computed(() => roomInvites.value);
@@ -199,14 +235,18 @@ const roleOptions = [
 ];
 const fixedPlayerCounts = [4, 6, 8, 12];
 
-const isFriendlyRoomMode = computed(() => newRoomDescription.value === '친선전');
+const isFriendlyRoomMode = computed(
+  () => newRoomDescription.value === '친선전',
+);
 const roleConfigTotal = computed(() => {
   return Object.values(newRoomRoleConfig.value).reduce(
     (total, count) => total + Number(count || 0),
     0,
   );
 });
-const isRoleConfigValid = computed(() => roleConfigTotal.value === Number(newRoomMaxPlayers.value));
+const isRoleConfigValid = computed(
+  () => roleConfigTotal.value === Number(newRoomMaxPlayers.value),
+);
 const roleConfigStatusText = computed(() => {
   if (newRoomDescription.value === '랭크전') {
     return '랭크전 규칙 고정';
@@ -246,22 +286,36 @@ function getRecommendedRoleConfig(maxPlayers) {
 }
 
 onMounted(async () => {
+  unsubscribePresenceUsers = subscribeToPresenceUsers((users) => {
+    presenceUsers.value = users;
+  });
+
   isLoadingRooms.value = true;
   await roomStore.fetchRooms();
   isLoadingRooms.value = false;
   clampRoomPage();
   clampSelectedRoom();
 
-  setupLobbyPresence();
   await loadFriendships();
   setupFriendshipRealtime();
   await loadRoomInvites();
   setupRoomInviteRealtime();
   roomInvitePollTimer = setInterval(loadRoomInvites, 10000);
   unsubscribeRooms = roomStore.subscribeToRooms();
-  const publicChatSubscription = subscribeToPublicChat(handlePublicChatRealtimeEvent);
+  const publicChatSubscription = subscribeToPublicChat(
+    handlePublicChatRealtimeEvent,
+  );
   publicChatChannel.value = publicChatSubscription.channel;
   unsubscribePublicChat = publicChatSubscription.unsubscribe;
+
+  if (savedUser.value) {
+    await setCurrentUserPresence({
+      userId: savedUser.value.id,
+      nickname: character.value.nickname,
+      status: 'lobby',
+      canReceiveWhisper: true,
+    });
+  }
 });
 
 onBeforeUnmount(() => {
@@ -283,10 +337,8 @@ onBeforeUnmount(() => {
   if (roomInvitePollTimer) {
     clearInterval(roomInvitePollTimer);
   }
-  lobbyPresenceChannel?.untrack?.();
-  if (lobbyPresenceChannel) {
-    supabase.removeChannel(lobbyPresenceChannel);
-  }
+  unsubscribePresenceUsers?.();
+  unsubscribePresenceUsers = null;
 });
 
 watch(savedUser, async (nextUser, previousUser) => {
@@ -314,6 +366,14 @@ watch(savedUser, async (nextUser, previousUser) => {
     if (!roomInvitePollTimer) {
       roomInvitePollTimer = setInterval(loadRoomInvites, 10000);
     }
+    await setCurrentUserPresence({
+      userId: nextUser.id,
+      nickname: character.value.nickname,
+      status: 'lobby',
+      canReceiveWhisper: true,
+    });
+  } else {
+    await clearCurrentUserPresence();
   }
 });
 
@@ -325,7 +385,9 @@ watch([rooms, roomFilter], () => {
 watch([newRoomMaxPlayers, newRoomDescription], () => {
   if (isFriendlyRoomMode.value) {
     if (isRecommendedRolesEnabled.value) {
-      newRoomRoleConfig.value = getRecommendedRoleConfig(newRoomMaxPlayers.value);
+      newRoomRoleConfig.value = getRecommendedRoleConfig(
+        newRoomMaxPlayers.value,
+      );
     }
 
     return;
@@ -335,7 +397,10 @@ watch([newRoomMaxPlayers, newRoomDescription], () => {
 });
 
 function handlePublicChatRealtimeEvent(payload) {
-  if (payload?.type === 'subscription-status' && payload.status !== 'SUBSCRIBED') {
+  if (
+    payload?.type === 'subscription-status' &&
+    payload.status !== 'SUBSCRIBED'
+  ) {
     return;
   }
 
@@ -455,7 +520,10 @@ function goToPreviousRoomPage() {
 }
 
 function goToNextRoomPage() {
-  currentRoomPage.value = Math.min(roomPageCount.value, currentRoomPage.value + 1);
+  currentRoomPage.value = Math.min(
+    roomPageCount.value,
+    currentRoomPage.value + 1,
+  );
   selectedRoomId.value = null;
 }
 
@@ -463,43 +531,6 @@ function setRoomFilter(nextFilter) {
   roomFilter.value = nextFilter;
   currentRoomPage.value = 1;
   selectedRoomId.value = null;
-}
-
-function setupLobbyPresence() {
-  const presenceKey = savedUser.value?.id || `guest-${Math.random().toString(36).slice(2)}`;
-
-  lobbyPresenceChannel = supabase.channel('lobby-presence', {
-    config: {
-      presence: {
-        key: presenceKey,
-      },
-    },
-  });
-
-  lobbyPresenceChannel
-    .on('presence', { event: 'sync' }, () => {
-      const state = lobbyPresenceChannel.presenceState();
-      presenceUsers.value = Object.entries(state).map(([id, presences]) => {
-        const latestPresence = presences[presences.length - 1];
-
-        return {
-          id,
-          nickname: latestPresence.nickname || 'GuestPlayer',
-          status: latestPresence.status || '로비',
-        };
-      });
-    })
-    .subscribe(async (status) => {
-      if (status !== 'SUBSCRIBED') {
-        return;
-      }
-
-      await lobbyPresenceChannel.track({
-        nickname: character.value.nickname,
-        status: '로비',
-        onlineAt: new Date().toISOString(),
-      });
-    });
 }
 
 async function loadFriendships() {
@@ -524,13 +555,16 @@ function setupFriendshipRealtime() {
     return;
   }
 
-  unsubscribeFriendships = subscribeToFriendships(savedUser.value.id, (payload) => {
-    if (payload?.type === 'subscription-status') {
-      return;
-    }
+  unsubscribeFriendships = subscribeToFriendships(
+    savedUser.value.id,
+    (payload) => {
+      if (payload?.type === 'subscription-status') {
+        return;
+      }
 
-    scheduleFriendshipsRefresh();
-  });
+      scheduleFriendshipsRefresh();
+    },
+  );
 }
 
 function scheduleFriendshipsRefresh() {
@@ -562,13 +596,16 @@ function setupRoomInviteRealtime() {
     return;
   }
 
-  unsubscribeRoomInvites = subscribeToRoomInvites(savedUser.value.id, (payload) => {
-    if (payload?.type === 'subscription-status') {
-      return;
-    }
+  unsubscribeRoomInvites = subscribeToRoomInvites(
+    savedUser.value.id,
+    (payload) => {
+      if (payload?.type === 'subscription-status') {
+        return;
+      }
 
-    scheduleRoomInvitesRefresh();
-  });
+      scheduleRoomInvitesRefresh();
+    },
+  );
 }
 
 function scheduleRoomInvitesRefresh() {
@@ -678,12 +715,14 @@ function getFriendRequestStatusText(user) {
 }
 
 function toggleLobbyUserActions(user) {
-  selectedLobbyUserId.value = selectedLobbyUserId.value === user.id ? null : user.id;
+  selectedLobbyUserId.value =
+    selectedLobbyUserId.value === user.id ? null : user.id;
   selectedFriendshipId.value = null;
 }
 
 function toggleFriendActions(friendship) {
-  selectedFriendshipId.value = selectedFriendshipId.value === friendship.id ? null : friendship.id;
+  selectedFriendshipId.value =
+    selectedFriendshipId.value === friendship.id ? null : friendship.id;
   selectedLobbyUserId.value = null;
 }
 
@@ -692,7 +731,10 @@ async function sendFriendRequestToUser(user) {
     return;
   }
 
-  sendingFriendRequestUserIds.value = new Set([...sendingFriendRequestUserIds.value, user.id]);
+  sendingFriendRequestUserIds.value = new Set([
+    ...sendingFriendRequestUserIds.value,
+    user.id,
+  ]);
 
   try {
     await sendFriendRequest(user.nickname);
@@ -834,7 +876,8 @@ function findWhisperMemberByNickname(nickname) {
 
   return (
     getWhisperMembers().find(
-      (member) => normalizeMemberNickname(member.nickname) === normalizedNickname,
+      (member) =>
+        normalizeMemberNickname(member.nickname) === normalizedNickname,
     ) || null
   );
 }
@@ -899,6 +942,13 @@ async function sendWhisperToTarget(target, content) {
     throw new Error('귓속말 대상을 선택할 수 없습니다.');
   }
 
+  const targetPresence = presenceByUserId.value.get(target.id);
+  if (!targetPresence?.canReceiveWhisper) {
+    const message = '[상대방이 채팅을 볼 수 없는 상태입니다.]';
+    publicChatNotice.value = message;
+    throw new Error(message);
+  }
+
   await sendWhisperChatMessage(publicChatChannel.value, {
     userId: savedUser.value.id,
     nickname: character.value.nickname,
@@ -927,7 +977,9 @@ async function rejectFriendRequest(friendshipId) {
 }
 
 async function deleteFriend(friendship) {
-  const confirmed = window.confirm(`${friendship.friend.nickname}을(를) 친구 목록에서 삭제할까요?`);
+  const confirmed = window.confirm(
+    `${friendship.friend.nickname}을(를) 친구 목록에서 삭제할까요?`,
+  );
 
   if (!confirmed) {
     return;
@@ -973,7 +1025,10 @@ function getPlayerSlots(room) {
   const currentPlayers = room.players?.length || room.currentPlayers || 0;
   const maxPlayers = room.maxPlayers || 8;
 
-  return Array.from({ length: maxPlayers }, (_, index) => index < currentPlayers);
+  return Array.from(
+    { length: maxPlayers },
+    (_, index) => index < currentPlayers,
+  );
 }
 
 function getRoomAccessLabel(room) {
@@ -1087,6 +1142,9 @@ async function submitPublicChat() {
 }
 
 async function logout() {
+  if (savedUser.value?.id) {
+    await clearCurrentUserPresence();
+  }
   await logoutUser();
   router.push('/login');
 }
@@ -1138,11 +1196,17 @@ async function logout() {
                 <span>{{ invite.inviter.nickname }}</span>
               </div>
               <div class="notification-actions">
-                <button type="button" @click="acceptRoomInvite(invite)">입장</button>
-                <button type="button" @click="rejectRoomInvite(invite.id)">거절</button>
+                <button type="button" @click="acceptRoomInvite(invite)">
+                  입장
+                </button>
+                <button type="button" @click="rejectRoomInvite(invite.id)">
+                  거절
+                </button>
               </div>
             </article>
-            <small v-if="incomingRoomInvites.length === 0">받은 방 초대가 없습니다.</small>
+            <small v-if="incomingRoomInvites.length === 0"
+              >받은 방 초대가 없습니다.</small
+            >
           </div>
 
           <div class="notification-section">
@@ -1157,11 +1221,17 @@ async function logout() {
                 <span>친구 요청</span>
               </div>
               <div class="notification-actions">
-                <button type="button" @click="acceptFriendRequest(request.id)">수락</button>
-                <button type="button" @click="rejectFriendRequest(request.id)">거절</button>
+                <button type="button" @click="acceptFriendRequest(request.id)">
+                  수락
+                </button>
+                <button type="button" @click="rejectFriendRequest(request.id)">
+                  거절
+                </button>
               </div>
             </article>
-            <small v-if="incomingFriendRequests.length === 0">받은 친구 요청이 없습니다.</small>
+            <small v-if="incomingFriendRequests.length === 0"
+              >받은 친구 요청이 없습니다.</small
+            >
           </div>
         </div>
       </div>
@@ -1181,10 +1251,15 @@ async function logout() {
               <p class="eyebrow">Create</p>
               <h2 id="create-room-title">새 게임방</h2>
             </div>
-            <button type="button" @click="isCreateFormOpen = false">닫기</button>
+            <button type="button" @click="isCreateFormOpen = false">
+              닫기
+            </button>
           </div>
 
-          <form class="create-room-form game-styled-form" @submit.prevent="createRoom">
+          <form
+            class="create-room-form game-styled-form"
+            @submit.prevent="createRoom"
+          >
             <div class="form-group">
               <label>방 제목</label>
               <input
@@ -1209,7 +1284,9 @@ async function logout() {
                 </button>
               </div>
               <div v-else class="friendly-player-control">
-                <strong class="friendly-count-display"> {{ newRoomMaxPlayers }}명 </strong>
+                <strong class="friendly-count-display">
+                  {{ newRoomMaxPlayers }}명
+                </strong>
 
                 <div class="friendly-slider-row">
                   <button
@@ -1345,7 +1422,10 @@ async function logout() {
 
             <section
               class="role-config-section"
-              :class="{ invalid: !isRoleConfigValid, locked: !isFriendlyRoomMode }"
+              :class="{
+                invalid: !isRoleConfigValid,
+                locked: !isFriendlyRoomMode,
+              }"
             >
               <div class="role-config-header">
                 <div>
@@ -1353,8 +1433,15 @@ async function logout() {
                   <h3>역할 구성</h3>
                 </div>
                 <div>
-                  <span class="role-lock-status">{{ roleConfigStatusText }}</span>
-                  <strong :class="{ valid: isRoleConfigValid, invalid: !isRoleConfigValid }">
+                  <span class="role-lock-status">{{
+                    roleConfigStatusText
+                  }}</span>
+                  <strong
+                    :class="{
+                      valid: isRoleConfigValid,
+                      invalid: !isRoleConfigValid,
+                    }"
+                  >
                     역할 합계 {{ roleConfigTotal }} / {{ newRoomMaxPlayers }}
                   </strong>
                 </div>
@@ -1365,12 +1452,18 @@ async function logout() {
               </p>
 
               <div class="role-config-list">
-                <article v-for="role in roleOptions" :key="role.key" class="role-config-row">
+                <article
+                  v-for="role in roleOptions"
+                  :key="role.key"
+                  class="role-config-row"
+                >
                   <span>{{ role.label }}</span>
                   <div class="role-stepper">
                     <button
                       type="button"
-                      :disabled="!isFriendlyRoomMode || newRoomRoleConfig[role.key] <= 0"
+                      :disabled="
+                        !isFriendlyRoomMode || newRoomRoleConfig[role.key] <= 0
+                      "
                       @click="adjustNewRoomRole(role.key, -1)"
                     >
                       -
@@ -1378,7 +1471,10 @@ async function logout() {
                     <strong>{{ newRoomRoleConfig[role.key] }}</strong>
                     <button
                       type="button"
-                      :disabled="!isFriendlyRoomMode || roleConfigTotal >= newRoomMaxPlayers"
+                      :disabled="
+                        !isFriendlyRoomMode ||
+                        roleConfigTotal >= newRoomMaxPlayers
+                      "
                       @click="adjustNewRoomRole(role.key, 1)"
                     >
                       +
@@ -1416,7 +1512,10 @@ async function logout() {
           </form>
         </section>
 
-        <section class="page-card room-board" aria-labelledby="room-board-title">
+        <section
+          class="page-card room-board"
+          aria-labelledby="room-board-title"
+        >
           <div class="section-heading">
             <div>
               <p class="eyebrow">Rooms</p>
@@ -1440,8 +1539,12 @@ async function logout() {
             </div>
             <div class="room-tools">
               <div class="room-actions">
-                <RouterLink class="primary" :to="quickJoinPath">빠른 입장</RouterLink>
-                <button type="button" @click="isCreateFormOpen = true">방 만들기</button>
+                <RouterLink class="primary" :to="quickJoinPath"
+                  >빠른 입장</RouterLink
+                >
+                <button type="button" @click="isCreateFormOpen = true">
+                  방 만들기
+                </button>
               </div>
             </div>
           </div>
@@ -1457,8 +1560,12 @@ async function logout() {
 
           <div class="room-table">
             <p v-if="roomMessage" class="message">{{ roomMessage }}</p>
-            <p v-else-if="isLoadingRooms" class="muted">방 목록을 불러오는 중입니다.</p>
-            <p v-else-if="filteredRooms.length === 0" class="muted">아직 생성된 방이 없습니다.</p>
+            <p v-else-if="isLoadingRooms" class="muted">
+              방 목록을 불러오는 중입니다.
+            </p>
+            <p v-else-if="filteredRooms.length === 0" class="muted">
+              아직 생성된 방이 없습니다.
+            </p>
 
             <article
               v-for="room in paginatedRooms"
@@ -1467,7 +1574,13 @@ async function logout() {
               :class="{ expanded: selectedRoomId === room.id }"
             >
               <div class="room-row">
-                <button class="join-pill" type="button" @click="enterRoom(room.id)">입장</button>
+                <button
+                  class="join-pill"
+                  type="button"
+                  @click="enterRoom(room.id)"
+                >
+                  입장
+                </button>
                 <button
                   class="room-detail-trigger"
                   type="button"
@@ -1497,7 +1610,10 @@ async function logout() {
                     <b class="status-badge" :class="getRoomStatusClass(room)">
                       {{ getRoomStatusLabel(room) }}
                     </b>
-                    <b class="status-badge" :class="getModeClass(room.description)">
+                    <b
+                      class="status-badge"
+                      :class="getModeClass(room.description)"
+                    >
                       {{ getModeDisplayLabel(room.description) }}
                     </b>
                   </span>
@@ -1513,7 +1629,10 @@ async function logout() {
                   </div>
                 </div>
 
-                <div class="room-preview-summary" aria-label="Room preview summary">
+                <div
+                  class="room-preview-summary"
+                  aria-label="Room preview summary"
+                >
                   <b class="status-badge" :class="getRoomStatusClass(room)">
                     {{ getRoomStatusLabel(room) }}
                   </b>
@@ -1524,13 +1643,22 @@ async function logout() {
                     {{ room.players?.length || room.currentPlayers || 0 }} /
                     {{ room.maxPlayers }}
                   </b>
-                  <b class="status-badge" :class="getModeClass(room.description)">
+                  <b
+                    class="status-badge"
+                    :class="getModeClass(room.description)"
+                  >
                     {{ getModeDisplayLabel(room.description) }}
                   </b>
-                  <b class="status-badge" :class="getRoomAvailabilityClass(room)">
+                  <b
+                    class="status-badge"
+                    :class="getRoomAvailabilityClass(room)"
+                  >
                     {{ getRoomAvailabilityLabel(room) }}
                   </b>
-                  <b v-if="room.entryMode === 'private'" class="status-badge private-warning">
+                  <b
+                    v-if="room.entryMode === 'private'"
+                    class="status-badge private-warning"
+                  >
                     비밀번호 필요
                   </b>
                 </div>
@@ -1556,7 +1684,11 @@ async function logout() {
                     </div>
                     <div>
                       <dt>역할 공개</dt>
-                      <dd>{{ room.roleRevealMode === 'public' ? '공개' : '비공개' }}</dd>
+                      <dd>
+                        {{
+                          room.roleRevealMode === 'public' ? '공개' : '비공개'
+                        }}
+                      </dd>
                     </div>
                     <div>
                       <dt>관전</dt>
@@ -1568,7 +1700,10 @@ async function logout() {
                 <section class="room-preview-section roles compact">
                   <h4>역할 구성</h4>
                   <div class="preview-role-list">
-                    <span v-for="role in getRoomRolePreview(room)" :key="role.key">
+                    <span
+                      v-for="role in getRoomRolePreview(room)"
+                      :key="role.key"
+                    >
                       {{ role.label }} x{{ role.count }}
                     </span>
                   </div>
@@ -1576,7 +1711,10 @@ async function logout() {
 
                 <div class="room-details-heading">
                   <strong>참가 인원</strong>
-                  <span>{{ room.players?.length || 0 }} / {{ room.maxPlayers }}</span>
+                  <span
+                    >{{ room.players?.length || 0 }} /
+                    {{ room.maxPlayers }}</span
+                  >
                 </div>
 
                 <ul v-if="room.players?.length">
@@ -1589,7 +1727,11 @@ async function logout() {
                     <span class="preview-player-state">
                       <b v-if="player.isHost">방장</b>
                       <small>{{
-                        player.isHost ? '준비 면제' : player.isReady ? '준비 완료' : '대기 중'
+                        player.isHost
+                          ? '준비 면제'
+                          : player.isReady
+                            ? '준비 완료'
+                            : '대기 중'
                       }}</small>
                     </span>
                   </li>
@@ -1611,7 +1753,9 @@ async function logout() {
                     비밀번호 입력 후 입장
                   </button>
                   <button type="button" disabled>관전하기</button>
-                  <button type="button" @click="selectedRoomId = null">닫기</button>
+                  <button type="button" @click="selectedRoomId = null">
+                    닫기
+                  </button>
                 </div>
               </div>
             </article>
@@ -1622,7 +1766,11 @@ async function logout() {
             class="room-pagination"
             aria-label="Room pages"
           >
-            <button type="button" :disabled="currentRoomPage === 1" @click="goToPreviousRoomPage">
+            <button
+              type="button"
+              :disabled="currentRoomPage === 1"
+              @click="goToPreviousRoomPage"
+            >
               이전
             </button>
             <span>{{ currentRoomPage }} / {{ roomPageCount }}</span>
@@ -1637,13 +1785,20 @@ async function logout() {
 
           <div class="room-board-footer">
             <div class="room-actions">
-              <RouterLink class="primary" :to="quickJoinPath">빠른 입장</RouterLink>
-              <button type="button" @click="isCreateFormOpen = true">방 만들기</button>
+              <RouterLink class="primary" :to="quickJoinPath"
+                >빠른 입장</RouterLink
+              >
+              <button type="button" @click="isCreateFormOpen = true">
+                방 만들기
+              </button>
             </div>
           </div>
         </section>
 
-        <section class="page-card chat-card" aria-labelledby="public-chat-title">
+        <section
+          class="page-card chat-card"
+          aria-labelledby="public-chat-title"
+        >
           <div class="section-heading">
             <div>
               <p class="eyebrow">Public Chat</p>
@@ -1685,9 +1840,13 @@ async function logout() {
               v-model="publicChatDraft"
               type="text"
               maxlength="200"
-              :placeholder="whisperTarget ? '귓속말 메시지' : '공용 채팅 메시지'"
+              :placeholder="
+                whisperTarget ? '귓속말 메시지' : '공용 채팅 메시지'
+              "
             />
-            <button type="submit">{{ whisperTarget ? '귓속말' : '전송' }}</button>
+            <button type="submit">
+              {{ whisperTarget ? '귓속말' : '전송' }}
+            </button>
             <button type="button" @click="logout">로그아웃</button>
           </form>
         </section>
@@ -1713,7 +1872,9 @@ async function logout() {
               <span>{{ character.expPercent }}%</span>
             </div>
             <div class="exp-track">
-              <i :style="{ width: `${Math.min(100, character.expPercent)}%` }"></i>
+              <i
+                :style="{ width: `${Math.min(100, character.expPercent)}%` }"
+              ></i>
             </div>
           </div>
 
@@ -1744,7 +1905,7 @@ async function logout() {
           <div class="section-heading compact">
             <div>
               <p class="eyebrow">Online</p>
-              <h2 id="visitor-title">로비 접속 유저</h2>
+              <h2 id="visitor-title">접속 유저</h2>
             </div>
             <span class="user-count">{{ onlineUsers.length }}</span>
           </div>
@@ -1765,10 +1926,17 @@ async function logout() {
                   <i aria-hidden="true"></i>
                   {{ user.nickname }}
                 </strong>
-                <span>{{ user.status }}</span>
+                <span>{{ getPresenceStatusLabel(user.status) }}</span>
               </button>
-              <div v-if="selectedLobbyUserId === user.id" class="member-action-panel">
-                <button type="button" :disabled="isSelfUser(user.id)" @click="startWhisper(user)">
+              <div
+                v-if="selectedLobbyUserId === user.id"
+                class="member-action-panel"
+              >
+                <button
+                  type="button"
+                  :disabled="isSelfUser(user.id)"
+                  @click="startWhisper(user)"
+                >
                   귓속말
                 </button>
                 <button
@@ -1782,8 +1950,13 @@ async function logout() {
             </li>
           </ul>
 
-          <button v-if="false" class="invite-button" type="button">친구 초대</button>
-          <div v-if="false && incomingRoomInvites.length" class="room-invite-panel">
+          <button v-if="false" class="invite-button" type="button">
+            친구 초대
+          </button>
+          <div
+            v-if="false && incomingRoomInvites.length"
+            class="room-invite-panel"
+          >
             <div class="friend-heading">
               <div>
                 <p class="eyebrow">Invites</p>
@@ -1792,14 +1965,22 @@ async function logout() {
               <span>{{ incomingRoomInvites.length }}</span>
             </div>
 
-            <article v-for="invite in incomingRoomInvites" :key="invite.id" class="room-invite-row">
+            <article
+              v-for="invite in incomingRoomInvites"
+              :key="invite.id"
+              class="room-invite-row"
+            >
               <div>
                 <strong>{{ invite.room.title }}</strong>
                 <span>{{ invite.inviter.nickname }}님의 초대</span>
               </div>
               <div class="friend-actions">
-                <button type="button" @click="acceptRoomInvite(invite)">입장</button>
-                <button type="button" @click="rejectRoomInvite(invite.id)">거절</button>
+                <button type="button" @click="acceptRoomInvite(invite)">
+                  입장
+                </button>
+                <button type="button" @click="rejectRoomInvite(invite.id)">
+                  거절
+                </button>
               </div>
             </article>
           </div>
@@ -1813,19 +1994,28 @@ async function logout() {
               <span>{{ acceptedFriends.length }}</span>
             </div>
 
-            <form class="friend-request-form" @submit.prevent="submitFriendRequest">
+            <form
+              class="friend-request-form"
+              @submit.prevent="submitFriendRequest"
+            >
               <input
                 v-model="friendNickname"
                 type="text"
                 placeholder="닉네임으로 친구 추가"
                 :disabled="isSendingFriendRequest"
               />
-              <button type="submit" :disabled="!friendNickname.trim() || isSendingFriendRequest">
+              <button
+                type="submit"
+                :disabled="!friendNickname.trim() || isSendingFriendRequest"
+              >
                 요청
               </button>
             </form>
 
-            <div v-if="false && incomingFriendRequests.length" class="friend-request-list">
+            <div
+              v-if="false && incomingFriendRequests.length"
+              class="friend-request-list"
+            >
               <p>받은 요청</p>
               <article
                 v-for="request in incomingFriendRequests"
@@ -1834,14 +2024,26 @@ async function logout() {
               >
                 <strong>{{ request.friend.nickname }}</strong>
                 <div class="friend-actions">
-                  <button type="button" @click="acceptFriendRequest(request.id)">수락</button>
-                  <button type="button" @click="rejectFriendRequest(request.id)">거절</button>
+                  <button
+                    type="button"
+                    @click="acceptFriendRequest(request.id)"
+                  >
+                    수락
+                  </button>
+                  <button
+                    type="button"
+                    @click="rejectFriendRequest(request.id)"
+                  >
+                    거절
+                  </button>
                 </div>
               </article>
             </div>
 
             <ul class="friend-list">
-              <li v-if="isLoadingFriends" class="friend-empty">친구 목록을 불러오는 중...</li>
+              <li v-if="isLoadingFriends" class="friend-empty">
+                친구 목록을 불러오는 중...
+              </li>
               <li v-else-if="acceptedFriends.length === 0" class="friend-empty">
                 아직 등록된 친구가 없습니다.
               </li>
@@ -1859,14 +2061,29 @@ async function logout() {
                   @click="toggleFriendActions(friendship)"
                 >
                   <strong>
-                    <i :class="{ offline: !friendship.isOnline }" aria-hidden="true"></i>
+                    <i
+                      :class="{ offline: friendship.status === 'offline' }"
+                      aria-hidden="true"
+                    ></i>
                     {{ friendship.friend.nickname }}
                   </strong>
                   <span>{{ friendship.statusText }}</span>
                 </button>
-                <div v-if="selectedFriendshipId === friendship.id" class="member-action-panel">
-                  <button type="button" @click="startWhisper(friendship.friend)">귓속말</button>
-                  <button type="button" aria-label="친구 삭제" @click="deleteFriend(friendship)">
+                <div
+                  v-if="selectedFriendshipId === friendship.id"
+                  class="member-action-panel"
+                >
+                  <button
+                    type="button"
+                    @click="startWhisper(friendship.friend)"
+                  >
+                    귓속말
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="친구 삭제"
+                    @click="deleteFriend(friendship)"
+                  >
                     삭제
                   </button>
                 </div>
@@ -1904,7 +2121,8 @@ async function logout() {
 .lobby-layout :deep(.page-card),
 .lobby-layout .page-card {
   background:
-    linear-gradient(180deg, rgba(80, 46, 30, 0.44), rgba(20, 14, 11, 0.78)), rgba(20, 17, 15, 0.86);
+    linear-gradient(180deg, rgba(80, 46, 30, 0.44), rgba(20, 14, 11, 0.78)),
+    rgba(20, 17, 15, 0.86);
   border: 1px solid rgba(255, 190, 85, 0.16);
   border-radius: clamp(0.85rem, 1.5vw, 1.35rem);
   box-shadow: var(--pc-panel-shadow);
@@ -1922,7 +2140,12 @@ async function logout() {
 }
 
 .lobby-hero::after {
-  background: linear-gradient(90deg, transparent, rgba(255, 132, 38, 0.12), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 132, 38, 0.12),
+    transparent
+  );
   content: '';
   inset: 0;
   pointer-events: none;
@@ -1944,7 +2167,11 @@ async function logout() {
 
 .lobby-icon-button {
   align-items: center;
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.12), rgba(48, 20, 16, 0.72));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.12),
+    rgba(48, 20, 16, 0.72)
+  );
   border: 1px solid rgba(255, 190, 85, 0.28);
   border-radius: 0.7rem;
   color: #ffd49a;
@@ -1964,7 +2191,11 @@ async function logout() {
 
 .lobby-icon-button:hover,
 .lobby-icon-button.active {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.2), rgba(84, 27, 22, 0.78));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.2),
+    rgba(84, 27, 22, 0.78)
+  );
   border-color: rgba(255, 202, 118, 0.58);
   box-shadow: 0 0 18px rgba(255, 129, 48, 0.2);
   transform: translateY(-1px);
@@ -1988,7 +2219,11 @@ async function logout() {
 }
 
 .notification-popover {
-  background: linear-gradient(180deg, rgba(73, 34, 22, 0.96), rgba(13, 9, 7, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(73, 34, 22, 0.96),
+    rgba(13, 9, 7, 0.98)
+  );
   border: 1px solid rgba(255, 190, 85, 0.24);
   border-radius: 0.95rem;
   box-shadow:
@@ -2152,7 +2387,11 @@ h2 {
 .chat-form button,
 .room-pagination button,
 .invite-button {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.11), rgba(80, 31, 21, 0.22));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.11),
+    rgba(80, 31, 21, 0.22)
+  );
   border: 1px solid rgba(255, 190, 85, 0.28);
   border-radius: 0.65rem;
   color: var(--color-text);
@@ -2361,7 +2600,11 @@ h2 {
 }
 
 .create-room-panel.room-form-modal::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.74), rgba(201, 113, 29, 0.72));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.74),
+    rgba(201, 113, 29, 0.72)
+  );
   border: 2px solid rgba(20, 14, 11, 0.72);
   border-radius: 999px;
 }
@@ -2376,7 +2619,10 @@ h2 {
   font-weight: 800;
   gap: 0.8rem;
   grid-template-columns:
-    5rem minmax(8rem, 0.9fr) minmax(5.25rem, 6.5rem) minmax(8.75rem, 10.5rem) 7rem
+    5rem minmax(8rem, 0.9fr) minmax(5.25rem, 6.5rem) minmax(
+      8.75rem,
+      10.5rem
+    ) 7rem
     4.25rem;
   min-width: 0;
   padding: 0.65rem 0.8rem;
@@ -2405,7 +2651,11 @@ h2 {
 
 .room-row {
   align-items: center;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(0, 0, 0, 0.05));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.075),
+    rgba(0, 0, 0, 0.05)
+  );
   border: 1px solid var(--color-border);
   border-radius: 0.75rem;
   color: var(--color-text);
@@ -2423,7 +2673,11 @@ h2 {
 
 .room-row:hover,
 .room-row:focus-within {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.13), rgba(90, 28, 18, 0.18));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.13),
+    rgba(90, 28, 18, 0.18)
+  );
   border-color: rgba(255, 190, 85, 0.38);
   box-shadow: 0 0 22px rgba(255, 132, 38, 0.12);
 }
@@ -2816,7 +3070,11 @@ h2 {
 }
 
 .room-preview-actions button {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.13), rgba(80, 31, 21, 0.24));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.13),
+    rgba(80, 31, 21, 0.24)
+  );
   border: 1px solid rgba(255, 190, 85, 0.24);
   border-radius: 0.55rem;
   color: var(--color-text);
@@ -2932,7 +3190,8 @@ h2 {
 
 .friendly-player-control {
   background:
-    linear-gradient(180deg, rgba(255, 190, 85, 0.06), rgba(12, 7, 4, 0.34)), rgba(9, 5, 3, 0.58);
+    linear-gradient(180deg, rgba(255, 190, 85, 0.06), rgba(12, 7, 4, 0.34)),
+    rgba(9, 5, 3, 0.58);
   border: 1px solid rgba(255, 190, 85, 0.14);
   border-radius: 0.75rem;
   display: grid;
@@ -2967,7 +3226,11 @@ h2 {
 
   border-radius: 0.6rem;
   border: 1px solid rgba(255, 190, 85, 0.35);
-  background: linear-gradient(180deg, rgba(255, 177, 71, 0.95), rgba(195, 95, 22, 0.95));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 177, 71, 0.95),
+    rgba(195, 95, 22, 0.95)
+  );
 
   color: #1b0d05;
   font-size: 1.15rem;
@@ -3002,7 +3265,8 @@ h2 {
 
 .role-config-section {
   background:
-    linear-gradient(180deg, rgba(255, 190, 85, 0.065), rgba(12, 7, 4, 0.42)), rgba(14, 9, 7, 0.7);
+    linear-gradient(180deg, rgba(255, 190, 85, 0.065), rgba(12, 7, 4, 0.42)),
+    rgba(14, 9, 7, 0.7);
   border: 1px solid rgba(255, 190, 85, 0.16);
   border-radius: 0.75rem;
   display: grid;
@@ -3017,7 +3281,8 @@ h2 {
 
 .role-config-section.locked {
   background:
-    linear-gradient(180deg, rgba(255, 190, 85, 0.045), rgba(12, 7, 4, 0.48)), rgba(14, 9, 7, 0.74);
+    linear-gradient(180deg, rgba(255, 190, 85, 0.045), rgba(12, 7, 4, 0.48)),
+    rgba(14, 9, 7, 0.74);
 }
 
 .role-config-header {
@@ -3151,7 +3416,11 @@ h2 {
 }
 
 .role-config-actions button.active {
-  background: linear-gradient(180deg, rgba(255, 138, 0, 0.28), rgba(229, 46, 113, 0.16));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 138, 0, 0.28),
+    rgba(229, 46, 113, 0.16)
+  );
   border-color: rgba(255, 190, 85, 0.66);
   box-shadow:
     0 0 16px rgba(255, 138, 0, 0.14),
@@ -3219,7 +3488,8 @@ h2 {
 
 .chat-line.whisper {
   background:
-    linear-gradient(180deg, rgba(46, 28, 62, 0.82), rgba(24, 17, 36, 0.9)), rgba(24, 17, 36, 0.92);
+    linear-gradient(180deg, rgba(46, 28, 62, 0.82), rgba(24, 17, 36, 0.9)),
+    rgba(24, 17, 36, 0.92);
   border-color: rgba(167, 139, 250, 0.3);
   border-left: 4px solid rgba(196, 181, 253, 0.78);
   box-shadow:
@@ -3279,7 +3549,8 @@ h2 {
 .whisper-target {
   align-items: center;
   background:
-    linear-gradient(180deg, rgba(46, 28, 62, 0.92), rgba(24, 17, 36, 0.94)), rgba(24, 17, 36, 0.94);
+    linear-gradient(180deg, rgba(46, 28, 62, 0.92), rgba(24, 17, 36, 0.94)),
+    rgba(24, 17, 36, 0.94);
   border: 1px solid rgba(167, 139, 250, 0.34);
   border-radius: 0.7rem;
   box-shadow:
@@ -3511,7 +3782,11 @@ dd {
 }
 
 .member-action-panel button {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.14), rgba(80, 31, 21, 0.24));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.14),
+    rgba(80, 31, 21, 0.24)
+  );
   border: 1px solid rgba(255, 190, 85, 0.24);
   border-radius: 0.55rem;
   color: var(--color-text);
@@ -3634,7 +3909,11 @@ dd {
 .friend-request-form button,
 .friend-actions button,
 .friend-row > button {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.14), rgba(80, 31, 21, 0.24));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.14),
+    rgba(80, 31, 21, 0.24)
+  );
   border: 1px solid rgba(255, 190, 85, 0.24);
   border-radius: 0.55rem;
   color: var(--color-text);
@@ -3988,7 +4267,11 @@ dd {
 }
 
 .option-btn.active {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.2), rgba(255, 132, 38, 0.2)) !important;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.2),
+    rgba(255, 132, 38, 0.2)
+  ) !important;
   border-color: #ffbe55 !important;
   box-shadow: 0 0 12px rgba(255, 190, 85, 0.2) !important;
   color: #ffbe55 !important;
