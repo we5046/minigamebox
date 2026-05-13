@@ -1,14 +1,38 @@
 import { supabase } from './supabaseClient'
 
 const PRESENCE_CHANNEL_NAME = 'user-presence'
+const PRESENCE_READY_TIMEOUT_MS = 8000
 
 let presenceChannel = null
 let presenceUserId = null
 let presenceReadyPromise = null
 let resolvePresenceReady = null
+let rejectPresenceReady = null
+let presenceReadyTimer = null
 const presenceSubscribers = new Set()
 let lastPresenceUsers = []
 let currentPresencePayload = null
+
+function clearPresenceReadyTimer() {
+  if (presenceReadyTimer) {
+    clearTimeout(presenceReadyTimer)
+    presenceReadyTimer = null
+  }
+}
+
+function resolvePresenceReadyOnce() {
+  clearPresenceReadyTimer()
+  resolvePresenceReady?.()
+  resolvePresenceReady = null
+  rejectPresenceReady = null
+}
+
+function rejectPresenceReadyOnce(reason) {
+  clearPresenceReadyTimer()
+  rejectPresenceReady?.(reason)
+  resolvePresenceReady = null
+  rejectPresenceReady = null
+}
 
 function normalizePresenceUsers(state) {
   return Object.entries(state).map(([id, presences]) => {
@@ -36,8 +60,12 @@ function emitPresenceUsers() {
 }
 
 function createPresenceChannel(userId) {
-  presenceReadyPromise = new Promise((resolve) => {
+  presenceReadyPromise = new Promise((resolve, reject) => {
     resolvePresenceReady = resolve
+    rejectPresenceReady = reject
+    presenceReadyTimer = setTimeout(() => {
+      rejectPresenceReadyOnce(new Error('Presence subscription timed out.'))
+    }, PRESENCE_READY_TIMEOUT_MS)
   })
 
   presenceChannel = supabase
@@ -51,9 +79,13 @@ function createPresenceChannel(userId) {
     .on('presence', { event: 'sync' }, emitPresenceUsers)
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        resolvePresenceReady?.()
-        resolvePresenceReady = null
+        resolvePresenceReadyOnce()
         emitPresenceUsers()
+        return
+      }
+
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        rejectPresenceReadyOnce(new Error(`Presence subscription failed: ${status}`))
       }
     })
 }
@@ -83,7 +115,11 @@ async function waitForPresenceReady() {
     return
   }
 
-  await presenceReadyPromise
+  try {
+    await presenceReadyPromise
+  } catch (error) {
+    console.warn('[Presence] Realtime presence is unavailable.', error)
+  }
 }
 
 export function subscribeToPresenceUsers(callback) {
@@ -118,13 +154,17 @@ export async function setCurrentUserPresence({
     canReceiveWhisper,
   }
 
-  await channel.track({
+  const result = await channel.track({
     nickname: currentPresencePayload.nickname,
     status: currentPresencePayload.status,
     roomId: currentPresencePayload.roomId,
     canReceiveWhisper: currentPresencePayload.canReceiveWhisper,
     onlineAt: new Date().toISOString(),
   })
+
+  if (result !== 'ok') {
+    console.warn('[Presence] Failed to track current user presence.', { result })
+  }
 }
 
 export async function clearCurrentUserPresence() {
@@ -137,6 +177,8 @@ export async function clearCurrentUserPresence() {
   presenceUserId = null
   presenceReadyPromise = null
   resolvePresenceReady = null
+  rejectPresenceReady = null
+  clearPresenceReadyTimer()
   currentPresencePayload = null
   lastPresenceUsers = []
 

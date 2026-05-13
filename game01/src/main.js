@@ -16,11 +16,18 @@ async function bootstrap() {
   setActivePinia(pinia)
 
   const authStore = useAuthStore()
-  await authStore.initialize()
   const profileStore = useProfileStore()
-  if (authStore.user?.id) {
-    await profileStore.reloadProfile(authStore.user.id)
-  } else {
+
+  try {
+    await authStore.initialize()
+
+    if (authStore.user?.id) {
+      await profileStore.reloadProfile(authStore.user.id)
+    } else {
+      profileStore.resetProfile()
+    }
+  } catch (error) {
+    console.error('[Bootstrap] Failed to initialize app state', error)
     profileStore.resetProfile()
   }
 
@@ -28,4 +35,6 @@ async function bootstrap() {
   app.mount('#app')
 }
 
-bootstrap()
+bootstrap().catch((error) => {
+  console.error('[Bootstrap] Unhandled bootstrap failure', error)
+})

@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient'
+import { createSupabaseError, logSupabaseError, supabase } from './supabaseClient'
 
 const DEFAULT_QUOTE = '오늘 밤, 진실은 침묵하는 사람의 눈빛에 숨어 있다.'
 
@@ -137,6 +137,7 @@ async function selectMaybe(query) {
   const { data, error } = await query
 
   if (error) {
+    logSupabaseError('myPageApi: optional select failed', error)
     return null
   }
 
@@ -183,7 +184,7 @@ export async function updateMyPageProfile(userId, payload) {
   const { error } = await supabase.from('profiles').update(profilePayload).eq('id', userId)
 
   if (error) {
-    throw new Error('프로필 저장에 실패했습니다.')
+    throw createSupabaseError('updateMyPageProfile: profiles update failed', error, '프로필 저장에 실패했습니다.')
   }
 
   return selectMaybe(supabase.from('profiles').select('*').eq('id', userId).maybeSingle())
@@ -203,7 +204,7 @@ export async function upsertMyPageCosmetic(userId, label, value, sortOrder = 0) 
   )
 
   if (error) {
-    throw new Error('꾸미기 정보를 저장하지 못했습니다.')
+    throw createSupabaseError('upsertMyPageCosmetic: player_cosmetics upsert failed', error, '꾸미기 정보를 저장하지 못했습니다.')
   }
 }
 
@@ -275,7 +276,8 @@ export async function getMyPageData(user) {
       achievements,
       cosmetics,
     })
-  } catch {
+  } catch (error) {
+    console.error('[Supabase] getMyPageData: failed to load my page bundle', error)
     return getEmptyMyPage(user)
   }
 }

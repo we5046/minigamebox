@@ -205,6 +205,8 @@ const roomFilterOptions = computed(() => [
   { value: 'playing', label: '게임중', count: playingRoomCount.value },
 ]);
 
+const roomMessage = computed(() => '');
+
 const filteredRooms = computed(() => {
   if (roomFilter.value === 'waiting') {
     return rooms.value.filter((room) => room.status === 'waiting');
@@ -1127,6 +1129,10 @@ function getRoomAccessClass(room) {
   return room.entryMode === 'private' ? 'private' : 'public';
 }
 
+function getEntryModeLabel(mode) {
+  return mode === 'private' ? '비공개방' : '공개방';
+}
+
 function canEnterRoom(room) {
   const currentPlayers = room.players?.length || room.currentPlayers || 0;
 
@@ -1785,11 +1791,11 @@ async function logout() {
               class="room-entry"
               :class="{ expanded: selectedRoomId === room.id }"
             >
-              <div class="room-row">
+              <div class="room-row" @click="toggleRoomDetails(room.id)">
                 <button
                   class="join-pill"
                   type="button"
-                  @click="enterRoom(room.id)"
+                  @click.stop="enterRoom(room.id)"
                 >
                   입장
                 </button>
@@ -1797,7 +1803,7 @@ async function logout() {
                   class="room-detail-trigger"
                   type="button"
                   :aria-expanded="selectedRoomId === room.id"
-                  @click="toggleRoomDetails(room.id)"
+                  @click.stop="toggleRoomDetails(room.id)"
                 >
                   <span>#{{ String(room.id).slice(0, 8) }}</span>
                   <strong>
@@ -1832,7 +1838,7 @@ async function logout() {
                 </button>
               </div>
 
-              <div v-if="selectedRoomId === room.id" class="room-details">
+              <div v-if="selectedRoomId === room.id" class="room-details" @click.stop>
                 <div class="room-preview-header">
                   <div>
                     <p class="eyebrow">Room Preview</p>
@@ -2950,6 +2956,7 @@ h2 {
   border: 1px solid var(--color-border);
   border-radius: 0.75rem;
   color: var(--color-text);
+  cursor: pointer;
   display: grid;
   gap: 0.8rem;
   grid-template-columns: minmax(0, 1fr) 4.25rem;
@@ -2971,6 +2978,11 @@ h2 {
   );
   border-color: rgba(255, 190, 85, 0.38);
   box-shadow: 0 0 22px rgba(255, 132, 38, 0.12);
+}
+
+.room-row:focus-within {
+  outline: 2px solid rgba(255, 190, 85, 0.28);
+  outline-offset: 2px;
 }
 
 .room-entry.expanded .room-row {

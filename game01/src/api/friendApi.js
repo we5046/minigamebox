@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient'
+import { createSupabaseError, supabase } from './supabaseClient'
 
 const friendshipChannels = new Map()
 
@@ -48,7 +48,7 @@ export async function getFriendships(currentUserId) {
     .order('updated_at', { ascending: false })
 
   if (error) {
-    throw new Error('친구 목록을 불러오지 못했습니다.')
+    throw createSupabaseError('getFriendships: friendships select failed', error, '친구 목록을 불러오지 못했습니다.')
   }
 
   return data
@@ -62,7 +62,7 @@ export async function sendFriendRequest(targetNickname) {
   })
 
   if (error) {
-    throw new Error('친구 요청을 보내지 못했습니다.')
+    throw createSupabaseError('sendFriendRequest: send_friend_request rpc failed', error, '친구 요청을 보내지 못했습니다.')
   }
 }
 
@@ -73,7 +73,7 @@ export async function respondFriendRequest(friendshipId, accept) {
   })
 
   if (error) {
-    throw new Error('친구 요청을 처리하지 못했습니다.')
+    throw createSupabaseError('respondFriendRequest: respond_friend_request rpc failed', error, '친구 요청을 처리하지 못했습니다.')
   }
 }
 
@@ -83,7 +83,7 @@ export async function removeFriend(friendshipId) {
   })
 
   if (error) {
-    throw new Error('친구를 삭제하지 못했습니다.')
+    throw createSupabaseError('removeFriend: remove_friend rpc failed', error, '친구를 삭제하지 못했습니다.')
   }
 }
 

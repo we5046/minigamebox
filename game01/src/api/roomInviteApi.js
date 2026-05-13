@@ -1,17 +1,24 @@
-import { supabase } from './supabaseClient'
+import { createSupabaseError, supabase } from './supabaseClient'
 
 const inviteSelect = `
   *,
   room:rooms (
     id,
     title,
+    host_user_id,
     status,
     max_players,
     description,
-    host_nickname,
     entry_mode,
     room_players (
-      user_id
+      user_id,
+      is_host,
+      profiles (
+        id,
+        nickname,
+        avatar,
+        level
+      )
     )
   ),
   inviter:profiles!room_invites_from_user_id_fkey (
@@ -32,6 +39,9 @@ const inviteChannels = new Map()
 
 export function normalizeRoomInvite(row) {
   const roomPlayers = row.room?.room_players || []
+  const hostPlayer =
+    roomPlayers.find((player) => player.is_host === true) ||
+    roomPlayers.find((player) => player.user_id === row.room?.host_user_id)
 
   return {
     id: row.id,
@@ -48,7 +58,7 @@ export function normalizeRoomInvite(row) {
       status: row.room?.status || 'waiting',
       maxPlayers: row.room?.max_players || 8,
       description: row.room?.description || '',
-      hostNickname: row.room?.host_nickname || 'Unknown',
+      hostNickname: hostPlayer?.profiles?.nickname || 'Unknown',
       entryMode: row.room?.entry_mode || 'public',
       currentPlayers: roomPlayers.length,
     },
@@ -77,7 +87,7 @@ export async function getIncomingRoomInvites(userId) {
     .order('updated_at', { ascending: false })
 
   if (error) {
-    throw new Error('방 초대 목록을 불러오지 못했습니다.')
+    throw createSupabaseError('getIncomingRoomInvites: room_invites select failed', error, '방 초대 목록을 불러오지 못했습니다.')
   }
 
   return data.map(normalizeRoomInvite)
@@ -93,7 +103,7 @@ export async function getRoomInvites(roomId, fromUserId) {
     .gt('expires_at', new Date().toISOString())
 
   if (error) {
-    throw new Error('보낸 초대 목록을 불러오지 못했습니다.')
+    throw createSupabaseError('getRoomInvites: room_invites select failed', error, '보낸 초대 목록을 불러오지 못했습니다.')
   }
 
   return data.map(normalizeRoomInvite)
@@ -106,7 +116,7 @@ export async function sendRoomInvite(roomId, targetUserId) {
   })
 
   if (error) {
-    throw new Error('방 초대를 보내지 못했습니다.')
+    throw createSupabaseError('sendRoomInvite: send_room_invite rpc failed', error, '방 초대를 보내지 못했습니다.')
   }
 }
 
@@ -117,7 +127,7 @@ export async function respondRoomInvite(inviteId, accept) {
   })
 
   if (error) {
-    throw new Error('방 초대를 처리하지 못했습니다.')
+    throw createSupabaseError('respondRoomInvite: respond_room_invite rpc failed', error, '방 초대를 처리하지 못했습니다.')
   }
 
   return normalizeRoomInvite(data)

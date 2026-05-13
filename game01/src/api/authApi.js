@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient'
+import { createSupabaseError, supabase } from './supabaseClient'
 import { clearCurrentUser, setCurrentUser } from './session'
 
 function toAuthEmail(loginId) {
@@ -55,7 +55,7 @@ export async function getProfile(userId) {
   ])
 
   if (profileResult.error) {
-    throw new Error('프로필 정보를 불러오지 못했습니다.')
+    throw createSupabaseError('getProfile: profiles select failed', profileResult.error, '프로필 정보를 불러오지 못했습니다.')
   }
 
   return {
@@ -72,7 +72,7 @@ export async function loginUser({ loginId, password }) {
   })
 
   if (error || !data.user) {
-    throw new Error('로그인 ID가 없거나 비밀번호가 일치하지 않습니다.')
+    throw createSupabaseError('loginUser: signInWithPassword failed', error, '로그인 ID가 없거나 비밀번호가 일치하지 않습니다.')
   }
 
   const currentUser = toCurrentUser(await getProfile(data.user.id))
@@ -90,7 +90,7 @@ export async function signupUser({ loginId, nickname, password }) {
     .eq('login_id', trimmedLoginId)
 
   if (loginError) {
-    throw new Error('회원 확인 요청에 실패했습니다.')
+    throw createSupabaseError('signupUser: duplicate login check failed', loginError, '회원 확인 요청에 실패했습니다.')
   }
 
   if (sameLoginUsers.length > 0) {
@@ -103,7 +103,7 @@ export async function signupUser({ loginId, nickname, password }) {
     .eq('nickname', trimmedNickname)
 
   if (nicknameError) {
-    throw new Error('닉네임 확인 요청에 실패했습니다.')
+    throw createSupabaseError('signupUser: duplicate nickname check failed', nicknameError, '닉네임 확인 요청에 실패했습니다.')
   }
 
   if (sameNicknameUsers.length > 0) {
@@ -116,7 +116,7 @@ export async function signupUser({ loginId, nickname, password }) {
   })
 
   if (authError || !authData.user) {
-    throw new Error(authError?.message || '회원가입에 실패했습니다.')
+    throw createSupabaseError('signupUser: auth signUp failed', authError, authError?.message || '회원가입에 실패했습니다.')
   }
 
   const { error: profileError } = await supabase.from('profiles').insert({
@@ -130,7 +130,7 @@ export async function signupUser({ loginId, nickname, password }) {
   })
 
   if (profileError) {
-    throw new Error('프로필 저장에 실패했습니다.')
+    throw createSupabaseError('signupUser: profile insert failed', profileError, '프로필 저장에 실패했습니다.')
   }
 
   return authData.user

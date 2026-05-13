@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient'
+import { createSupabaseError, supabase } from './supabaseClient'
 
 const roomListChannels = new Map()
 const roomDetailChannels = new Map()
@@ -108,7 +108,7 @@ export async function getRooms() {
     .order('created_at', { ascending: false })
 
   if (error) {
-    throw new Error('Failed to load room list.')
+    throw createSupabaseError('getRooms: rooms select failed', error, 'Failed to load room list.')
   }
 
   return data.map(normalizeRoom)
@@ -118,7 +118,7 @@ export async function getRoom(roomId) {
   const { data, error } = await supabase.from('rooms').select(roomSelect).eq('id', roomId).single()
 
   if (error) {
-    throw new Error('Failed to load room information.')
+    throw createSupabaseError('getRoom: room select failed', error, 'Failed to load room information.')
   }
 
   return normalizeRoom(data)
@@ -158,6 +158,11 @@ export async function createRoom({
   })
 
   if (error) {
+    throw createSupabaseError('createRoom: create_room rpc failed', error, 'Failed to create room.')
+  }
+
+  if (!room?.id) {
+    console.error('[Supabase] createRoom: create_room rpc returned invalid payload', { room })
     throw new Error('Failed to create room.')
   }
 
@@ -170,7 +175,7 @@ export async function joinRoom(roomId) {
   })
 
   if (error) {
-    throw new Error('Failed to join room.')
+    throw createSupabaseError('joinRoom: join_room rpc failed', error, 'Failed to join room.')
   }
 
   return getRoom(roomId)
@@ -194,7 +199,7 @@ export async function updateRoom(roomId, payload) {
     const failedResult = results.find((result) => result.error)
 
     if (failedResult) {
-      throw new Error('Failed to update player information.')
+      throw createSupabaseError('updateRoom: room_players update failed', failedResult.error, 'Failed to update player information.')
     }
   }
 
@@ -238,7 +243,7 @@ export async function updateRoom(roomId, payload) {
     const { error } = await supabase.from('rooms').update(roomPayload).eq('id', roomId)
 
     if (error) {
-      throw new Error('Failed to update room information.')
+      throw createSupabaseError('updateRoom: rooms update failed', error, 'Failed to update room information.')
     }
   }
 
@@ -253,7 +258,7 @@ export async function setPlayerReady(roomId, userId, isReady) {
     .eq('user_id', userId)
 
   if (error) {
-    throw new Error('Failed to update ready status.')
+    throw createSupabaseError('setPlayerReady: room_players update failed', error, 'Failed to update ready status.')
   }
 
   return getRoom(roomId)
@@ -265,7 +270,7 @@ export async function leaveRoom(roomId) {
   })
 
   if (error) {
-    throw new Error('Failed to leave room.')
+    throw createSupabaseError('leaveRoom: leave_room rpc failed', error, 'Failed to leave room.')
   }
 
   return null
@@ -275,7 +280,7 @@ export async function deleteRoom(roomId) {
   const { error } = await supabase.from('rooms').delete().eq('id', roomId)
 
   if (error) {
-    throw new Error('Failed to delete room.')
+    throw createSupabaseError('deleteRoom: rooms delete failed', error, 'Failed to delete room.')
   }
 }
 
