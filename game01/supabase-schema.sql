@@ -885,7 +885,7 @@ begin
   end if;
 
   if p_accept then
-    perform public.join_room(v_invite.room_id);
+    perform public.join_room(v_invite.room_id, null, true);
   end if;
 
   update public.room_invites
@@ -1054,7 +1054,11 @@ $$;
 
 grant execute on function public.create_room(text, text, integer, integer, integer, integer, integer, text, boolean, boolean, boolean, boolean, boolean, text, text, text, jsonb) to authenticated;
 
-create or replace function public.join_room(p_room_id uuid)
+create or replace function public.join_room(
+  p_room_id uuid,
+  p_entry_password text default '',
+  p_bypass_password boolean default false
+)
 returns public.rooms
 language plpgsql
 security definer
@@ -1092,6 +1096,16 @@ begin
     raise exception 'Room is not waiting';
   end if;
 
+  if v_room.entry_mode = 'private' and not coalesce(p_bypass_password, false) then
+    if nullif(trim(coalesce(p_entry_password, '')), '') is null then
+      raise exception 'Room password is required for private rooms';
+    end if;
+
+    if trim(coalesce(p_entry_password, '')) <> coalesce(v_room.entry_password, '') then
+      raise exception 'Invalid room password';
+    end if;
+  end if;
+
   select count(*)
     into v_player_count
   from public.room_players
@@ -1117,7 +1131,7 @@ begin
 end;
 $$;
 
-grant execute on function public.join_room(uuid) to authenticated;
+grant execute on function public.join_room(uuid, text, boolean) to authenticated;
 
 create or replace function public.leave_room(p_room_id uuid)
 returns void

@@ -58,6 +58,7 @@ export function normalizeRoom(room) {
       DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed,
     roleRevealMode: room.role_reveal_mode || 'private',
     entryMode: room.entry_mode || 'public',
+    entryPassword: room.entry_password || '',
     roleConfig: room.role_config || null,
     currentPlayers: players.length,
     phase: room.phase,
@@ -84,6 +85,7 @@ const roomSelect = `
   first_night_ability_allowed,
   role_reveal_mode,
   entry_mode,
+  entry_password,
   role_config,
   updated_at,
   created_at,
@@ -169,9 +171,10 @@ export async function createRoom({
   return getRoom(room.id)
 }
 
-export async function joinRoom(roomId) {
+export async function joinRoom(roomId, entryPassword = '') {
   const { error } = await supabase.rpc('join_room', {
     p_room_id: roomId,
+    p_entry_password: entryPassword,
   })
 
   if (error) {
@@ -238,13 +241,26 @@ export async function updateRoom(roomId, payload) {
     roomPayload.entry_password = payload.entryPassword || ''
   }
   if (payload.roleConfig) roomPayload.role_config = payload.roleConfig
+  roomPayload.updated_at = new Date().toISOString()
 
   if (Object.keys(roomPayload).length > 0) {
-    const { error } = await supabase.from('rooms').update(roomPayload).eq('id', roomId)
+    const { data, error } = await supabase
+      .from('rooms')
+      .update(roomPayload)
+      .eq('id', roomId)
+      .select(roomSelect)
+      .single()
 
     if (error) {
       throw createSupabaseError('updateRoom: rooms update failed', error, 'Failed to update room information.')
     }
+
+    if (!data?.id) {
+      console.error('[Supabase] updateRoom: rooms update returned invalid payload', { data })
+      throw new Error('Failed to update room information.')
+    }
+
+    return normalizeRoom(data)
   }
 
   return getRoom(roomId)

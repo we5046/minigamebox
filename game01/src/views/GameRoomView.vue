@@ -1,7 +1,15 @@
 ﻿<script setup>
-import { computed, onBeforeUnmount, onMounted, ref, nextTick, watch } from 'vue';
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  nextTick,
+  watch,
+} from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { useRoomStore } from '@/stores/room';
 import { useToastStore } from '@/stores/toast';
 import {
   getRoom,
@@ -11,8 +19,15 @@ import {
   subscribeToRoom,
   updateRoom,
 } from '@/api/roomApi';
-import { subscribeToRoomChat, sendRoomChatMessage, normalizeBroadcastMessage } from '@/api/chatApi';
-import { setCurrentUserPresence, subscribeToPresenceUsers } from '@/api/presenceApi';
+import {
+  subscribeToRoomChat,
+  sendRoomChatMessage,
+  normalizeBroadcastMessage,
+} from '@/api/chatApi';
+import {
+  setCurrentUserPresence,
+  subscribeToPresenceUsers,
+} from '@/api/presenceApi';
 import { getFriendships } from '@/api/friendApi';
 import { getRoomInvites, sendRoomInvite } from '@/api/roomInviteApi';
 
@@ -26,6 +41,7 @@ const props = defineProps({
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
+const roomStore = useRoomStore();
 const toastStore = useToastStore();
 const savedUser = computed(() => authStore.user);
 
@@ -66,7 +82,10 @@ const chatMessages = ref([
     id: 'sys-welcome',
     nickname: 'System',
     content: '게임 방에 입장하셨습니다. 매너 채팅 부탁드립니다.',
-    createdAt: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+    createdAt: new Date().toLocaleTimeString('ko-KR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
     isSystem: true,
   },
 ]);
@@ -84,7 +103,9 @@ const canStartGame = computed(() => {
   return guests.length > 0 && guests.every((player) => player.isReady);
 });
 const sentInviteMap = computed(() => {
-  return new Map(sentRoomInvites.value.map((invite) => [invite.toUserId, invite]));
+  return new Map(
+    sentRoomInvites.value.map((invite) => [invite.toUserId, invite]),
+  );
 });
 const inviteFriends = computed(() => {
   const playerIds = new Set(players.value.map((player) => player.userId));
@@ -96,8 +117,13 @@ const inviteFriends = computed(() => {
     .map((friendship) => ({
       ...friendship.friend,
       isOnline: onlineUserIds.has(friendship.friend.id),
-      inviteRemainingSeconds: getInviteRemainingSeconds(sentInviteMap.value.get(friendship.friend.id)),
-      isInvited: getInviteRemainingSeconds(sentInviteMap.value.get(friendship.friend.id)) > 0,
+      inviteRemainingSeconds: getInviteRemainingSeconds(
+        sentInviteMap.value.get(friendship.friend.id),
+      ),
+      isInvited:
+        getInviteRemainingSeconds(
+          sentInviteMap.value.get(friendship.friend.id),
+        ) > 0,
       isInviting: invitingUserIds.value.has(friendship.friend.id),
     }));
 });
@@ -110,7 +136,9 @@ const filteredInviteFriends = computed(() => {
   }
 
   return inviteFriends.value.filter((friend) => {
-    return String(friend.nickname || '').toLowerCase().includes(query);
+    return String(friend.nickname || '')
+      .toLowerCase()
+      .includes(query);
   });
 });
 
@@ -121,11 +149,38 @@ const roleOptions = [
   { key: 'doctor', label: '의사' },
 ];
 const fixedPlayerCounts = [4, 6, 8, 12];
-const isFriendlyEditMode = computed(() => editRoomDescription.value === '친선전');
+const nightTimeOptions = [20, 30, 45, 60];
+const discussionTimeOptions = [30, 45, 60, 90, 120];
+const voteTimeOptions = [15, 30, 45, 60];
+const tieVoteOptions = [
+  { value: 'no_execution', label: '처형 없음' },
+  { value: 'revote', label: '재투표' },
+];
+const isFriendlyEditMode = computed(
+  () => editRoomDescription.value === '친선전',
+);
 const minEditableMaxPlayers = computed(() => Math.max(4, players.value.length));
+const editMinStartPlayerOptions = computed(() =>
+  Array.from(
+    { length: Math.max(1, Number(editRoomMaxPlayers.value) - 1) },
+    (_, index) => index + 2,
+  ),
+);
 const isRecommendedEditRolesEnabled = ref(false);
+const isEditAdvancedOpen = ref(true);
+const editRoomDiscussionTimeSeconds = ref(60);
+const editRoomMinStartPlayers = ref(4);
+const editRoomTieVoteRule = ref('no_execution');
+const editSpectatorAllowed = ref(false);
+const editFirstNightAbilityAllowed = ref(true);
+const editEntryPassword = ref('');
+const editRoomStoredEntryPassword = ref('');
+const isEditEntryPasswordVisible = ref(false);
 const editRoleConfigTotal = computed(() => {
-  return Object.values(editRoomRoleConfig.value).reduce((total, count) => total + Number(count || 0), 0);
+  return Object.values(editRoomRoleConfig.value).reduce(
+    (total, count) => total + Number(count || 0),
+    0,
+  );
 });
 const isEditRoleConfigValid = computed(
   () => editRoleConfigTotal.value === Number(editRoomMaxPlayers.value),
@@ -139,7 +194,7 @@ const editRoleConfigStatusText = computed(() => {
     return '기본 밸런스 고정';
   }
 
-  return '친선전 사용자 설정';
+  return '커스텀 사용자 설정';
 });
 
 function getDefaultRoleConfig(maxPlayers) {
@@ -169,7 +224,17 @@ function getRecommendedRoleConfig(maxPlayers) {
 }
 
 function isSameRoleConfig(a, b) {
-  return ['citizen', 'mafia', 'police', 'doctor'].every((key) => Number(a?.[key] || 0) === Number(b?.[key] || 0));
+  return ['citizen', 'mafia', 'police', 'doctor'].every(
+    (key) => Number(a?.[key] || 0) === Number(b?.[key] || 0),
+  );
+}
+
+function selectEditRoomEntryMode(mode) {
+  editEntryMode.value = mode;
+}
+
+function toggleEditEntryPasswordVisibility() {
+  isEditEntryPasswordVisible.value = !isEditEntryPasswordVisible.value;
 }
 
 function getInviteRemainingSeconds(invite) {
@@ -177,7 +242,12 @@ function getInviteRemainingSeconds(invite) {
     return 0;
   }
 
-  return Math.max(0, Math.ceil((new Date(invite.expiresAt).getTime() - inviteCountdownTick.value) / 1000));
+  return Math.max(
+    0,
+    Math.ceil(
+      (new Date(invite.expiresAt).getTime() - inviteCountdownTick.value) / 1000,
+    ),
+  );
 }
 
 async function syncRoomPresence() {
@@ -237,7 +307,9 @@ watch([editRoomMaxPlayers, editRoomDescription], () => {
 
   if (isFriendlyEditMode.value) {
     if (isRecommendedEditRolesEnabled.value) {
-      editRoomRoleConfig.value = getRecommendedRoleConfig(editRoomMaxPlayers.value);
+      editRoomRoleConfig.value = getRecommendedRoleConfig(
+        editRoomMaxPlayers.value,
+      );
     }
 
     return;
@@ -325,7 +397,10 @@ async function loadSentRoomInvites() {
   }
 
   try {
-    sentRoomInvites.value = await getRoomInvites(props.roomId, savedUser.value.id);
+    sentRoomInvites.value = await getRoomInvites(
+      props.roomId,
+      savedUser.value.id,
+    );
   } catch (error) {
     toastStore.error(error.message);
   }
@@ -394,7 +469,10 @@ async function inviteByNickname() {
   }
 
   const exactMatch = filteredInviteFriends.value.find(
-    (friend) => String(friend.nickname || '').trim().toLowerCase() === query.toLowerCase(),
+    (friend) =>
+      String(friend.nickname || '')
+        .trim()
+        .toLowerCase() === query.toLowerCase(),
   );
 
   if (exactMatch) {
@@ -426,7 +504,10 @@ async function syncRoom() {
     lastSyncedAt.value = new Date();
     await syncRoomPresence();
   } catch (error) {
-    if (error.message.includes('Not Found') || error.message.includes('Failed to load room')) {
+    if (
+      error.message.includes('Not Found') ||
+      error.message.includes('Failed to load room')
+    ) {
       router.push('/home');
       return;
     }
@@ -440,7 +521,7 @@ async function joinRoom() {
     return;
   }
 
-  room.value = await joinRoomRequest(props.roomId, savedUser.value);
+  room.value = await joinRoomRequest(props.roomId);
   lastSyncedAt.value = new Date();
   announceRoomEntry();
   await syncRoomPresence();
@@ -484,7 +565,7 @@ function getRoleRevealLabel(mode) {
 }
 
 function getEntryModeLabel(mode) {
-  return mode === 'private' ? '초대방' : '공개방';
+  return mode === 'private' ? '비공개방' : '공개방';
 }
 
 async function toggleReady() {
@@ -529,8 +610,13 @@ function openEditRoomForm() {
   editRoomDescription.value = room.value?.description || '';
   editRoomMaxPlayers.value = room.value?.maxPlayers || 8;
   editRoomRoleConfig.value = room.value?.roleConfig
-    ? { ...getDefaultRoleConfig(room.value?.maxPlayers || 8), ...room.value.roleConfig }
+    ? {
+        ...getDefaultRoleConfig(room.value?.maxPlayers || 8),
+        ...room.value.roleConfig,
+      }
     : getDefaultRoleConfig(room.value?.maxPlayers || 8);
+  editRoomDiscussionTimeSeconds.value = room.value?.discussionTimeSeconds || 60;
+  editRoomMinStartPlayers.value = room.value?.minStartPlayers || 4;
   isRecommendedEditRolesEnabled.value =
     editRoomDescription.value === '친선전' &&
     isSameRoleConfig(
@@ -539,8 +625,16 @@ function openEditRoomForm() {
     );
   editNightTimeSeconds.value = room.value?.nightTimeSeconds || 30;
   editVoteTimeSeconds.value = room.value?.voteTimeSeconds || 15;
+  editRoomTieVoteRule.value = room.value?.tieVoteRule || 'no_execution';
+  editSpectatorAllowed.value = room.value?.spectatorAllowed ?? false;
+  editFirstNightAbilityAllowed.value =
+    room.value?.firstNightAbilityAllowed ?? true;
   editRoleRevealMode.value = room.value?.roleRevealMode || 'private';
   editEntryMode.value = room.value?.entryMode || 'public';
+  editEntryPassword.value = room.value?.entryPassword || '';
+  editRoomStoredEntryPassword.value = room.value?.entryPassword || '';
+  isEditEntryPasswordVisible.value = false;
+  isEditAdvancedOpen.value = true;
   isEditingRoom.value = true;
 }
 
@@ -552,13 +646,25 @@ function closeEditRoomForm() {
   editRoomRoleConfig.value = getDefaultRoleConfig(8);
   editNightTimeSeconds.value = 30;
   editVoteTimeSeconds.value = 15;
+  editRoomDiscussionTimeSeconds.value = 60;
+  editRoomMinStartPlayers.value = 4;
+  editRoomTieVoteRule.value = 'no_execution';
+  editSpectatorAllowed.value = false;
+  editFirstNightAbilityAllowed.value = true;
   editRoleRevealMode.value = 'private';
   editEntryMode.value = 'public';
+  editEntryPassword.value = '';
+  editRoomStoredEntryPassword.value = '';
+  isEditEntryPasswordVisible.value = false;
   isRecommendedEditRolesEnabled.value = false;
+  isEditAdvancedOpen.value = true;
 }
 
 function setEditRoomMaxPlayers(count) {
-  editRoomMaxPlayers.value = Math.min(12, Math.max(minEditableMaxPlayers.value, Number(count)));
+  editRoomMaxPlayers.value = Math.min(
+    12,
+    Math.max(minEditableMaxPlayers.value, Number(count)),
+  );
 }
 
 function selectEditRoomMode(mode) {
@@ -566,13 +672,16 @@ function selectEditRoomMode(mode) {
 
   if (mode === '친선전') {
     isRecommendedEditRolesEnabled.value = true;
-    editRoomRoleConfig.value = getRecommendedRoleConfig(editRoomMaxPlayers.value);
+    editRoomRoleConfig.value = getRecommendedRoleConfig(
+      editRoomMaxPlayers.value,
+    );
     return;
   }
 
   if (!fixedPlayerCounts.includes(Number(editRoomMaxPlayers.value))) {
     editRoomMaxPlayers.value =
-      fixedPlayerCounts.find((count) => count >= minEditableMaxPlayers.value) || 12;
+      fixedPlayerCounts.find((count) => count >= minEditableMaxPlayers.value) ||
+      12;
   }
 
   isRecommendedEditRolesEnabled.value = false;
@@ -580,6 +689,10 @@ function selectEditRoomMode(mode) {
 
 function adjustEditRoomMaxPlayers(amount) {
   setEditRoomMaxPlayers(editRoomMaxPlayers.value + amount);
+}
+
+function toggleEditAdvancedSettings() {
+  isEditAdvancedOpen.value = !isEditAdvancedOpen.value;
 }
 
 function applyRecommendedEditRoomRoles() {
@@ -617,7 +730,10 @@ function adjustEditRoomRole(roleKey, amount) {
   const currentCount = Number(editRoomRoleConfig.value[roleKey] || 0);
   const nextCount = Math.max(0, currentCount + amount);
 
-  if (amount > 0 && editRoleConfigTotal.value >= Number(editRoomMaxPlayers.value)) {
+  if (
+    amount > 0 &&
+    editRoleConfigTotal.value >= Number(editRoomMaxPlayers.value)
+  ) {
     return;
   }
 
@@ -654,6 +770,18 @@ async function saveRoomInfo() {
     return;
   }
 
+  const nextEntryPassword = editEntryPassword.value.trim();
+  const currentEntryPassword = editRoomStoredEntryPassword.value || '';
+
+  if (
+    editEntryMode.value === 'private' &&
+    !nextEntryPassword &&
+    !currentEntryPassword
+  ) {
+    toastStore.error('비공개방은 비밀번호를 입력해야 합니다.');
+    return;
+  }
+
   isUpdating.value = true;
 
   try {
@@ -664,10 +792,21 @@ async function saveRoomInfo() {
       roleConfig: editRoomRoleConfig.value,
       nightTimeSeconds: Number(editNightTimeSeconds.value),
       voteTimeSeconds: Number(editVoteTimeSeconds.value),
+      discussionTimeSeconds: Number(editRoomDiscussionTimeSeconds.value),
+      minStartPlayers: Number(editRoomMinStartPlayers.value),
+      tieVoteRule: editRoomTieVoteRule.value,
+      spectatorAllowed: editSpectatorAllowed.value,
+      firstNightAbilityAllowed: editFirstNightAbilityAllowed.value,
       roleRevealMode: editRoleRevealMode.value,
       entryMode: editEntryMode.value,
+      ...(editEntryMode.value === 'private'
+        ? {
+            entryPassword: nextEntryPassword || currentEntryPassword,
+          }
+        : {}),
     });
     lastSyncedAt.value = new Date();
+    await roomStore.fetchRooms();
     closeEditRoomForm();
   } catch (error) {
     toastStore.error(error.message);
@@ -752,11 +891,14 @@ async function leaveRoom() {
                 room.description === '랭크전'
                   ? '⚔️ 랭크전'
                   : room.description === '친선전'
-                    ? '🤝 친선전'
+                    ? '🤝 커스텀'
                     : '🎭 클래식'
               }}
             </span>
-            <span class="badge capacity-badge" :class="{ full: players.length >= room.maxPlayers }">
+            <span
+              class="badge capacity-badge"
+              :class="{ full: players.length >= room.maxPlayers }"
+            >
               👥 {{ players.length }} / {{ room.maxPlayers }}
             </span>
           </div>
@@ -764,7 +906,9 @@ async function leaveRoom() {
           <p class="host-info">
             방장: <strong class="host-name">{{ room.hostNickname }}</strong>
           </p>
-          <p class="atmosphere-quote">"거짓말을 하는 자는 누구인가? 밤이 깊어갑니다..."</p>
+          <p class="atmosphere-quote">
+            "거짓말을 하는 자는 누구인가? 밤이 깊어갑니다..."
+          </p>
         </div>
 
         <div v-if="currentPlayer" class="room-control-panel">
@@ -777,7 +921,9 @@ async function leaveRoom() {
               v-if="isHost"
               type="button"
               class="action-btn primary-btn pulse-anim"
-              :disabled="isUpdating || !canStartGame || room.status !== 'waiting'"
+              :disabled="
+                isUpdating || !canStartGame || room.status !== 'waiting'
+              "
               @click="startGame"
             >
               게임 시작
@@ -787,7 +933,11 @@ async function leaveRoom() {
               v-if="!isHost"
               type="button"
               class="action-btn"
-              :class="currentPlayer.isReady ? 'secondary-btn' : 'primary-btn pulse-anim'"
+              :class="
+                currentPlayer.isReady
+                  ? 'secondary-btn'
+                  : 'primary-btn pulse-anim'
+              "
               :disabled="isUpdating"
               @click="toggleReady"
             >
@@ -895,7 +1045,7 @@ async function leaveRoom() {
         </div>
 
         <div class="form-group">
-          <label>게임 모드 (소개)</label>
+          <label>게임 모드</label>
           <div class="option-group">
             <button
               type="button"
@@ -919,32 +1069,12 @@ async function leaveRoom() {
               :class="{ active: editRoomDescription === '친선전' }"
               @click="selectEditRoomMode('친선전')"
             >
-              🤝 친선전
+              🛠 커스텀
             </button>
           </div>
         </div>
 
         <div class="room-custom-grid">
-          <div class="form-group">
-            <label>밤 시간</label>
-            <select v-model.number="editNightTimeSeconds">
-              <option :value="20">20초</option>
-              <option :value="30">30초</option>
-              <option :value="45">45초</option>
-              <option :value="60">60초</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label>투표 시간</label>
-            <select v-model.number="editVoteTimeSeconds">
-              <option :value="15">15초</option>
-              <option :value="30">30초</option>
-              <option :value="45">45초</option>
-              <option :value="60">60초</option>
-            </select>
-          </div>
-
           <div class="form-group">
             <label>역할 공개</label>
             <div class="option-group">
@@ -974,7 +1104,7 @@ async function leaveRoom() {
                 type="button"
                 class="option-btn"
                 :class="{ active: editEntryMode === 'public' }"
-                @click="editEntryMode = 'public'"
+                @click="selectEditRoomEntryMode('public')"
               >
                 공개방
               </button>
@@ -982,17 +1112,220 @@ async function leaveRoom() {
                 type="button"
                 class="option-btn"
                 :class="{ active: editEntryMode === 'private' }"
-                @click="editEntryMode = 'private'"
+                @click="selectEditRoomEntryMode('private')"
               >
-                초대방
+                비공개방
+              </button>
+            </div>
+          </div>
+
+          <div v-if="editEntryMode === 'private'" class="form-group">
+            <label for="edit-room-entry-password">비밀번호</label>
+            <div class="password-input-shell">
+              <input
+                id="edit-room-entry-password"
+                v-model="editEntryPassword"
+                :type="isEditEntryPasswordVisible ? 'text' : 'password'"
+                class="text-input"
+                placeholder="비공개방 비밀번호를 입력하세요"
+                autocomplete="new-password"
+              />
+              <button
+                type="button"
+                class="password-toggle-icon"
+                :aria-label="
+                  isEditEntryPasswordVisible
+                    ? '비밀번호 숨기기'
+                    : '비밀번호 보기'
+                "
+                :title="
+                  isEditEntryPasswordVisible
+                    ? '비밀번호 숨기기'
+                    : '비밀번호 보기'
+                "
+                @click="toggleEditEntryPasswordVisibility"
+                >
+                  <svg
+                    v-if="isEditEntryPasswordVisible"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="2.9"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                    />
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M3.5 4.5 20.5 19.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                    <path
+                      d="M2.5 12s3.5-6.5 9.5-6.5c1.7 0 3.3.38 4.7 1.04M21.5 12s-3.5 6.5-9.5 6.5c-1.7 0-3.3-.38-4.7-1.04"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="2.9"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                    />
+                  </svg>
               </button>
             </div>
           </div>
         </div>
 
+        <section class="advanced-settings-panel">
+          <button
+            type="button"
+            class="advanced-settings-toggle"
+            :class="{ active: isEditAdvancedOpen }"
+            @click="toggleEditAdvancedSettings"
+          >
+            <span>세부 설정</span>
+            <strong>{{ isEditAdvancedOpen ? '접기' : '펼치기' }}</strong>
+          </button>
+
+          <div v-if="isEditAdvancedOpen" class="advanced-settings-grid">
+            <div class="form-group">
+              <label>밤 시간</label>
+              <select v-model.number="editNightTimeSeconds">
+                <option
+                  v-for="seconds in nightTimeOptions"
+                  :key="`edit-night-${seconds}`"
+                  :value="seconds"
+                >
+                  {{ seconds }}초
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>토론 시간</label>
+              <select v-model.number="editRoomDiscussionTimeSeconds">
+                <option
+                  v-for="seconds in discussionTimeOptions"
+                  :key="`edit-discussion-${seconds}`"
+                  :value="seconds"
+                >
+                  {{ seconds }}초
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>최소 시작 인원</label>
+              <select v-model.number="editRoomMinStartPlayers">
+                <option
+                  v-for="count in editMinStartPlayerOptions"
+                  :key="`edit-start-${count}`"
+                  :value="count"
+                >
+                  {{ count }}명
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>투표 시간</label>
+              <select v-model.number="editVoteTimeSeconds">
+                <option
+                  v-for="seconds in voteTimeOptions"
+                  :key="`edit-vote-${seconds}`"
+                  :value="seconds"
+                >
+                  {{ seconds }}초
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>동점 투표</label>
+              <select v-model="editRoomTieVoteRule">
+                <option
+                  v-for="option in tieVoteOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>관전 허용</label>
+              <div class="option-group">
+                <button
+                  type="button"
+                  class="option-btn"
+                  :class="{ active: editSpectatorAllowed }"
+                  @click="editSpectatorAllowed = true"
+                >
+                  활성화
+                </button>
+                <button
+                  type="button"
+                  class="option-btn"
+                  :class="{ active: !editSpectatorAllowed }"
+                  @click="editSpectatorAllowed = false"
+                >
+                  비활성화
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>첫날 밤 능력 사용</label>
+              <div class="option-group">
+                <button
+                  type="button"
+                  class="option-btn"
+                  :class="{ active: editFirstNightAbilityAllowed }"
+                  @click="editFirstNightAbilityAllowed = true"
+                >
+                  활성화
+                </button>
+                <button
+                  type="button"
+                  class="option-btn"
+                  :class="{ active: !editFirstNightAbilityAllowed }"
+                  @click="editFirstNightAbilityAllowed = false"
+                >
+                  비활성화
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section
           class="role-config-section"
-          :class="{ invalid: !isEditRoleConfigValid, locked: !isFriendlyEditMode }"
+          :class="{
+            invalid: !isEditRoleConfigValid,
+            locked: !isFriendlyEditMode,
+          }"
         >
           <div class="role-config-header">
             <div>
@@ -1000,24 +1333,37 @@ async function leaveRoom() {
               <h3>역할 구성</h3>
             </div>
             <div>
-              <span class="role-lock-status">{{ editRoleConfigStatusText }}</span>
-              <strong :class="{ valid: isEditRoleConfigValid, invalid: !isEditRoleConfigValid }">
+              <span class="role-lock-status">{{
+                editRoleConfigStatusText
+              }}</span>
+              <strong
+                :class="{
+                  valid: isEditRoleConfigValid,
+                  invalid: !isEditRoleConfigValid,
+                }"
+              >
                 역할 합계 {{ editRoleConfigTotal }} / {{ editRoomMaxPlayers }}
               </strong>
             </div>
           </div>
 
           <p v-if="isFriendlyEditMode" class="role-config-intro">
-            친선전은 역할 구성을 자유롭게 변경할 수 있습니다.
+            커스텀은 역할 구성을 자유롭게 변경할 수 있습니다.
           </p>
 
           <div class="role-config-list">
-            <article v-for="role in roleOptions" :key="role.key" class="role-config-row">
+            <article
+              v-for="role in roleOptions"
+              :key="role.key"
+              class="role-config-row"
+            >
               <span>{{ role.label }}</span>
               <div class="role-stepper">
                 <button
                   type="button"
-                  :disabled="!isFriendlyEditMode || editRoomRoleConfig[role.key] <= 0"
+                  :disabled="
+                    !isFriendlyEditMode || editRoomRoleConfig[role.key] <= 0
+                  "
                   @click="adjustEditRoomRole(role.key, -1)"
                 >
                   -
@@ -1025,7 +1371,10 @@ async function leaveRoom() {
                 <strong>{{ editRoomRoleConfig[role.key] }}</strong>
                 <button
                   type="button"
-                  :disabled="!isFriendlyEditMode || editRoleConfigTotal >= editRoomMaxPlayers"
+                  :disabled="
+                    !isFriendlyEditMode ||
+                    editRoleConfigTotal >= editRoomMaxPlayers
+                  "
                   @click="adjustEditRoomRole(role.key, 1)"
                 >
                   +
@@ -1054,10 +1403,20 @@ async function leaveRoom() {
         </section>
 
         <div class="edit-actions">
-          <button type="submit" class="submit-btn" :disabled="isUpdating || !isEditRoleConfigValid">
+          <button
+            type="submit"
+            class="submit-btn"
+            :disabled="isUpdating || !isEditRoleConfigValid"
+          >
             {{ isUpdating ? '저장 중...' : '저장' }}
           </button>
-          <button type="button" :disabled="isUpdating" @click="closeEditRoomForm">취소</button>
+          <button
+            type="button"
+            :disabled="isUpdating"
+            @click="closeEditRoomForm"
+          >
+            취소
+          </button>
         </div>
       </form>
 
@@ -1102,7 +1461,11 @@ async function leaveRoom() {
       <div class="players-section">
         <div class="players-heading">
           <h2>참여 인원 목록</h2>
-          <span v-if="lastSyncedAt" class="sync-status" :class="{ 'ready-text': canStartGame }">
+          <span
+            v-if="lastSyncedAt"
+            class="sync-status"
+            :class="{ 'ready-text': canStartGame }"
+          >
             {{ canStartGame ? '게임 시작까지 5... (진행 가능)' : '대기 중...' }}
           </span>
         </div>
@@ -1128,11 +1491,16 @@ async function leaveRoom() {
                 <span v-if="player.isHost" class="host-icon">👑</span>
                 <strong class="player-name">{{ player.nickname }}</strong>
               </div>
-              <span class="player-title">{{ player.title || '초보 마피아' }}</span>
+              <span class="player-title">{{
+                player.title || '초보 마피아'
+              }}</span>
             </div>
 
             <div class="player-badges">
-              <span class="badge ready-badge" :class="{ active: player.isReady }">
+              <span
+                class="badge ready-badge"
+                :class="{ active: player.isReady }"
+              >
                 {{ player.isReady ? 'READY' : 'WAIT' }}
               </span>
             </div>
@@ -1154,7 +1522,9 @@ async function leaveRoom() {
               <span class="empty-content">
                 <span class="empty-icon">+ EMPTY SLOT</span>
                 <span class="empty-text">
-                  {{ room.status === 'waiting' ? '친구 초대' : '대기 중에만 가능' }}
+                  {{
+                    room.status === 'waiting' ? '친구 초대' : '대기 중에만 가능'
+                  }}
                 </span>
               </span>
             </button>
@@ -1178,7 +1548,10 @@ async function leaveRoom() {
             <template v-else>
               <strong
                 class="chat-author"
-                :class="{ me: msg.userId === savedUser?.id, host: room.hostUserId === msg.userId }"
+                :class="{
+                  me: msg.userId === savedUser?.id,
+                  host: room.hostUserId === msg.userId,
+                }"
               >
                 {{ msg.nickname }}:
               </strong>
@@ -1194,7 +1567,10 @@ async function leaveRoom() {
             maxlength="200"
             :disabled="!chatChannel"
           />
-          <button type="submit" :disabled="!chatChannel || !chatDraft.trim() || isUpdating">
+          <button
+            type="submit"
+            :disabled="!chatChannel || !chatDraft.trim() || isUpdating"
+          >
             전송
           </button>
         </form>
@@ -1244,11 +1620,21 @@ async function leaveRoom() {
 
           <div class="invite-modal-meta">
             <span>초대 가능 친구 {{ filteredInviteFriends.length }}명</span>
-            <span>쿨타임 중 {{ inviteFriends.filter((friend) => friend.isInvited).length }}명</span>
+            <span
+              >쿨타임 중
+              {{
+                inviteFriends.filter((friend) => friend.isInvited).length
+              }}명</span
+            >
           </div>
 
-          <div v-if="isLoadingInviteFriends" class="invite-empty">친구 목록을 불러오는 중...</div>
-          <div v-else-if="filteredInviteFriends.length === 0" class="invite-empty">
+          <div v-if="isLoadingInviteFriends" class="invite-empty">
+            친구 목록을 불러오는 중...
+          </div>
+          <div
+            v-else-if="filteredInviteFriends.length === 0"
+            class="invite-empty"
+          >
             초대할 수 있는 친구가 없습니다.
           </div>
           <ul v-else class="invite-friend-list">
@@ -1297,7 +1683,11 @@ async function leaveRoom() {
 .game-lobby-container {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(180deg, rgba(30, 20, 15, 0.9), rgba(15, 10, 8, 0.95));
+  background: linear-gradient(
+    180deg,
+    rgba(30, 20, 15, 0.9),
+    rgba(15, 10, 8, 0.95)
+  );
   border: 1px solid rgba(255, 120, 52, 0.2);
   box-shadow:
     0 24px 48px rgba(0, 0, 0, 0.6),
@@ -1315,7 +1705,11 @@ async function leaveRoom() {
   left: -50%;
   width: 200%;
   height: 200%;
-  background: radial-gradient(circle at 50% 0%, rgba(200, 50, 30, 0.12), transparent 40%);
+  background: radial-gradient(
+    circle at 50% 0%,
+    rgba(200, 50, 30, 0.12),
+    transparent 40%
+  );
   pointer-events: none;
   z-index: 0;
 }
@@ -1579,7 +1973,11 @@ async function leaveRoom() {
 
 .invite-friend-card {
   align-items: center;
-  background: linear-gradient(135deg, rgba(40, 30, 25, 0.74), rgba(14, 8, 5, 0.9));
+  background: linear-gradient(
+    135deg,
+    rgba(40, 30, 25, 0.74),
+    rgba(14, 8, 5, 0.9)
+  );
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   display: flex;
@@ -1860,7 +2258,11 @@ async function leaveRoom() {
   display: flex;
   align-items: center;
   gap: 1rem;
-  background: linear-gradient(135deg, rgba(40, 30, 25, 0.8), rgba(20, 15, 10, 0.9));
+  background: linear-gradient(
+    135deg,
+    rgba(40, 30, 25, 0.8),
+    rgba(20, 15, 10, 0.9)
+  );
   border: 1px solid rgba(255, 255, 255, 0.08);
   padding: 0.85rem;
   border-radius: 8px;
@@ -1878,7 +2280,11 @@ async function leaveRoom() {
 
 .player-card.is-me {
   border-color: #ffbe55;
-  background: linear-gradient(135deg, rgba(60, 40, 20, 0.9), rgba(20, 15, 10, 0.95));
+  background: linear-gradient(
+    135deg,
+    rgba(60, 40, 20, 0.9),
+    rgba(20, 15, 10, 0.95)
+  );
 }
 
 .player-avatar-wrapper {
@@ -2183,13 +2589,21 @@ async function leaveRoom() {
 }
 
 .edit-room-form.room-form-modal::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(255, 190, 85, 0.74), rgba(201, 113, 29, 0.72));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 190, 85, 0.74),
+    rgba(201, 113, 29, 0.72)
+  );
   border: 2px solid rgba(20, 14, 11, 0.72);
   border-radius: 999px;
 }
 
 .edit-room-form::before {
-  background: linear-gradient(90deg, rgba(255, 190, 85, 0.75), rgba(229, 46, 113, 0));
+  background: linear-gradient(
+    90deg,
+    rgba(255, 190, 85, 0.75),
+    rgba(229, 46, 113, 0)
+  );
   content: '';
   height: 1px;
   left: 1.25rem;
@@ -2212,6 +2626,45 @@ async function leaveRoom() {
   font-size: 1.3rem;
   margin: 0.15rem 0 0;
   text-shadow: 0 0 14px rgba(255, 138, 0, 0.24);
+}
+
+.password-input-shell {
+  position: relative;
+  width: 100%;
+  max-width: 267px;
+}
+
+.password-input-shell .text-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding-right: 3rem;
+}
+
+.password-toggle-icon {
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: rgba(255, 190, 85, 0.78);
+  cursor: pointer;
+  display: inline-flex;
+  height: 2.2rem;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: 0.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.2rem;
+}
+
+.password-toggle-icon:hover {
+  color: #ffd88a;
+}
+
+.password-toggle-icon svg {
+  display: block;
+  height: 1.15rem;
+  width: 1.15rem;
 }
 
 .icon-close-btn {
@@ -2297,6 +2750,56 @@ async function leaveRoom() {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.advanced-settings-panel {
+  background:
+    linear-gradient(135deg, rgba(60, 32, 18, 0.3), rgba(14, 8, 5, 0.72)),
+    rgba(14, 8, 5, 0.66);
+  border: 1px solid rgba(255, 138, 0, 0.18);
+  border-radius: 0.8rem;
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.advanced-settings-toggle {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 190, 85, 0.18);
+  border-radius: 0.6rem;
+  color: #ffd28a;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-weight: 900;
+  justify-content: space-between;
+  min-height: 2.65rem;
+  padding: 0.65rem 0.85rem;
+}
+
+.advanced-settings-toggle.active {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 138, 0, 0.18),
+    rgba(229, 46, 113, 0.12)
+  );
+  border-color: rgba(255, 190, 85, 0.34);
+}
+
+.advanced-settings-toggle:hover {
+  background: rgba(255, 138, 0, 0.1);
+  border-color: rgba(255, 190, 85, 0.34);
+}
+
+.advanced-settings-toggle strong {
+  color: #fff1d6;
+}
+
+.advanced-settings-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .game-styled-form select {
   background: rgba(12, 8, 6, 0.78);
   border: 1px solid rgba(255, 190, 85, 0.22);
@@ -2333,7 +2836,11 @@ async function leaveRoom() {
 }
 
 .option-btn.active {
-  background: linear-gradient(180deg, rgba(255, 138, 0, 0.24), rgba(229, 46, 113, 0.16));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 138, 0, 0.24),
+    rgba(229, 46, 113, 0.16)
+  );
   border-color: rgba(255, 190, 85, 0.7);
   box-shadow:
     0 0 16px rgba(255, 138, 0, 0.16),
@@ -2343,7 +2850,8 @@ async function leaveRoom() {
 
 .friendly-player-control {
   background:
-    linear-gradient(180deg, rgba(255, 190, 85, 0.06), rgba(12, 7, 4, 0.34)), rgba(9, 5, 3, 0.58);
+    linear-gradient(180deg, rgba(255, 190, 85, 0.06), rgba(12, 7, 4, 0.34)),
+    rgba(9, 5, 3, 0.58);
   border: 1px solid rgba(255, 190, 85, 0.14);
   border-radius: 0.75rem;
   display: grid;
@@ -2555,7 +3063,11 @@ async function leaveRoom() {
 }
 
 .role-config-actions button.active {
-  background: linear-gradient(180deg, rgba(255, 138, 0, 0.28), rgba(229, 46, 113, 0.16));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 138, 0, 0.28),
+    rgba(229, 46, 113, 0.16)
+  );
   border-color: rgba(255, 190, 85, 0.66);
   box-shadow:
     0 0 16px rgba(255, 138, 0, 0.14),
@@ -2640,6 +3152,10 @@ async function leaveRoom() {
 
   .role-config-list,
   .room-custom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .advanced-settings-grid {
     grid-template-columns: 1fr;
   }
 }

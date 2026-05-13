@@ -28,6 +28,7 @@ import {
 import {
   DEFAULT_ROOM_DETAIL_SETTINGS,
   createRoom as createRoomRequest,
+  joinRoom as joinRoomRequest,
 } from '@/api/roomApi';
 import {
   getFriendships,
@@ -59,7 +60,9 @@ const newRoomMaxPlayers = ref(8);
 const newRoomNightTimeSeconds = ref(
   DEFAULT_ROOM_DETAIL_SETTINGS.nightTimeSeconds,
 );
-const newRoomVoteTimeSeconds = ref(DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds);
+const newRoomVoteTimeSeconds = ref(
+  DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds,
+);
 const newRoomDiscussionTimeSeconds = ref(
   DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds,
 );
@@ -79,6 +82,11 @@ const newRoomEntryPassword = ref('');
 const newRoomRoleConfig = ref(getDefaultRoleConfig(8));
 const isRecommendedRolesEnabled = ref(false);
 const isNewRoomAdvancedOpen = ref(false);
+const isJoinRoomModalOpen = ref(false);
+const selectedJoinRoom = ref(null);
+const joinRoomPassword = ref('');
+const isJoinRoomPasswordVisible = ref(false);
+const isJoiningRoom = ref(false);
 const ROOMS_PER_PAGE = 5;
 const currentRoomPage = ref(1);
 const selectedRoomId = ref(null);
@@ -542,12 +550,15 @@ async function createRoom() {
     newRoomTitle.value = '';
     newRoomDescription.value = '클래식';
     newRoomMaxPlayers.value = 8;
-    newRoomNightTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.nightTimeSeconds;
+    newRoomNightTimeSeconds.value =
+      DEFAULT_ROOM_DETAIL_SETTINGS.nightTimeSeconds;
     newRoomVoteTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds;
-    newRoomDiscussionTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds;
+    newRoomDiscussionTimeSeconds.value =
+      DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds;
     newRoomMinStartPlayers.value = DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers;
     newRoomTieVoteRule.value = DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule;
-    newRoomSpectatorAllowed.value = DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed;
+    newRoomSpectatorAllowed.value =
+      DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed;
     newRoomFirstNightAbilityAllowed.value =
       DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed;
     newRoomRoleRevealMode.value = 'private';
@@ -1087,8 +1098,60 @@ function toggleRoomDetails(roomId) {
   selectedRoomId.value = selectedRoomId.value === roomId ? null : roomId;
 }
 
-function enterRoom(roomId) {
-  router.push(`/rooms/${roomId}`);
+function openJoinRoomModal(room) {
+  if (!room || !canEnterRoom(room)) {
+    return;
+  }
+
+  selectedJoinRoom.value = room;
+  joinRoomPassword.value = '';
+  isJoinRoomPasswordVisible.value = false;
+  isJoinRoomModalOpen.value = true;
+}
+
+function closeJoinRoomModal() {
+  isJoinRoomModalOpen.value = false;
+  selectedJoinRoom.value = null;
+  joinRoomPassword.value = '';
+  isJoinRoomPasswordVisible.value = false;
+}
+
+async function submitJoinRoom() {
+  if (!selectedJoinRoom.value || isJoiningRoom.value) {
+    return;
+  }
+
+  if (!joinRoomPassword.value.trim()) {
+    toastStore.error('비공개방은 비밀번호를 입력해야 합니다.');
+    return;
+  }
+
+  isJoiningRoom.value = true;
+
+  try {
+    const roomId = selectedJoinRoom.value.id;
+    await joinRoomRequest(roomId, joinRoomPassword.value.trim());
+    closeJoinRoomModal();
+    await roomStore.fetchRooms();
+    router.push(`/rooms/${roomId}`);
+  } catch (error) {
+    toastStore.error(error.message);
+  } finally {
+    isJoiningRoom.value = false;
+  }
+}
+
+function toggleJoinRoomPasswordVisibility() {
+  isJoinRoomPasswordVisible.value = !isJoinRoomPasswordVisible.value;
+}
+
+function enterRoom(room) {
+  if (room?.entryMode === 'private') {
+    openJoinRoomModal(room);
+    return;
+  }
+
+  router.push(`/rooms/${room.id}`);
 }
 
 function getRoomStatusLabel(room) {
@@ -1286,14 +1349,21 @@ async function logout() {
               class="notification-row"
             >
               <div>
-                <strong>{{ invite.inviter.nickname }}님이 [{{ invite.room.title }}] 방으로 초대했습니다.</strong>
+                <strong
+                  >{{ invite.inviter.nickname }}님이 [{{ invite.room.title }}]
+                  방으로 초대했습니다.</strong
+                >
                 <span>
                   방장 {{ invite.room.hostNickname }} ·
                   {{ getModeDisplayLabel(invite.room.description) }} ·
-                  {{ invite.room.currentPlayers }} / {{ invite.room.maxPlayers }}
+                  {{ invite.room.currentPlayers }} /
+                  {{ invite.room.maxPlayers }}
                 </span>
                 <div class="invite-room-badges">
-                  <b v-if="invite.room.entryMode === 'private'" class="invite-room-badge private">
+                  <b
+                    v-if="invite.room.entryMode === 'private'"
+                    class="invite-room-badge private"
+                  >
                     비공개방
                   </b>
                 </div>
@@ -1354,9 +1424,7 @@ async function logout() {
               <p class="eyebrow">Create</p>
               <h2 id="create-room-title">새 게임방</h2>
             </div>
-            <button type="button" @click="closeCreateRoomForm">
-              닫기
-            </button>
+            <button type="button" @click="closeCreateRoomForm">닫기</button>
           </div>
 
           <form
@@ -1731,6 +1799,133 @@ async function logout() {
         </section>
 
         <section
+          v-if="isJoinRoomModalOpen && selectedJoinRoom"
+          class="page-card create-room-panel room-form-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="join-room-title"
+          @click.self="closeJoinRoomModal"
+        >
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Join</p>
+              <h2 id="join-room-title">비공개방 입장</h2>
+            </div>
+            <button
+              type="button"
+              :disabled="isJoiningRoom"
+              @click="closeJoinRoomModal"
+            >
+              닫기
+            </button>
+          </div>
+
+          <form
+            class="create-room-form game-styled-form"
+            @submit.prevent="submitJoinRoom"
+          >
+            <div class="form-group">
+              <label>방 제목</label>
+              <input :value="selectedJoinRoom.title" type="text" readonly />
+            </div>
+
+            <div class="form-group">
+              <label for="join-room-password">비밀번호</label>
+              <div class="password-input-shell">
+                <input
+                  id="join-room-password"
+                  v-model="joinRoomPassword"
+                  :type="isJoinRoomPasswordVisible ? 'text' : 'password'"
+                  class="text-input"
+                  placeholder="비공개방 비밀번호를 입력하세요"
+                  autocomplete="current-password"
+                />
+                <button
+                  type="button"
+                  class="password-toggle-icon"
+                  :aria-label="
+                    isJoinRoomPasswordVisible
+                      ? '비밀번호 숨기기'
+                      : '비밀번호 보기'
+                  "
+                  :title="
+                    isJoinRoomPasswordVisible
+                      ? '비밀번호 숨기기'
+                      : '비밀번호 보기'
+                  "
+                  @click="toggleJoinRoomPasswordVisibility"
+                >
+                  <svg
+                    v-if="isJoinRoomPasswordVisible"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="2.9"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                    />
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M3.5 4.5 20.5 19.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="2.9"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                    />
+                    <path
+                      d="M2.5 12s3.5-6.5 9.5-6.5c1.7 0 3.3.38 4.7 1.04M21.5 12s-3.5 6.5-9.5 6.5c-1.7 0-3.3-.38-4.7-1.04"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <p class="role-config-help">
+              비공개방은 비밀번호를 입력해야 입장할 수 있습니다.
+            </p>
+
+            <div class="room-preview-actions compact">
+              <button type="submit" :disabled="isJoiningRoom">
+                {{ isJoiningRoom ? '입장 중...' : '입장' }}
+              </button>
+              <button
+                type="button"
+                :disabled="isJoiningRoom"
+                @click="closeJoinRoomModal"
+              >
+                취소
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section
           class="page-card room-board"
           aria-labelledby="room-board-title"
         >
@@ -1795,7 +1990,7 @@ async function logout() {
                 <button
                   class="join-pill"
                   type="button"
-                  @click.stop="enterRoom(room.id)"
+                  @click.stop="enterRoom(room)"
                 >
                   입장
                 </button>
@@ -1838,7 +2033,11 @@ async function logout() {
                 </button>
               </div>
 
-              <div v-if="selectedRoomId === room.id" class="room-details" @click.stop>
+              <div
+                v-if="selectedRoomId === room.id"
+                class="room-details"
+                @click.stop
+              >
                 <div class="room-preview-header">
                   <div>
                     <p class="eyebrow">Room Preview</p>
@@ -1955,11 +2154,16 @@ async function logout() {
                     v-if="room.entryMode !== 'private'"
                     type="button"
                     :disabled="!canEnterRoom(room)"
-                    @click="enterRoom(room.id)"
+                    @click="enterRoom(room)"
                   >
                     입장하기
                   </button>
-                  <button v-else type="button" :disabled="!canEnterRoom(room)">
+                  <button
+                    v-else
+                    type="button"
+                    :disabled="!canEnterRoom(room)"
+                    @click="enterRoom(room)"
+                  >
                     비밀번호 입력 후 입장
                   </button>
                   <button type="button" disabled>관전하기</button>
@@ -2908,6 +3112,41 @@ h2 {
   border-radius: 999px;
 }
 
+.password-input-shell {
+  position: relative;
+}
+
+.password-input-shell .text-input {
+  padding-right: 3rem;
+}
+
+.password-toggle-icon {
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: rgba(255, 190, 85, 0.78);
+  cursor: pointer;
+  display: inline-flex;
+  height: 2.2rem;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: 0.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.2rem;
+}
+
+.password-toggle-icon:hover {
+  color: #ffd88a;
+}
+
+.password-toggle-icon svg {
+  display: block;
+  height: 1.15rem;
+  width: 1.15rem;
+}
+
 .room-table-header {
   background: rgba(0, 0, 0, 0.18);
   border: 1px solid rgba(255, 190, 85, 0.12);
@@ -3492,8 +3731,39 @@ h2 {
   padding: 0.8rem 1rem;
 }
 
+.create-room-form .password-input-shell .password-toggle-icon {
+  align-self: center;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: rgba(255, 190, 85, 0.78);
+  padding: 0;
+  position: absolute;
+  right: 0.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.2rem;
+  min-height: 2.2rem;
+}
+
+.create-room-form .password-input-shell .password-toggle-icon:hover {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #ffd88a;
+  transform: translateY(-50%);
+}
+
+.create-room-form .password-input-shell .password-toggle-icon:active {
+  transform: translateY(-50%);
+}
+
 .create-room-panel.room-form-modal .section-heading button {
-  background: linear-gradient(180deg, rgba(52, 29, 18, 0.96), rgba(28, 16, 10, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(52, 29, 18, 0.96),
+    rgba(28, 16, 10, 0.98)
+  );
   border: 1px solid rgba(255, 190, 85, 0.18);
   color: #ffe1ab;
 }
