@@ -55,7 +55,7 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach(async (to, from, next) => {
+router.beforeEach(async (to) => {
   const authStore = useAuthStore()
 
   if (!authStore.isInitialized) {
@@ -65,11 +65,11 @@ router.beforeEach(async (to, from, next) => {
   const isAuthenticated = !!authStore.user
 
   if (to.meta.requiresAuth && !isAuthenticated) {
-    next({ name: 'login' })
-  } else if (to.meta.requiresGuest && isAuthenticated) {
-    next({ name: 'home' })
-  } else {
-    next()
+    return { name: 'login' }
+  }
+
+  if (to.meta.requiresGuest && isAuthenticated) {
+    return { name: 'home' }
   }
 })
 

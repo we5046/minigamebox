@@ -4,9 +4,12 @@ import { createApp } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 import App from './App.vue'
+import { clearLoginStorageExceptLastLoginId } from './api/session'
 import router from './router'
 import { useAuthStore } from './stores/auth'
 import { useProfileStore } from './stores/profile'
+
+window.addEventListener('pagehide', clearLoginStorageExceptLastLoginId)
 
 async function bootstrap() {
   const app = createApp(App)

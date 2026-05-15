@@ -1145,13 +1145,27 @@ function toggleJoinRoomPasswordVisibility() {
   isJoinRoomPasswordVisible.value = !isJoinRoomPasswordVisible.value;
 }
 
-function enterRoom(room) {
+async function enterRoom(room) {
+  if (!room || isJoiningRoom.value || !canEnterRoom(room)) {
+    return;
+  }
+
   if (room?.entryMode === 'private') {
     openJoinRoomModal(room);
     return;
   }
 
-  router.push(`/rooms/${room.id}`);
+  isJoiningRoom.value = true;
+
+  try {
+    await joinRoomRequest(room.id);
+    await roomStore.fetchRooms();
+    router.push(`/rooms/${room.id}`);
+  } catch (error) {
+    toastStore.error(error.message);
+  } finally {
+    isJoiningRoom.value = false;
+  }
 }
 
 function getRoomStatusLabel(room) {
@@ -1990,8 +2004,21 @@ async function logout() {
                 <button
                   class="join-pill"
                   type="button"
+                  :disabled="isJoiningRoom || !canEnterRoom(room)"
                   @click.stop="enterRoom(room)"
                 >
+                  <svg
+                    v-if="room.entryMode === 'private'"
+                    class="lock-icon"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <path
+                      d="M17 10h1a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h1V8a5 5 0 0 1 10 0v2Zm-8 0h6V8a3 3 0 0 0-6 0v2Zm4 5.73A2 2 0 1 0 11 15.73V18h2v-2.27Z"
+                      fill="currentColor"
+                    />
+                  </svg>
                   입장
                 </button>
                 <button
@@ -2153,7 +2180,7 @@ async function logout() {
                   <button
                     v-if="room.entryMode !== 'private'"
                     type="button"
-                    :disabled="!canEnterRoom(room)"
+                    :disabled="isJoiningRoom || !canEnterRoom(room)"
                     @click="enterRoom(room)"
                   >
                     입장하기
@@ -2161,9 +2188,20 @@ async function logout() {
                   <button
                     v-else
                     type="button"
-                    :disabled="!canEnterRoom(room)"
+                    :disabled="isJoiningRoom || !canEnterRoom(room)"
                     @click="enterRoom(room)"
                   >
+                    <svg
+                      class="lock-icon"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path
+                        d="M17 10h1a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h1V8a5 5 0 0 1 10 0v2Zm-8 0h6V8a3 3 0 0 0-6 0v2Zm4 5.73A2 2 0 1 0 11 15.73V18h2v-2.27Z"
+                        fill="currentColor"
+                      />
+                    </svg>
                     비밀번호 입력 후 입장
                   </button>
                   <button type="button" disabled>관전하기</button>
@@ -3260,14 +3298,17 @@ h2 {
 }
 
 .join-pill {
+  align-items: center;
   background: linear-gradient(180deg, #ffbe55, #b85a1f);
   border: 1px solid rgba(255, 230, 160, 0.4);
   border-radius: 999px;
   color: #14110f;
   cursor: pointer;
+  display: inline-flex;
   font: inherit;
   font-size: 0.82rem;
   font-weight: 900;
+  gap: 0.28rem;
   justify-self: end;
   order: 1;
   padding: 0.35rem 0.68rem;
@@ -3281,6 +3322,18 @@ h2 {
   box-shadow: 0 0 18px rgba(255, 190, 85, 0.3);
   filter: brightness(1.06);
   transform: translateY(-1px);
+}
+
+.join-pill:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.35);
+  opacity: 0.5;
+}
+
+.lock-icon {
+  flex: 0 0 auto;
+  height: 0.95em;
+  width: 0.95em;
 }
 
 .slot-meter {
@@ -3612,6 +3665,7 @@ h2 {
 }
 
 .room-preview-actions button {
+  align-items: center;
   background: linear-gradient(
     180deg,
     rgba(255, 190, 85, 0.13),
@@ -3621,9 +3675,12 @@ h2 {
   border-radius: 0.55rem;
   color: var(--color-text);
   cursor: pointer;
+  display: inline-flex;
   font: inherit;
   font-size: 0.8rem;
   font-weight: 900;
+  gap: 0.32rem;
+  justify-content: center;
   padding: 0.55rem 0.75rem;
   transition:
     border-color 0.16s ease,

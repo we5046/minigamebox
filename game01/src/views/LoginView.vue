@@ -2,13 +2,14 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { loginUser } from '@/api/authApi'
+import { getLastLoginId } from '@/api/session'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const toastStore = useToastStore()
-const loginId = ref('')
+const loginId = ref(getLastLoginId())
 const password = ref('')
 const isLoading = ref(false)
 

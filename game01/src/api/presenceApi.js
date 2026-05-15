@@ -12,6 +12,7 @@ let presenceReadyTimer = null
 const presenceSubscribers = new Set()
 let lastPresenceUsers = []
 let currentPresencePayload = null
+let hasWarnedPresenceUnavailable = false
 
 function clearPresenceReadyTimer() {
   if (presenceReadyTimer) {
@@ -112,13 +113,18 @@ function ensurePresenceChannel(userId) {
 
 async function waitForPresenceReady() {
   if (!presenceReadyPromise) {
-    return
+    return true
   }
 
   try {
     await presenceReadyPromise
+    return true
   } catch (error) {
-    console.warn('[Presence] Realtime presence is unavailable.', error)
+    if (!hasWarnedPresenceUnavailable) {
+      hasWarnedPresenceUnavailable = true
+      console.warn('[Presence] Realtime presence is unavailable.', error)
+    }
+    return false
   }
 }
 
@@ -144,7 +150,11 @@ export async function setCurrentUserPresence({
     return
   }
 
-  await waitForPresenceReady()
+  const isPresenceReady = await waitForPresenceReady()
+
+  if (!isPresenceReady) {
+    return
+  }
 
   currentPresencePayload = {
     userId,
@@ -163,7 +173,10 @@ export async function setCurrentUserPresence({
   })
 
   if (result !== 'ok') {
-    console.warn('[Presence] Failed to track current user presence.', { result })
+    if (!hasWarnedPresenceUnavailable) {
+      hasWarnedPresenceUnavailable = true
+      console.warn('[Presence] Failed to track current user presence.', { result })
+    }
   }
 }
 
@@ -180,6 +193,7 @@ export async function clearCurrentUserPresence() {
   rejectPresenceReady = null
   clearPresenceReadyTimer()
   currentPresencePayload = null
+  hasWarnedPresenceUnavailable = false
   lastPresenceUsers = []
 
   presenceSubscribers.forEach((callback) => callback([]))

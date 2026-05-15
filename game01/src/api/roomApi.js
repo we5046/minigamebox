@@ -175,13 +175,48 @@ export async function joinRoom(roomId, entryPassword = '') {
   const { error } = await supabase.rpc('join_room', {
     p_room_id: roomId,
     p_entry_password: entryPassword,
+    p_bypass_password: false,
   })
 
   if (error) {
-    throw createSupabaseError('joinRoom: join_room rpc failed', error, 'Failed to join room.')
+    throw createSupabaseError('joinRoom: join_room rpc failed', error, getJoinRoomErrorMessage(error))
   }
 
   return getRoom(roomId)
+}
+
+function getJoinRoomErrorMessage(error) {
+  const message = error?.message || ''
+
+  if (error?.code === 'PGRST202' || message.includes('Could not find the function public.join_room')) {
+    return '방 입장 DB 함수가 배포되지 않았습니다. Supabase에 join_room SQL을 적용해야 합니다.'
+  }
+
+  if (message.includes('Not authenticated')) {
+    return '로그인이 필요합니다.'
+  }
+
+  if (message.includes('Room not found')) {
+    return '방을 찾을 수 없습니다.'
+  }
+
+  if (message.includes('Room is not waiting')) {
+    return '이미 게임이 시작된 방입니다.'
+  }
+
+  if (message.includes('Room password is required')) {
+    return '비공개방은 비밀번호를 입력해야 합니다.'
+  }
+
+  if (message.includes('Invalid room password')) {
+    return '방 비밀번호가 일치하지 않습니다.'
+  }
+
+  if (message.includes('Room is full')) {
+    return '방 정원이 가득 찼습니다.'
+  }
+
+  return '방 입장에 실패했습니다.'
 }
 
 export async function updateRoom(roomId, payload) {
