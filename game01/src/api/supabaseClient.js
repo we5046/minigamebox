@@ -21,7 +21,10 @@ export function logSupabaseError(context, error, extra = {}) {
 
 export function createSupabaseError(context, error, userMessage) {
   logSupabaseError(context, error)
-  return new Error(userMessage)
+  const wrappedError = new Error(userMessage)
+  wrappedError.cause = error
+  wrappedError.supabaseError = error
+  return wrappedError
 }
 
 function throwMissingConfig() {
@@ -65,6 +68,9 @@ function createMissingSupabaseClient() {
     from: throwMissingConfig,
     removeChannel: async () => {},
     rpc: throwMissingConfig,
+    storage: {
+      from: throwMissingConfig,
+    },
   }
 }
 

@@ -32,7 +32,7 @@ export function normalizeFriendship(row, currentUserId) {
     updatedAt: row.updated_at,
     friend: {
       id: friendProfile?.id,
-      nickname: friendProfile?.nickname || 'Unknown',
+      nickname: friendProfile?.nickname || '알 수 없음',
       avatar: friendProfile?.avatar || 'default-mafia',
       level: friendProfile?.level || 1,
       title: friendProfile?.representative_title || 'Rookie Mafia',

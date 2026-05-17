@@ -76,6 +76,9 @@ const newRoomSpectatorAllowed = ref(
 const newRoomFirstNightAbilityAllowed = ref(
   DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed,
 );
+const newRoomFinalDefenseEnabled = ref(
+  DEFAULT_ROOM_DETAIL_SETTINGS.finalDefenseEnabled,
+);
 const newRoomRoleRevealMode = ref('private');
 const newRoomEntryMode = ref('public');
 const newRoomEntryPassword = ref('');
@@ -542,6 +545,7 @@ async function createRoom() {
       tieVoteRule: newRoomTieVoteRule.value,
       spectatorAllowed: newRoomSpectatorAllowed.value,
       firstNightAbilityAllowed: newRoomFirstNightAbilityAllowed.value,
+      finalDefenseEnabled: newRoomFinalDefenseEnabled.value,
       roleRevealMode: newRoomRoleRevealMode.value,
       entryMode: newRoomEntryMode.value,
       entryPassword: newRoomEntryPassword.value.trim(),
@@ -561,6 +565,8 @@ async function createRoom() {
       DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed;
     newRoomFirstNightAbilityAllowed.value =
       DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed;
+    newRoomFinalDefenseEnabled.value =
+      DEFAULT_ROOM_DETAIL_SETTINGS.finalDefenseEnabled;
     newRoomRoleRevealMode.value = 'private';
     newRoomEntryMode.value = 'public';
     newRoomEntryPassword.value = '';
@@ -1712,6 +1718,28 @@ async function logout() {
                       class="option-btn"
                       :class="{ active: !newRoomFirstNightAbilityAllowed }"
                       @click="newRoomFirstNightAbilityAllowed = false"
+                    >
+                      비활성화
+                    </button>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label>최후의 변론</label>
+                  <div class="option-group">
+                    <button
+                      type="button"
+                      class="option-btn"
+                      :class="{ active: newRoomFinalDefenseEnabled }"
+                      @click="newRoomFinalDefenseEnabled = true"
+                    >
+                      활성화
+                    </button>
+                    <button
+                      type="button"
+                      class="option-btn"
+                      :class="{ active: !newRoomFinalDefenseEnabled }"
+                      @click="newRoomFinalDefenseEnabled = false"
                     >
                       비활성화
                     </button>
@@ -4242,8 +4270,10 @@ h2 {
 .profile-header {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   justify-content: space-between;
+  min-width: 0;
 }
 
 .online-pill {
@@ -4261,6 +4291,15 @@ h2 {
   display: flex;
   gap: 0.9rem;
   min-width: 0;
+}
+
+.profile-main > div:last-child {
+  min-width: 0;
+}
+
+.profile-main h2,
+.profile-main p {
+  overflow-wrap: anywhere;
 }
 
 .avatar {
@@ -4311,23 +4350,35 @@ h2 {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+  min-width: 0;
 }
 
 .profile-tags span {
+  align-items: center;
   background: rgba(255, 190, 85, 0.1);
   border: 1px solid rgba(255, 190, 85, 0.24);
-  border-radius: 999px;
+  border-radius: 0.9rem;
   color: #ffd28a;
+  display: inline-flex;
+  flex: 1 1 7.25rem;
   font-size: 0.78rem;
   font-weight: 900;
-  padding: 0.3rem 0.55rem;
+  justify-content: center;
+  line-height: 1.25;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 0.42rem 0.6rem;
+  text-align: center;
 }
 
 .profile-quote {
   border-left: 3px solid rgba(255, 190, 85, 0.48);
   color: rgba(255, 245, 224, 0.72);
   font-size: 0.86rem;
+  line-height: 1.55;
   margin: 0;
+  overflow-wrap: anywhere;
   padding-left: 0.65rem;
 }
 
@@ -4709,7 +4760,7 @@ dd {
 
   .side-panel {
     position: static;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
   }
 }
 

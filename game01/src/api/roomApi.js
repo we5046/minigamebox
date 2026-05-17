@@ -1,7 +1,8 @@
-import { createSupabaseError, supabase } from './supabaseClient'
+﻿import { createSupabaseError, supabase } from './supabaseClient'
 
 const roomListChannels = new Map()
 const roomDetailChannels = new Map()
+const gameChannels = new Map()
 const ROOM_LIST_CHANNEL_KEY = 'rooms-list'
 
 export const DEFAULT_ROOM_DETAIL_SETTINGS = {
@@ -12,17 +13,19 @@ export const DEFAULT_ROOM_DETAIL_SETTINGS = {
   tieVoteRule: 'no_execution',
   spectatorAllowed: false,
   firstNightAbilityAllowed: true,
+  finalDefenseEnabled: false,
 }
 
 function toPlayer(row) {
   return {
     userId: row.user_id,
-    nickname: row.profiles?.nickname || 'Unknown',
+    nickname: row.profiles?.nickname || '알 수 없음',
     avatar: row.profiles?.avatar || 'default-mafia',
     level: row.profiles?.level || 1,
     title: row.profiles?.representative_title || 'Rookie Mafia',
     isHost: row.is_host,
     isReady: row.is_ready,
+    isAlive: row.is_alive !== false,
     joinedAt: row.joined_at,
   }
 }
@@ -39,7 +42,7 @@ export function normalizeRoom(room) {
     description: room.description || '',
     code: room.code,
     hostUserId: room.host_user_id,
-    hostNickname: hostPlayer?.nickname || room.host_nickname || 'Unknown',
+    hostNickname: hostPlayer?.nickname || room.host_nickname || '알 수 없음',
     status: room.status,
     maxPlayers: room.max_players,
     nightTimeSeconds:
@@ -56,6 +59,8 @@ export function normalizeRoom(room) {
     firstNightAbilityAllowed:
       room.first_night_ability_allowed ??
       DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed,
+    finalDefenseEnabled:
+      room.final_defense_enabled ?? DEFAULT_ROOM_DETAIL_SETTINGS.finalDefenseEnabled,
     roleRevealMode: room.role_reveal_mode || 'private',
     entryMode: room.entry_mode || 'public',
     entryPassword: room.entry_password || '',
@@ -83,6 +88,7 @@ const roomSelect = `
   tie_vote_rule,
   spectator_allowed,
   first_night_ability_allowed,
+  final_defense_enabled,
   role_reveal_mode,
   entry_mode,
   entry_password,
@@ -93,6 +99,7 @@ const roomSelect = `
     user_id,
     is_host,
     is_ready,
+    is_alive,
     joined_at,
     profiles (
       nickname,
@@ -110,7 +117,7 @@ export async function getRooms() {
     .order('created_at', { ascending: false })
 
   if (error) {
-    throw createSupabaseError('getRooms: rooms select failed', error, 'Failed to load room list.')
+    throw createSupabaseError('getRooms: rooms select failed', error, '방 목록을 불러오지 못했습니다.')
   }
 
   return data.map(normalizeRoom)
@@ -120,7 +127,7 @@ export async function getRoom(roomId) {
   const { data, error } = await supabase.from('rooms').select(roomSelect).eq('id', roomId).single()
 
   if (error) {
-    throw createSupabaseError('getRoom: room select failed', error, 'Failed to load room information.')
+    throw createSupabaseError('getRoom: room select failed', error, '방 정보를 불러오지 못했습니다.')
   }
 
   return normalizeRoom(data)
@@ -137,6 +144,7 @@ export async function createRoom({
   tieVoteRule = DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule,
   spectatorAllowed = DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed,
   firstNightAbilityAllowed = DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed,
+  finalDefenseEnabled = DEFAULT_ROOM_DETAIL_SETTINGS.finalDefenseEnabled,
   roleRevealMode = 'private',
   entryMode = 'public',
   entryPassword = '',
@@ -160,12 +168,23 @@ export async function createRoom({
   })
 
   if (error) {
-    throw createSupabaseError('createRoom: create_room rpc failed', error, 'Failed to create room.')
+    throw createSupabaseError('createRoom: create_room rpc failed', error, '방 생성에 실패했습니다.')
   }
 
   if (!room?.id) {
     console.error('[Supabase] createRoom: create_room rpc returned invalid payload', { room })
-    throw new Error('Failed to create room.')
+    throw new Error('방 생성에 실패했습니다.')
+  }
+
+  if (finalDefenseEnabled !== DEFAULT_ROOM_DETAIL_SETTINGS.finalDefenseEnabled) {
+    const { error: updateError } = await supabase
+      .from('rooms')
+      .update({ final_defense_enabled: finalDefenseEnabled })
+      .eq('id', room.id)
+
+    if (updateError) {
+      throw createSupabaseError('createRoom: rooms final defense update failed', updateError, '최후의 변론 설정을 저장하지 못했습니다.')
+    }
   }
 
   return getRoom(room.id)
@@ -205,7 +224,7 @@ function getJoinRoomErrorMessage(error) {
   }
 
   if (message.includes('Room password is required')) {
-    return '비공개방은 비밀번호를 입력해야 합니다.'
+    return '비공개 방은 비밀번호를 입력해야 합니다.'
   }
 
   if (message.includes('Invalid room password')) {
@@ -237,7 +256,7 @@ export async function updateRoom(roomId, payload) {
     const failedResult = results.find((result) => result.error)
 
     if (failedResult) {
-      throw createSupabaseError('updateRoom: room_players update failed', failedResult.error, 'Failed to update player information.')
+      throw createSupabaseError('updateRoom: room_players update failed', failedResult.error, '플레이어 정보를 업데이트하지 못했습니다.')
     }
   }
 
@@ -270,6 +289,9 @@ export async function updateRoom(roomId, payload) {
   if (Object.prototype.hasOwnProperty.call(payload, 'firstNightAbilityAllowed')) {
     roomPayload.first_night_ability_allowed = payload.firstNightAbilityAllowed
   }
+  if (Object.prototype.hasOwnProperty.call(payload, 'finalDefenseEnabled')) {
+    roomPayload.final_defense_enabled = payload.finalDefenseEnabled
+  }
   if (payload.roleRevealMode) roomPayload.role_reveal_mode = payload.roleRevealMode
   if (payload.entryMode) roomPayload.entry_mode = payload.entryMode
   if (Object.prototype.hasOwnProperty.call(payload, 'entryPassword')) {
@@ -287,12 +309,12 @@ export async function updateRoom(roomId, payload) {
       .single()
 
     if (error) {
-      throw createSupabaseError('updateRoom: rooms update failed', error, 'Failed to update room information.')
+      throw createSupabaseError('updateRoom: rooms update failed', error, '방 정보를 업데이트하지 못했습니다.')
     }
 
     if (!data?.id) {
       console.error('[Supabase] updateRoom: rooms update returned invalid payload', { data })
-      throw new Error('Failed to update room information.')
+      throw new Error('방 정보를 업데이트하지 못했습니다.')
     }
 
     return normalizeRoom(data)
@@ -309,10 +331,235 @@ export async function setPlayerReady(roomId, userId, isReady) {
     .eq('user_id', userId)
 
   if (error) {
-    throw createSupabaseError('setPlayerReady: room_players update failed', error, 'Failed to update ready status.')
+    throw createSupabaseError('setPlayerReady: room_players update failed', error, '준비 상태를 업데이트하지 못했습니다.')
   }
 
   return getRoom(roomId)
+}
+
+function getStartGameErrorMessage(error) {
+  const message = error?.message || ''
+
+  if (message.includes('Not authenticated')) {
+    return '로그인이 필요합니다.'
+  }
+
+  if (message.includes('Room not found')) {
+    return '방을 찾을 수 없습니다.'
+  }
+
+  if (message.includes('already started')) {
+    return '이미 게임이 시작되었습니다.'
+  }
+
+  if (message.includes('not ready')) {
+    return '아직 준비하지 않은 참가자가 있습니다.'
+  }
+
+  if (message.includes('Not enough')) {
+    return '게임 시작 인원이 부족합니다.'
+  }
+
+  if (message.includes('역할 인원수')) {
+    return message
+  }
+
+  return '게임 시작에 실패했습니다.'
+}
+
+export async function startGame(roomId) {
+  const { data, error } = await supabase.rpc('start_game', {
+    p_room_id: roomId,
+  })
+
+  if (error) {
+    throw createSupabaseError('startGame: start_game rpc failed', error, getStartGameErrorMessage(error))
+  }
+
+  return data
+}
+
+export async function endGame(roomId) {
+  const { error } = await supabase.rpc('end_game', {
+    p_room_id: roomId,
+  })
+
+  if (error) {
+    throw createSupabaseError('endGame: end_game rpc failed', error, getEndGameErrorMessage(error))
+  }
+}
+
+export async function skipCurrentPhase(roomId) {
+  const { data, error } = await supabase.rpc('skip_current_phase', {
+    p_room_id: roomId,
+  })
+
+  if (error) {
+    throw createSupabaseError('skipCurrentPhase: skip_current_phase rpc failed', error, getSkipPhaseErrorMessage(error))
+  }
+
+  return Array.isArray(data) ? data[0] || null : data
+}
+
+function getSkipPhaseErrorMessage(error) {
+  const message = error?.message || ''
+
+  if (error?.code === 'PGRST202' || message.includes('Could not find the function')) {
+    return 'skip_current_phase RPC가 아직 배포되지 않았습니다.'
+  }
+
+  if (message.includes('로그인이 필요') || message.includes('Not authenticated')) {
+    return '로그인이 필요합니다.'
+  }
+
+  if (message.includes('방장만')) {
+    return '방장만 현재 단계를 스킵할 수 있습니다.'
+  }
+
+  if (message.includes('방을 찾을 수') || message.includes('Room not found')) {
+    return '방을 찾을 수 없습니다.'
+  }
+
+  if (message.includes('진행 중인 게임')) {
+    return message
+  }
+
+  return message || '현재 단계를 스킵하지 못했습니다.'
+}
+
+function getEndGameErrorMessage(error) {
+  const message = error?.message || ''
+
+  if (error?.code === 'PGRST202' || message.includes('Could not find the function')) {
+    return 'end_game RPC가 아직 배포되지 않았습니다.'
+  }
+
+  if (message.includes('Not authenticated')) {
+    return '로그인이 필요합니다.'
+  }
+
+  if (message.includes('host only')) {
+    return '방장만 게임을 종료할 수 있습니다.'
+  }
+
+  if (message.includes('Room not found')) {
+    return '방을 찾을 수 없습니다.'
+  }
+
+  return message || '게임 종료에 실패했습니다.'
+}
+
+
+export async function submitNightAction(roomId, actionType, targetUserId) {
+  const { data, error } = await supabase.rpc('submit_night_action', {
+    p_room_id: roomId,
+    p_action_type: actionType,
+    p_target_user_id: targetUserId,
+  })
+
+  if (error) {
+    throw createSupabaseError('submitNightAction: submit_night_action rpc failed', error, '밤 행동 제출에 실패했습니다.')
+  }
+
+  return data
+}
+
+export async function submitVote(roomId, targetUserId) {
+  const { data, error } = await supabase.rpc('submit_vote', {
+    p_room_id: roomId,
+    p_target_user_id: targetUserId,
+  })
+
+  if (error) {
+    throw createSupabaseError('submitVote: submit_vote rpc failed', error, '투표 제출에 실패했습니다.')
+  }
+
+  return data
+}
+
+export async function submitFinalDefenseVote(roomId, approveExecution) {
+  const { data, error } = await supabase.rpc('submit_final_defense_vote', {
+    p_room_id: roomId,
+    p_approve_execution: approveExecution,
+  })
+
+  if (error) {
+    throw createSupabaseError('submitFinalDefenseVote: submit_final_defense_vote rpc failed', error, '최후의 변론 투표 제출에 실패했습니다.')
+  }
+
+  return data
+}
+
+export async function getCurrentGame(roomId) {
+  const { data, error } = await supabase.rpc('get_current_game', {
+    p_room_id: roomId,
+  })
+
+  if (error) {
+    throw createSupabaseError('getCurrentGame: get_current_game rpc failed', error, '게임 정보를 불러오지 못했습니다.')
+  }
+
+  return Array.isArray(data) ? data[0] || null : data
+}
+
+export async function getGameResult(gameId) {
+  const { data, error } = await supabase.rpc('get_game_result', {
+    p_game_id: gameId,
+  })
+
+  if (error) {
+    throw createSupabaseError('getGameResult: get_game_result rpc failed', error, '게임 결과를 불러오지 못했습니다.')
+  }
+
+  return Array.isArray(data) ? data[0] || null : data
+}
+
+export async function returnRoomToLobby(roomId) {
+  const { data, error } = await supabase.rpc('return_room_to_lobby', {
+    p_room_id: roomId,
+  })
+
+  if (error) {
+    throw createSupabaseError('returnRoomToLobby: return_room_to_lobby rpc failed', error, '대기방으로 돌아가지 못했습니다.')
+  }
+
+  return Array.isArray(data) ? data[0] || null : data
+}
+
+export async function getMyGameRole(roomId) {
+  const { data, error } = await supabase.rpc('get_my_game_role', {
+    p_room_id: roomId,
+  })
+
+  if (error) {
+    throw createSupabaseError('getMyGameRole: get_my_game_role rpc failed', error, '내 역할 정보를 불러오지 못했습니다.')
+  }
+
+  return Array.isArray(data) ? data[0] || null : data
+}
+
+export async function getMyRoleInfo(roomId) {
+  const { data, error } = await supabase.rpc('get_my_role_info', {
+    p_room_id: roomId,
+  })
+
+  if (error) {
+    throw createSupabaseError('getMyRoleInfo: get_my_role_info rpc failed', error, '역할 보조 정보를 불러오지 못했습니다.')
+  }
+
+  return data || null
+}
+
+export async function getVoteStatus(roomId) {
+  const { data, error } = await supabase.rpc('get_vote_status', {
+    p_room_id: roomId,
+  })
+
+  if (error) {
+    throw createSupabaseError('getVoteStatus: get_vote_status rpc failed', error, '투표 상태를 불러오지 못했습니다.')
+  }
+
+  return data || []
 }
 
 export async function leaveRoom(roomId) {
@@ -321,7 +568,7 @@ export async function leaveRoom(roomId) {
   })
 
   if (error) {
-    throw createSupabaseError('leaveRoom: leave_room rpc failed', error, 'Failed to leave room.')
+    throw createSupabaseError('leaveRoom: leave_room rpc failed', error, '방을 나가지 못했습니다.')
   }
 
   return null
@@ -331,7 +578,7 @@ export async function deleteRoom(roomId) {
   const { error } = await supabase.from('rooms').delete().eq('id', roomId)
 
   if (error) {
-    throw createSupabaseError('deleteRoom: rooms delete failed', error, 'Failed to delete room.')
+    throw createSupabaseError('deleteRoom: rooms delete failed', error, '방 삭제에 실패했습니다.')
   }
 }
 
@@ -342,7 +589,6 @@ export function subscribeToRooms(callback) {
   const channel = supabase
     .channel(channelName)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, callback)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players' }, callback)
     .subscribe((status) => {
       callback({ type: 'subscription-status', status })
     })
@@ -355,13 +601,6 @@ export function subscribeToRooms(callback) {
 export function subscribeToRoom(roomId, callback) {
   unsubscribeFromRoom(roomId)
 
-  const handleRoomPlayerChange = (payload) => {
-    const changedRoomId = payload.new?.room_id || payload.old?.room_id
-    if (changedRoomId === roomId) {
-      callback(payload)
-    }
-  }
-
   const channel = supabase
     .channel(`room-${roomId}`)
     .on(
@@ -371,8 +610,8 @@ export function subscribeToRoom(roomId, callback) {
     )
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'room_players' },
-      handleRoomPlayerChange,
+      { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` },
+      callback,
     )
     .subscribe((status) => {
       callback({ type: 'subscription-status', status })
@@ -381,6 +620,25 @@ export function subscribeToRoom(roomId, callback) {
   roomDetailChannels.set(roomId, channel)
 
   return () => unsubscribeFromRoom(roomId)
+}
+
+export function subscribeToGame(roomId, callback) {
+  unsubscribeFromGame(roomId)
+
+  const channel = supabase
+    .channel(`game-${roomId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'games', filter: `room_id=eq.${roomId}` },
+      callback,
+    )
+    .subscribe((status) => {
+      callback({ type: 'subscription-status', status })
+    })
+
+  gameChannels.set(roomId, channel)
+
+  return () => unsubscribeFromGame(roomId)
 }
 
 function unsubscribeFromRooms(channelName) {
@@ -402,5 +660,16 @@ function unsubscribeFromRoom(roomId) {
   }
 
   roomDetailChannels.delete(roomId)
+  supabase.removeChannel(channel)
+}
+
+function unsubscribeFromGame(roomId) {
+  const channel = gameChannels.get(roomId)
+
+  if (!channel) {
+    return
+  }
+
+  gameChannels.delete(roomId)
   supabase.removeChannel(channel)
 }

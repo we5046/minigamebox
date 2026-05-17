@@ -41,6 +41,12 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/rooms/:roomId/game',
+      name: 'game-play',
+      component: () => import('../views/GamePlayView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/shop',
       name: 'shop',
       component: () => import('../views/ShopView.vue'),

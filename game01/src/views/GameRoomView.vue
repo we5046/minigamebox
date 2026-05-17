@@ -16,6 +16,7 @@ import {
   joinRoom as joinRoomRequest,
   leaveRoom as leaveRoomRequest,
   setPlayerReady,
+  startGame as startGameRequest,
   subscribeToRoom,
   updateRoom,
 } from '@/api/roomApi';
@@ -97,10 +98,26 @@ const currentPlayer = computed(() => {
   return players.value.find((player) => player.userId === savedUser.value?.id);
 });
 const isHost = computed(() => currentPlayer.value?.isHost === true);
+const isGameStarted = computed(
+  () => room.value?.status === 'playing' || room.value?.status === 'finished',
+);
 const canStartGame = computed(() => {
-  const guests = players.value.filter((player) => !player.isHost);
-  // 방장을 제외한 나머지 인원이 1명 이상이고, 모두 준비 완료 상태일 때 시작 가능
-  return guests.length > 0 && guests.every((player) => player.isReady);
+  if (!room.value || isGameStarted.value) {
+    return false;
+  }
+
+  return (
+    players.value.length >= Number(room.value.minStartPlayers || 0) &&
+    players.value.length > 1 &&
+    players.value.every((player) => player.isReady)
+  );
+});
+const roomProgressText = computed(() => {
+  if (isGameStarted.value) {
+    return '게임 진행 중';
+  }
+
+  return canStartGame.value ? '시작 가능' : '대기 중';
 });
 const sentInviteMap = computed(() => {
   return new Map(
@@ -143,10 +160,10 @@ const filteredInviteFriends = computed(() => {
 });
 
 const roleOptions = [
-  { key: 'citizen', label: '시민' },
-  { key: 'mafia', label: '마피아' },
-  { key: 'police', label: '경찰' },
-  { key: 'doctor', label: '의사' },
+  { key: 'citizen', label: '시민', tone: 'citizen' },
+  { key: 'mafia', label: '마피아', tone: 'mafia' },
+  { key: 'police', label: '경찰', tone: 'police' },
+  { key: 'doctor', label: '의사', tone: 'doctor' },
 ];
 const fixedPlayerCounts = [4, 6, 8, 12];
 const nightTimeOptions = [20, 30, 45, 60];
@@ -156,6 +173,104 @@ const tieVoteOptions = [
   { value: 'no_execution', label: '처형 없음' },
   { value: 'revote', label: '재투표' },
 ];
+const roomBriefing = computed(() => {
+  if (!room.value) {
+    return null;
+  }
+
+  return {
+    players: `${players.value.length} / ${room.value.maxPlayers}`,
+    minStartPlayers: room.value.minStartPlayers,
+    roleTotal: getRoleConfigTotal(room.value.roleConfig, room.value.maxPlayers),
+    roles: getRoleConfigItems(room.value.roleConfig, room.value.maxPlayers),
+    settings: [
+      {
+        label: '입장 방식',
+        value: getEntryModeLabel(room.value.entryMode),
+        tone: room.value.entryMode === 'private' ? 'private' : 'public',
+      },
+      {
+        label: '관전',
+        value: getEnabledLabel(room.value.spectatorAllowed),
+        tone: room.value.spectatorAllowed ? 'allowed' : 'disabled',
+      },
+      {
+        label: '역할 공개',
+        value: getRoleRevealLabel(room.value.roleRevealMode),
+        tone: room.value.roleRevealMode === 'public' ? 'public' : 'private',
+      },
+      {
+        label: '첫날 밤 능력',
+        value: getEnabledLabel(room.value.firstNightAbilityAllowed),
+        tone: room.value.firstNightAbilityAllowed ? 'allowed' : 'disabled',
+      },
+      {
+        label: '최후의 변론',
+        value: getEnabledLabel(room.value.finalDefenseEnabled),
+        tone: room.value.finalDefenseEnabled ? 'allowed' : 'disabled',
+      },
+      {
+        label: '동점 투표',
+        value: getTieVoteRuleLabel(room.value.tieVoteRule),
+        tone: room.value.tieVoteRule === 'revote' ? 'allowed' : 'disabled',
+      },
+      {
+        label: '방 상태',
+        value: room.value.status === 'waiting' ? '대기중' : '게임중',
+        tone: room.value.status === 'waiting' ? 'public' : 'disabled',
+      },
+    ],
+  };
+});
+const gameFlowTotalSeconds = computed(() => {
+  if (!room.value) {
+    return 0;
+  }
+
+  return (
+    Number(room.value.nightTimeSeconds || 0) +
+    Number(room.value.discussionTimeSeconds || 0) +
+    Number(room.value.voteTimeSeconds || 0) +
+    (room.value.finalDefenseEnabled ? 30 : 0)
+  );
+});
+const gameFlowItems = computed(() => {
+  if (!room.value) {
+    return [];
+  }
+
+  const items = [
+    {
+      icon: '🌙',
+      label: '밤',
+      description: '능력 사용',
+      duration: `${room.value.nightTimeSeconds}s`,
+    },
+    {
+      icon: '☀️',
+      label: '낮 토론',
+      description: '토론',
+      duration: `${room.value.discussionTimeSeconds}s`,
+    },
+    {
+      icon: '🗳️',
+      label: '투표',
+      description: '처형 투표',
+      duration: `${room.value.voteTimeSeconds}s`,
+    },
+  ];
+
+  if (room.value.finalDefenseEnabled) {
+    items.push({
+      icon: '⚖️',
+      label: '최후의 변론',
+      description: '처형 여부 결정',
+      duration: '30s',
+    });
+  }
+
+  return items;
+});
 const isFriendlyEditMode = computed(
   () => editRoomDescription.value === '친선전',
 );
@@ -173,6 +288,7 @@ const editRoomMinStartPlayers = ref(4);
 const editRoomTieVoteRule = ref('no_execution');
 const editSpectatorAllowed = ref(false);
 const editFirstNightAbilityAllowed = ref(true);
+const editFinalDefenseEnabled = ref(false);
 const editEntryPassword = ref('');
 const editRoomStoredEntryPassword = ref('');
 const isEditEntryPasswordVisible = ref(false);
@@ -221,6 +337,26 @@ function getRecommendedRoleConfig(maxPlayers) {
   const citizen = Math.max(0, playerCount - mafia - police - doctor);
 
   return { citizen, mafia, police, doctor };
+}
+
+function getEffectiveRoleConfig(roleConfig, maxPlayers) {
+  return roleConfig || getDefaultRoleConfig(maxPlayers);
+}
+
+function getRoleConfigTotal(roleConfig, maxPlayers) {
+  return Object.values(getEffectiveRoleConfig(roleConfig, maxPlayers)).reduce(
+    (total, count) => total + Number(count || 0),
+    0,
+  );
+}
+
+function getRoleConfigItems(roleConfig, maxPlayers) {
+  const effectiveRoleConfig = getEffectiveRoleConfig(roleConfig, maxPlayers);
+
+  return roleOptions.map((role) => ({
+    ...role,
+    count: Number(effectiveRoleConfig[role.key] || 0),
+  }));
 }
 
 function isSameRoleConfig(a, b) {
@@ -280,9 +416,7 @@ onMounted(() => {
   inviteCountdownTimer = setInterval(() => {
     inviteCountdownTick.value = Date.now();
   }, 1000);
-  unsubscribeRoom = subscribeToRoom(props.roomId, () => {
-    scheduleSyncRoom();
-  });
+  unsubscribeRoom = subscribeToRoom(props.roomId, handleRoomRealtimeEvent);
 });
 
 onBeforeUnmount(() => {
@@ -366,6 +500,7 @@ async function fetchRoom() {
     }
 
     await syncRoomPresence();
+    redirectToGameIfStarted();
   } catch (error) {
     toastStore.error(error.message);
   } finally {
@@ -503,6 +638,7 @@ async function syncRoom() {
     room.value = await getRoom(props.roomId);
     lastSyncedAt.value = new Date();
     await syncRoomPresence();
+    redirectToGameIfStarted();
   } catch (error) {
     if (
       error.message.includes('Not Found') ||
@@ -568,6 +704,26 @@ function getEntryModeLabel(mode) {
   return mode === 'private' ? '비공개방' : '공개방';
 }
 
+function redirectToGameIfStarted() {
+  if (
+    room.value?.status === 'playing' &&
+    route.name !== 'game-play'
+  ) {
+    router.push(`/rooms/${props.roomId}/game`);
+  }
+}
+
+function getTieVoteRuleLabel(rule) {
+  return (
+    tieVoteOptions.find((option) => option.value === rule)?.label ||
+    '처형 없음'
+  );
+}
+
+function getEnabledLabel(isEnabled) {
+  return isEnabled ? '허용' : '비허용';
+}
+
 async function toggleReady() {
   if (!currentPlayer.value || isUpdating.value) {
     return;
@@ -605,6 +761,24 @@ function scheduleSyncRoom() {
   }, 120);
 }
 
+function handleRoomRealtimeEvent(payload) {
+  if (payload?.type === 'subscription-status') {
+    return;
+  }
+
+  if (payload?.new?.status === 'playing') {
+    room.value = {
+      ...(room.value || {}),
+      status: payload.new.status,
+      phase: payload.new.phase,
+    };
+    redirectToGameIfStarted();
+    return;
+  }
+
+  scheduleSyncRoom();
+}
+
 function openEditRoomForm() {
   editRoomTitle.value = room.value?.title || '';
   editRoomDescription.value = room.value?.description || '';
@@ -629,6 +803,7 @@ function openEditRoomForm() {
   editSpectatorAllowed.value = room.value?.spectatorAllowed ?? false;
   editFirstNightAbilityAllowed.value =
     room.value?.firstNightAbilityAllowed ?? true;
+  editFinalDefenseEnabled.value = room.value?.finalDefenseEnabled ?? false;
   editRoleRevealMode.value = room.value?.roleRevealMode || 'private';
   editEntryMode.value = room.value?.entryMode || 'public';
   editEntryPassword.value = room.value?.entryPassword || '';
@@ -651,6 +826,7 @@ function closeEditRoomForm() {
   editRoomTieVoteRule.value = 'no_execution';
   editSpectatorAllowed.value = false;
   editFirstNightAbilityAllowed.value = true;
+  editFinalDefenseEnabled.value = false;
   editRoleRevealMode.value = 'private';
   editEntryMode.value = 'public';
   editEntryPassword.value = '';
@@ -797,6 +973,7 @@ async function saveRoomInfo() {
       tieVoteRule: editRoomTieVoteRule.value,
       spectatorAllowed: editSpectatorAllowed.value,
       firstNightAbilityAllowed: editFirstNightAbilityAllowed.value,
+      finalDefenseEnabled: editFinalDefenseEnabled.value,
       roleRevealMode: editRoleRevealMode.value,
       entryMode: editEntryMode.value,
       ...(editEntryMode.value === 'private'
@@ -827,11 +1004,16 @@ async function startGame() {
   isUpdating.value = true;
 
   try {
-    room.value = await updateRoom(props.roomId, {
-      status: 'playing',
-      phase: '게임 진행 중',
-    });
-    lastSyncedAt.value = new Date();
+    await startGameRequest(props.roomId);
+    await syncRoom();
+    if (chatChannel.value) {
+      await sendRoomChatMessage(chatChannel.value, {
+        userId: 'system',
+        nickname: 'System',
+        content: '모든 준비가 완료되어 게임이 시작되었습니다.',
+        isSystem: true,
+      }).catch(() => {});
+    }
   } catch (error) {
     toastStore.error(error.message);
   } finally {
@@ -915,6 +1097,9 @@ async function leaveRoom() {
           <div class="control-header">
             <span class="control-title">ROOM CONTROL</span>
             <span class="control-status" v-if="canStartGame">READY</span>
+            <span class="control-status active" v-else-if="isGameStarted">
+              STARTED
+            </span>
           </div>
           <div class="room-actions">
             <button
@@ -938,17 +1123,23 @@ async function leaveRoom() {
                   ? 'secondary-btn'
                   : 'primary-btn pulse-anim'
               "
-              :disabled="isUpdating"
+              :disabled="isUpdating || isGameStarted"
               @click="toggleReady"
             >
-              {{ currentPlayer.isReady ? '준비 취소' : '준비 하기' }}
+              {{
+                isGameStarted
+                  ? '게임 진행 중'
+                  : currentPlayer.isReady
+                    ? '준비 취소'
+                    : '준비 하기'
+              }}
             </button>
 
             <button
               v-if="isHost"
               type="button"
               class="action-btn secondary-btn"
-              :disabled="isUpdating"
+              :disabled="isUpdating || isGameStarted"
               @click="openEditRoomForm"
             >
               방 설정
@@ -1317,6 +1508,28 @@ async function leaveRoom() {
                 </button>
               </div>
             </div>
+
+            <div class="form-group">
+              <label>최후의 변론</label>
+              <div class="option-group">
+                <button
+                  type="button"
+                  class="option-btn"
+                  :class="{ active: editFinalDefenseEnabled }"
+                  @click="editFinalDefenseEnabled = true"
+                >
+                  활성화
+                </button>
+                <button
+                  type="button"
+                  class="option-btn"
+                  :class="{ active: !editFinalDefenseEnabled }"
+                  @click="editFinalDefenseEnabled = false"
+                >
+                  비활성화
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -1420,42 +1633,82 @@ async function leaveRoom() {
         </div>
       </form>
 
-      <div class="room-rules-grid">
-        <article>
-          <strong>밤 시간</strong>
-          <span>{{ room.nightTimeSeconds }}초</span>
-        </article>
-        <article>
-          <strong>투표 시간</strong>
-          <span>{{ room.voteTimeSeconds }}초</span>
-        </article>
-        <article>
-          <strong>역할 공개</strong>
-          <span>{{ getRoleRevealLabel(room.roleRevealMode) }}</span>
-        </article>
-        <article>
-          <strong>입장 방식</strong>
-          <span>{{ getEntryModeLabel(room.entryMode) }}</span>
-        </article>
-      </div>
+      <div v-if="roomBriefing" class="room-rules-grid">
+        <section class="rules-briefing-panel">
+          <div class="rules-panel-heading">
+            <p>Room Briefing</p>
+            <h2>게임 정보</h2>
+          </div>
 
-      <div v-if="false" class="room-rules-grid">
-        <article>
-          <strong>🌙 밤 시간</strong>
-          <span>30초</span>
-        </article>
-        <article>
-          <strong>🗳 투표 시간</strong>
-          <span>15초</span>
-        </article>
-        <article>
-          <strong>🎭 역할 공개</strong>
-          <span>비공개</span>
-        </article>
-        <article>
-          <strong>🔒 입장 방식</strong>
-          <span>공개방</span>
-        </article>
+          <div class="briefing-hero">
+            <div>
+              <span>현재 인원</span>
+              <strong>{{ roomBriefing.players }}</strong>
+            </div>
+            <div>
+              <span>시작 조건</span>
+              <strong>{{ roomBriefing.minStartPlayers }}명 이상</strong>
+            </div>
+          </div>
+
+          <div class="briefing-section">
+            <div class="briefing-section-title">
+              <span aria-hidden="true">🎭</span>
+              <strong>역할 구성</strong>
+              <em>합계 {{ roomBriefing.roleTotal }}명</em>
+            </div>
+            <div class="role-rule-list">
+              <span
+                v-for="role in roomBriefing.roles"
+                :key="role.key"
+                class="role-rule-chip"
+                :class="role.tone"
+              >
+                <b>{{ role.label }}</b>
+                <em>×{{ role.count }}</em>
+              </span>
+            </div>
+          </div>
+
+          <div class="briefing-section">
+            <div class="briefing-section-title">
+              <span aria-hidden="true">🔎</span>
+              <strong>공개 및 진행 규칙</strong>
+            </div>
+            <dl class="rule-status-list">
+              <div
+                v-for="setting in roomBriefing.settings"
+                :key="setting.label"
+                class="rule-status-row"
+              >
+                <dt>{{ setting.label }}</dt>
+                <dd :class="setting.tone">{{ setting.value }}</dd>
+              </div>
+            </dl>
+          </div>
+        </section>
+
+        <section class="rules-flow-panel">
+          <div class="rules-panel-heading">
+            <p>Game Flow</p>
+            <h2>라운드 진행</h2>
+          </div>
+
+          <ol class="game-flow-timeline">
+            <li v-for="item in gameFlowItems" :key="item.label">
+              <span class="flow-icon" aria-hidden="true">{{ item.icon }}</span>
+              <div>
+                <strong>{{ item.label }}</strong>
+                <small>{{ item.description }}</small>
+              </div>
+              <em>{{ item.duration }}</em>
+            </li>
+          </ol>
+
+          <p class="flow-summary">
+            총 {{ gameFlowTotalSeconds }}초 · 밤 능력 사용 후 토론과 투표 진행
+          </p>
+        </section>
       </div>
 
       <div class="players-section">
@@ -1464,9 +1717,9 @@ async function leaveRoom() {
           <span
             v-if="lastSyncedAt"
             class="sync-status"
-            :class="{ 'ready-text': canStartGame }"
+            :class="{ 'ready-text': canStartGame || isGameStarted }"
           >
-            {{ canStartGame ? '게임 시작까지 5... (진행 가능)' : '대기 중...' }}
+            {{ roomProgressText }}
           </span>
         </div>
         <ul class="player-card-list">
@@ -1842,6 +2095,11 @@ async function leaveRoom() {
   animation: pulse 1.5s infinite;
 }
 
+.control-status.active {
+  animation: none;
+  color: #ffbe55;
+}
+
 .room-actions {
   display: flex;
   flex-direction: column;
@@ -1923,33 +2181,528 @@ async function leaveRoom() {
   animation: pulse 2s infinite;
 }
 
-.room-rules-grid {
+.game-started-panel {
+  align-items: center;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 190, 85, 0.16), transparent 34%),
+    linear-gradient(135deg, rgba(61, 32, 19, 0.82), rgba(12, 8, 7, 0.92));
+  border: 1px solid rgba(255, 190, 85, 0.22);
+  border-radius: 12px;
+  box-shadow:
+    0 16px 34px rgba(0, 0, 0, 0.34),
+    inset 0 0 24px rgba(255, 138, 0, 0.05);
   display: flex;
-  gap: 1.5rem;
-  padding: 1rem;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 1rem 1.15rem;
   position: relative;
   z-index: 1;
 }
 
-.room-rules-grid article {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.room-rules-grid strong {
-  color: rgba(255, 245, 224, 0.5);
-  font-size: 0.8rem;
+.game-started-panel p {
+  color: rgba(255, 190, 85, 0.66);
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.15rem;
   text-transform: uppercase;
 }
 
-.room-rules-grid span {
-  color: #fff;
+.game-started-panel h2 {
+  color: #fff1d6;
+  font-size: clamp(1.2rem, 2vw, 1.55rem);
+  font-weight: 900;
+  margin: 0;
+}
+
+.game-started-panel > span {
+  color: rgba(255, 245, 224, 0.68);
+  font-size: 0.88rem;
   font-weight: 800;
+  text-align: right;
+}
+
+.game-board-panel {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(12rem, 0.8fr) minmax(0, 1.35fr) minmax(14rem, 0.9fr);
+  position: relative;
+  z-index: 1;
+}
+
+.game-role-card,
+.game-phase-card,
+.game-survivor-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.025)),
+    rgba(16, 11, 9, 0.72);
+  border: 1px solid rgba(255, 190, 85, 0.14);
+  border-radius: 12px;
+  box-shadow:
+    0 14px 30px rgba(0, 0, 0, 0.28),
+    inset 0 0 24px rgba(255, 138, 0, 0.035);
+  min-width: 0;
+  padding: 1rem;
+}
+
+.game-role-card {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.game-role-card span,
+.game-survivor-card > span {
+  color: rgba(255, 190, 85, 0.64);
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.game-role-card strong,
+.game-survivor-card > strong {
+  color: #fff1d6;
+  font-size: 1.55rem;
+  font-weight: 900;
+}
+
+.game-role-card p,
+.game-phase-card p {
+  color: rgba(255, 245, 224, 0.68);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.game-role-card.mafia {
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.game-role-card.police {
+  border-color: rgba(96, 165, 250, 0.3);
+}
+
+.game-role-card.doctor {
+  border-color: rgba(74, 222, 128, 0.28);
+}
+
+.phase-meter-header {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 0.85rem;
+}
+
+.phase-meter-header span {
+  color: rgba(255, 190, 85, 0.7);
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.phase-meter-header strong {
+  color: #fff1d6;
+  font-size: 1.8rem;
+  font-weight: 900;
+}
+
+.phase-meter-header button,
+.game-action-box button {
+  background: linear-gradient(180deg, #ffbe55, #c9711d);
+  border: 0;
+  border-radius: 7px;
+  color: #1a0f08;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 900;
+  padding: 0.58rem 0.78rem;
+}
+
+.phase-meter-header button:disabled,
+.game-action-box button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.8);
+  opacity: 0.45;
+}
+
+.game-action-box {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 190, 85, 0.12);
+  border-radius: 10px;
+  display: grid;
+  gap: 0.58rem;
+  margin-top: 0.85rem;
+  padding: 0.75rem;
+}
+
+.game-action-box label,
+.game-action-box small {
+  color: rgba(255, 245, 224, 0.62);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.game-action-box > div {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.game-action-box select {
+  background: rgba(0, 0, 0, 0.34);
+  border: 1px solid rgba(255, 190, 85, 0.18);
+  border-radius: 7px;
+  color: #fff1d6;
+  font: inherit;
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+}
+
+.game-survivor-card {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.game-survivor-card ul {
+  display: grid;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  max-height: 13rem;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.game-survivor-card li {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  display: flex;
+  gap: 0.55rem;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+}
+
+.game-survivor-card li.eliminated {
+  opacity: 0.45;
+}
+
+.game-survivor-card b {
+  color: #fff1d6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-survivor-card em {
+  color: rgba(255, 245, 224, 0.58);
+  flex: 0 0 auto;
+  font-size: 0.76rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.room-rules-grid {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 138, 0, 0.12), transparent 34%),
+    linear-gradient(135deg, rgba(34, 20, 14, 0.92), rgba(10, 7, 6, 0.94));
+  border: 1px solid rgba(255, 190, 85, 0.16);
+  border-radius: 14px;
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.38),
+    inset 0 1px rgba(255, 255, 255, 0.04);
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: minmax(0, 1.42fr) minmax(18rem, 0.82fr);
+  padding: clamp(1rem, 1.6vw, 1.35rem);
+  position: relative;
+  z-index: 1;
+}
+
+.rules-briefing-panel,
+.rules-flow-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.025)),
+    rgba(16, 11, 9, 0.68);
+  border: 1px solid rgba(255, 190, 85, 0.14);
+  border-radius: 12px;
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.24),
+    inset 0 0 28px rgba(255, 138, 0, 0.035);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-width: 0;
+  padding: clamp(1rem, 1.9vw, 1.35rem);
+}
+
+.rules-panel-heading {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.rules-panel-heading p {
+  color: rgba(255, 190, 85, 0.62);
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.rules-panel-heading h2 {
+  color: #fff1d6;
+  font-size: clamp(1.08rem, 1.7vw, 1.35rem);
+  font-weight: 900;
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.briefing-hero {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.briefing-hero > div {
+  align-items: center;
+  background:
+    linear-gradient(180deg, rgba(255, 190, 85, 0.12), rgba(80, 31, 21, 0.2)),
+    rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 190, 85, 0.18);
+  border-radius: 10px;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0.62rem 0.78rem;
+}
+
+.briefing-hero span,
+.briefing-section-title em,
+.game-flow-timeline small {
+  color: rgba(255, 245, 224, 0.62);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.briefing-hero strong {
+  color: #fff5e1;
+  font-size: clamp(1.08rem, 1.8vw, 1.35rem);
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.briefing-section {
+  display: grid;
+  gap: 0.62rem;
+}
+
+.briefing-section-title {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.briefing-section-title > span {
+  align-items: center;
+  background: rgba(255, 190, 85, 0.12);
+  border: 1px solid rgba(255, 190, 85, 0.18);
+  border-radius: 8px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1.65rem;
+  justify-content: center;
+  width: 1.65rem;
+}
+
+.briefing-section-title strong {
+  color: #fff1d6;
   font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.role-rule-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+  min-width: 0;
+}
+
+.role-rule-chip {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 190, 85, 0.16);
+  border-radius: 999px;
+  box-shadow: 0 0 14px rgba(255, 190, 85, 0.06);
+  display: flex;
+  gap: 0.38rem;
+  justify-content: center;
+  min-width: 0;
+  padding: 0.34rem 0.66rem;
+}
+
+.role-rule-chip.citizen {
+  border-color: rgba(125, 211, 252, 0.26);
+  box-shadow: 0 0 14px rgba(125, 211, 252, 0.08);
+}
+
+.role-rule-chip.mafia {
+  border-color: rgba(248, 113, 113, 0.34);
+  box-shadow: 0 0 16px rgba(248, 113, 113, 0.12);
+}
+
+.role-rule-chip.police {
+  border-color: rgba(96, 165, 250, 0.34);
+  box-shadow: 0 0 16px rgba(96, 165, 250, 0.1);
+}
+
+.role-rule-chip.doctor {
+  border-color: rgba(74, 222, 128, 0.32);
+  box-shadow: 0 0 16px rgba(74, 222, 128, 0.1);
+}
+
+.role-rule-chip b {
+  color: rgba(255, 245, 224, 0.84);
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-rule-chip em {
+  color: #ffd28a;
+  flex: 0 0 auto;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.rule-status-list {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.rule-status-row {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 9px;
+  display: flex;
+  gap: 0.55rem;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0.5rem 0.58rem;
+}
+
+.rule-status-row dt {
+  color: rgba(255, 245, 224, 0.66);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.rule-status-row dd {
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  margin: 0;
+  padding: 0.2rem 0.45rem;
+  white-space: nowrap;
+}
+
+.rule-status-row dd.allowed {
+  background: rgba(34, 197, 94, 0.14);
+  color: #86efac;
+}
+
+.rule-status-row dd.disabled {
+  background: rgba(127, 29, 29, 0.2);
+  color: #fca5a5;
+}
+
+.rule-status-row dd.public {
+  background: rgba(255, 190, 85, 0.14);
+  color: #ffd28a;
+}
+
+.rule-status-row dd.private {
+  background: rgba(82, 82, 91, 0.28);
+  color: rgba(255, 245, 224, 0.7);
+}
+
+.game-flow-timeline {
+  display: grid;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.game-flow-timeline li {
+  align-items: center;
+  display: grid;
+  gap: 0.72rem;
+  grid-template-columns: 2.2rem minmax(0, 1fr) auto;
+  min-width: 0;
+  padding: 0.52rem 0;
+  position: relative;
+}
+
+.game-flow-timeline li:not(:last-child)::after {
+  background: linear-gradient(180deg, rgba(255, 190, 85, 0.42), transparent);
+  bottom: -0.45rem;
+  content: '';
+  left: 1.1rem;
+  position: absolute;
+  top: 2.78rem;
+  width: 1px;
+}
+
+.flow-icon {
+  align-items: center;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(255, 190, 85, 0.22), transparent 64%),
+    rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 190, 85, 0.22);
+  border-radius: 999px;
+  display: inline-flex;
+  height: 2.2rem;
+  justify-content: center;
+  width: 2.2rem;
+}
+
+.game-flow-timeline strong {
+  color: #fff1d6;
+  display: block;
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.game-flow-timeline em {
+  color: #ffbe55;
+  font-size: 1.02rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.flow-summary {
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 190, 85, 0.1);
+  border-radius: 9px;
+  color: rgba(255, 245, 224, 0.6);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.4;
+  margin: 0;
+  padding: 0.62rem 0.7rem;
 }
 
 .players-section {
@@ -3134,6 +3887,21 @@ async function leaveRoom() {
   opacity: 0.5;
 }
 
+@media (max-width: 1100px) {
+  .room-rules-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .game-board-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .game-phase-card {
+    grid-column: 1 / -1;
+    order: -1;
+  }
+}
+
 @media (max-width: 760px) {
   .room-heading {
     flex-direction: column;
@@ -3157,6 +3925,54 @@ async function leaveRoom() {
 
   .advanced-settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .room-rules-grid {
+    grid-template-columns: 1fr;
+    padding: 1rem;
+  }
+
+  .game-started-panel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .game-started-panel > span {
+    text-align: left;
+  }
+
+  .game-board-panel,
+  .game-action-box > div {
+    grid-template-columns: 1fr;
+  }
+
+  .briefing-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .rule-status-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .game-flow-timeline li {
+    grid-template-columns: 2.45rem minmax(0, 1fr);
+  }
+
+  .game-flow-timeline em {
+    grid-column: 2;
+    font-size: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .rule-status-list {
+    grid-template-columns: 1fr;
+  }
+
+  .briefing-hero > div,
+  .rule-status-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>
