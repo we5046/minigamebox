@@ -64,6 +64,9 @@ let unsubscribeGame = null
 let unsubscribeMessages = null
 let countdownTimer = null
 let roomHeartbeatTimer = null
+let roomHeartbeatPromise = null
+let roomHeartbeatFailureCount = 0
+let nextRoomHeartbeatAt = 0
 const uploadedLogGameIds = new Set()
 
 const roleLabels = {
@@ -506,7 +509,7 @@ async function returnToLobby(auto = false, force = false) {
   isReturningToLobby.value = true
 
   try {
-    await sendRoomHeartbeat()
+    await sendRoomHeartbeat({ force: true })
 
     if (isHost.value && room.value?.status === 'game_over') {
       await returnRoomToLobby(roomId.value)
@@ -551,29 +554,54 @@ function isMissingRoomError(error) {
   return raw.code === 'PGRST116' || raw.details?.includes('0 rows')
 }
 
-async function sendRoomHeartbeat() {
+function getRoomHeartbeatBackoffMs() {
+  return Math.min(
+    60_000,
+    ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs * 2 ** Math.min(roomHeartbeatFailureCount, 3),
+  )
+}
+
+async function sendRoomHeartbeat({ force = false } = {}) {
   if (!roomId.value) {
     return false
   }
 
-  try {
-    await heartbeatRoomPresence(roomId.value)
-    return true
-  } catch (error) {
-    const rawMessage = error.cause?.message || error.supabaseError?.message || ''
-
-    if (
-      rawMessage.includes('Room participant required') ||
-      error.message?.includes('Room participant required') ||
-      error.message?.includes('방 참가자')
-    ) {
-      await router.push('/home')
-      return false
-    }
-
-    console.warn('[Game] Heartbeat failed.', error)
+  if (!force && Date.now() < nextRoomHeartbeatAt) {
     return false
   }
+
+  if (roomHeartbeatPromise) {
+    return roomHeartbeatPromise
+  }
+
+  roomHeartbeatPromise = (async () => {
+    try {
+      await heartbeatRoomPresence(roomId.value)
+      roomHeartbeatFailureCount = 0
+      nextRoomHeartbeatAt = 0
+      return true
+    } catch (error) {
+      const rawMessage = error.cause?.message || error.supabaseError?.message || ''
+
+      if (
+        rawMessage.includes('Room participant required') ||
+        error.message?.includes('Room participant required') ||
+        error.message?.includes('방 참가자')
+      ) {
+        await router.push('/home')
+        return false
+      }
+
+      roomHeartbeatFailureCount += 1
+      nextRoomHeartbeatAt = Date.now() + getRoomHeartbeatBackoffMs()
+      console.warn('[Game] Heartbeat failed.', error)
+      return false
+    } finally {
+      roomHeartbeatPromise = null
+    }
+  })()
+
+  return roomHeartbeatPromise
 }
 
 function startRoomHeartbeat() {
@@ -601,7 +629,7 @@ async function loadGame({ silent = false } = {}) {
   }
 
   try {
-    const heartbeatOk = await sendRoomHeartbeat()
+    const heartbeatOk = await sendRoomHeartbeat({ force: !silent })
 
     if (!heartbeatOk && route.name !== 'game-play') {
       return

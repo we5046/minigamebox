@@ -79,6 +79,9 @@ let roomChatSubscription = null;
 let publicChatSubscription = null;
 let syncTimer = null;
 let roomHeartbeatTimer = null;
+let roomHeartbeatPromise = null;
+let roomHeartbeatFailureCount = 0;
+let nextRoomHeartbeatAt = 0;
 let sentInviteRefreshTimer = null;
 let inviteCountdownTimer = null;
 let unsubscribePresenceUsers = null;
@@ -411,32 +414,59 @@ async function syncRoomPresence() {
   });
 }
 
-async function sendRoomHeartbeat({ resync = false } = {}) {
+function getRoomHeartbeatBackoffMs() {
+  return Math.min(
+    60_000,
+    ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs *
+      2 ** Math.min(roomHeartbeatFailureCount, 3),
+  );
+}
+
+async function sendRoomHeartbeat({ force = false, resync = false } = {}) {
   if (!savedUser.value || !room.value?.id) {
     return;
   }
 
-  try {
-    await heartbeatRoomPresence(props.roomId);
+  if (!force && Date.now() < nextRoomHeartbeatAt) {
+    return;
+  }
 
-    if (resync) {
-      await syncRoom();
-    }
-  } catch (error) {
-    const rawMessage = error.cause?.message || error.supabaseError?.message || '';
+  if (!roomHeartbeatPromise) {
+    roomHeartbeatPromise = (async () => {
+      try {
+        await heartbeatRoomPresence(props.roomId);
+        roomHeartbeatFailureCount = 0;
+        nextRoomHeartbeatAt = 0;
+        return true;
+      } catch (error) {
+        const rawMessage =
+          error.cause?.message || error.supabaseError?.message || '';
 
-    if (
-      rawMessage.includes('Room participant required') ||
-      error.message?.includes('Room participant required') ||
-      error.message?.includes('방 참가자')
-    ) {
-      stopRoomHeartbeat();
-      toastStore.error('방에서 강퇴되었습니다.');
-      router.push('/home');
-      return;
-    }
+        if (
+          rawMessage.includes('Room participant required') ||
+          error.message?.includes('Room participant required') ||
+          error.message?.includes('방 참가자')
+        ) {
+          stopRoomHeartbeat();
+          toastStore.error('방에서 강퇴되었습니다.');
+          router.push('/home');
+          return false;
+        }
 
-    console.warn('[Room] Heartbeat failed.', error);
+        roomHeartbeatFailureCount += 1;
+        nextRoomHeartbeatAt = Date.now() + getRoomHeartbeatBackoffMs();
+        console.warn('[Room] Heartbeat failed.', error);
+        return false;
+      } finally {
+        roomHeartbeatPromise = null;
+      }
+    })();
+  }
+
+  const heartbeatOk = await roomHeartbeatPromise;
+
+  if (heartbeatOk && resync) {
+    await syncRoom();
   }
 }
 
@@ -461,7 +491,7 @@ function stopRoomHeartbeat() {
 
 function handleVisibilityChange() {
   if (document.visibilityState === 'visible') {
-    sendRoomHeartbeat({ resync: true });
+    sendRoomHeartbeat({ force: true, resync: true });
   }
 }
 
@@ -843,7 +873,7 @@ async function fetchRoom() {
 
     hasLoadedRoomOnce.value = true;
     await syncRoomPresence();
-    await sendRoomHeartbeat();
+    await sendRoomHeartbeat({ force: true });
     startRoomHeartbeat();
     redirectToGameIfStarted();
   } catch (error) {
@@ -1006,7 +1036,7 @@ async function joinRoom() {
   lastSyncedAt.value = new Date();
   announceRoomEntry();
   await syncRoomPresence();
-  await sendRoomHeartbeat();
+  await sendRoomHeartbeat({ force: true });
   startRoomHeartbeat();
   return;
 

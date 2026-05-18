@@ -4,6 +4,7 @@ const roomListChannels = new Map()
 const roomDetailChannels = new Map()
 const gameChannels = new Map()
 const ROOM_LIST_CHANNEL_KEY = 'rooms-list'
+const HEARTBEAT_REQUEST_TIMEOUT_MS = 8_000
 
 export const ROOM_PRESENCE_TIMEOUTS = {
   heartbeatIntervalMs: 10_000,
@@ -645,8 +646,17 @@ function getKickRoomPlayerErrorMessage(error) {
 }
 
 export async function heartbeatRoomPresence(roomId) {
-  const { error } = await supabase.rpc('heartbeat_room_presence', {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), HEARTBEAT_REQUEST_TIMEOUT_MS)
+  const request = supabase.rpc('heartbeat_room_presence', {
     p_room_id: roomId,
+  })
+  const heartbeatRequest =
+    typeof request.abortSignal === 'function'
+      ? request.abortSignal(controller.signal)
+      : request
+  const { error } = await Promise.resolve(heartbeatRequest).finally(() => {
+    clearTimeout(timeoutId)
   })
 
   if (error) {
