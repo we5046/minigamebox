@@ -423,6 +423,19 @@ async function sendRoomHeartbeat({ resync = false } = {}) {
       await syncRoom();
     }
   } catch (error) {
+    const rawMessage = error.cause?.message || error.supabaseError?.message || '';
+
+    if (
+      rawMessage.includes('Room participant required') ||
+      error.message?.includes('Room participant required') ||
+      error.message?.includes('방 참가자')
+    ) {
+      stopRoomHeartbeat();
+      toastStore.error('방에서 강퇴되었습니다.');
+      router.push('/home');
+      return;
+    }
+
     console.warn('[Room] Heartbeat failed.', error);
   }
 }
