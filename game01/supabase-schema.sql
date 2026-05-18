@@ -1,9 +1,0 @@
-﻿-- Legacy combined schema file
--- The game architecture has been split into:
---   - schema-base.sql
---   - game-flow.sql
---   - game-read-models.sql
---   - game-cron.sql
---
--- Keep this file only as a compatibility reference while the split files are adopted.
--- It intentionally no longer contains the duplicated or cron-managed game SQL.
