@@ -16,7 +16,9 @@ import {
   getMyRoleInfo,
   getRoom,
   getVoteStatus,
+  heartbeatRoomPresence,
   returnRoomToLobby,
+  ROOM_PRESENCE_TIMEOUTS,
   skipCurrentPhase,
   submitFinalDefenseVote,
   submitNightAction,
@@ -61,6 +63,7 @@ let unsubscribeRoom = null
 let unsubscribeGame = null
 let unsubscribeMessages = null
 let countdownTimer = null
+let roomHeartbeatTimer = null
 const uploadedLogGameIds = new Set()
 
 const roleLabels = {
@@ -503,6 +506,8 @@ async function returnToLobby(auto = false, force = false) {
   isReturningToLobby.value = true
 
   try {
+    await sendRoomHeartbeat()
+
     if (isHost.value && room.value?.status === 'game_over') {
       await returnRoomToLobby(roomId.value)
     }
@@ -541,12 +546,67 @@ async function loadRoleSideData() {
   }
 }
 
+function isMissingRoomError(error) {
+  const raw = error.cause || error.supabaseError || {}
+  return raw.code === 'PGRST116' || raw.details?.includes('0 rows')
+}
+
+async function sendRoomHeartbeat() {
+  if (!roomId.value) {
+    return false
+  }
+
+  try {
+    await heartbeatRoomPresence(roomId.value)
+    return true
+  } catch (error) {
+    const rawMessage = error.cause?.message || error.supabaseError?.message || ''
+
+    if (
+      rawMessage.includes('Room participant required') ||
+      error.message?.includes('Room participant required') ||
+      error.message?.includes('방 참가자')
+    ) {
+      await router.push('/home')
+      return false
+    }
+
+    console.warn('[Game] Heartbeat failed.', error)
+    return false
+  }
+}
+
+function startRoomHeartbeat() {
+  if (roomHeartbeatTimer) {
+    return
+  }
+
+  roomHeartbeatTimer = setInterval(() => {
+    sendRoomHeartbeat()
+  }, ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs)
+}
+
+function stopRoomHeartbeat() {
+  if (!roomHeartbeatTimer) {
+    return
+  }
+
+  clearInterval(roomHeartbeatTimer)
+  roomHeartbeatTimer = null
+}
+
 async function loadGame({ silent = false } = {}) {
   if (!silent) {
     isLoading.value = true
   }
 
   try {
+    const heartbeatOk = await sendRoomHeartbeat()
+
+    if (!heartbeatOk && route.name !== 'game-play') {
+      return
+    }
+
     const [nextRoom, nextGame, nextRole] = await Promise.all([
       getRoom(roomId.value),
       getCurrentGame(roomId.value),
@@ -574,6 +634,11 @@ async function loadGame({ silent = false } = {}) {
       router.push(`/rooms/${roomId.value}`)
     }
   } catch (error) {
+    if (isMissingRoomError(error)) {
+      await router.push('/home')
+      return
+    }
+
     toastStore.error(error.message)
   } finally {
     if (!silent) {
@@ -763,6 +828,7 @@ watch(roleKey, () => {
 
 onMounted(async () => {
   await loadGame()
+  startRoomHeartbeat()
   await loadMessages()
   nextTick(focusChatInput)
 
@@ -793,6 +859,7 @@ onBeforeUnmount(() => {
   unsubscribeGame?.()
   unsubscribeMessages?.()
   if (countdownTimer) clearInterval(countdownTimer)
+  stopRoomHeartbeat()
 })
 </script>
 
