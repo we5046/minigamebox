@@ -16,6 +16,7 @@ import {
   heartbeatRoomPresence,
   joinRoom as joinRoomRequest,
   leaveRoom as leaveRoomRequest,
+  ROOM_PRESENCE_TIMEOUTS,
   setPlayerReady,
   startGame as startGameRequest,
   subscribeToRoom,
@@ -431,7 +432,11 @@ function startRoomHeartbeat() {
 
   roomHeartbeatTimer = setInterval(() => {
     sendRoomHeartbeat();
+<<<<<<< HEAD
   }, ROOM_HEARTBEAT_INTERVAL_MS);
+=======
+  }, ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs);
+>>>>>>> e7811b4 (문제사항수정)
 }
 
 function stopRoomHeartbeat() {

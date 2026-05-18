@@ -6,6 +6,12 @@ const gameChannels = new Map()
 const ROOM_LIST_CHANNEL_KEY = 'rooms-list'
 const ROOM_PLAYER_STALE_MS = 45_000
 
+export const ROOM_PRESENCE_TIMEOUTS = {
+  heartbeatIntervalMs: 10_000,
+  waitingStaleSeconds: 25,
+  gameStaleSeconds: 50,
+}
+
 export const DEFAULT_ROOM_DETAIL_SETTINGS = {
   nightTimeSeconds: 30,
   discussionTimeSeconds: 60,
@@ -20,7 +26,14 @@ export const DEFAULT_ROOM_DETAIL_SETTINGS = {
 function toPlayer(row) {
   const lastSeenAt = row.last_seen_at || row.joined_at
   const lastSeenTime = lastSeenAt ? new Date(lastSeenAt).getTime() : 0
+<<<<<<< HEAD
   const isStale = lastSeenTime > 0 && Date.now() - lastSeenTime > ROOM_PLAYER_STALE_MS
+=======
+  const staleMs = ROOM_PRESENCE_TIMEOUTS[
+    row.room_status === 'waiting' ? 'waitingStaleSeconds' : 'gameStaleSeconds'
+  ] * 1000
+  const isStale = lastSeenTime > 0 && Date.now() - lastSeenTime > staleMs
+>>>>>>> e7811b4 (문제사항수정)
   const connectionStatus = isStale ? 'disconnected' : row.connection_status || 'active'
 
   return {
@@ -42,7 +55,11 @@ function toPlayer(row) {
 
 export function normalizeRoom(room) {
   const allPlayers = (room.room_players || [])
+<<<<<<< HEAD
     .map(toPlayer)
+=======
+    .map((player) => toPlayer({ ...player, room_status: room.status }))
+>>>>>>> e7811b4 (문제사항수정)
     .sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt))
   const players =
     room.status === 'waiting'
@@ -605,9 +622,19 @@ export async function heartbeatRoomPresence(roomId) {
   }
 }
 
+<<<<<<< HEAD
 export async function cleanupStaleRoomPlayers(staleAfterSeconds = 45) {
   const { data, error } = await supabase.rpc('cleanup_stale_room_players', {
     p_stale_after_seconds: staleAfterSeconds,
+=======
+export async function cleanupStaleRoomPlayers({
+  waitingStaleSeconds = ROOM_PRESENCE_TIMEOUTS.waitingStaleSeconds,
+  gameStaleSeconds = ROOM_PRESENCE_TIMEOUTS.gameStaleSeconds,
+} = {}) {
+  const { data, error } = await supabase.rpc('cleanup_stale_room_players', {
+    p_waiting_stale_after_seconds: waitingStaleSeconds,
+    p_game_stale_after_seconds: gameStaleSeconds,
+>>>>>>> e7811b4 (문제사항수정)
   })
 
   if (error) {
