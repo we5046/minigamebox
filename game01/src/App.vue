@@ -11,7 +11,9 @@ const route = useRoute()
 const authStore = useAuthStore()
 
 const isAuthenticated = computed(() => !!authStore.user)
-const showAppNav = computed(() => isAuthenticated.value && !route.meta.requiresGuest)
+const showAppNav = computed(
+  () => isAuthenticated.value && route.name === 'home',
+)
 const brandTarget = computed(() => (isAuthenticated.value ? '/home' : '/login'))
 
 watch(
