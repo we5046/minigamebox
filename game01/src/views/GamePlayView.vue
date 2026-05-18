@@ -335,6 +335,69 @@ const resultWinnerLabel = computed(() =>
   resultWinner.value === 'mafia' ? '마피아 팀 승리' : '시민 팀 승리',
 )
 const resultWinnerAccent = computed(() => (resultWinner.value === 'mafia' ? 'mafia' : 'citizen'))
+const myResultPlayer = computed(
+  () => resultPlayers.value.find((player) => player.user_id === savedUser.value?.id) || null,
+)
+const myContributionStats = computed(() => {
+  const logs = Array.isArray(myResultPlayer.value?.logs) ? myResultPlayer.value.logs : []
+
+  return {
+    nightActions: logs.filter((log) => log.includes(' 밤: ')).length,
+    votes: logs.filter((log) => log.includes(' 투표: ')).length,
+    checks: logs.filter((log) => log.includes('조사했습니다')).length,
+    saves: logs.filter((log) => log.includes('보호했습니다')).length,
+    attacks: logs.filter((log) => log.includes('제거 대상으로 선택했습니다')).length,
+  }
+})
+const myContributionSummary = computed(() => {
+  const player = myResultPlayer.value
+
+  if (!player) {
+    return {
+      title: '기여 기록을 찾지 못했습니다.',
+      description: '이번 게임 결과에 내 플레이 기록이 아직 반영되지 않았습니다.',
+      items: [],
+    }
+  }
+
+  const roleLabel = roleLabels[player.role] || player.role || '알 수 없음'
+  const outcome = player.is_winner ? '승리 팀에 기여했습니다.' : '패배했지만 게임에 참여했습니다.'
+  const survival = player.is_alive ? '끝까지 생존했습니다.' : '게임 도중 사망했습니다.'
+  const items = [
+    `${roleLabel} 역할로 ${outcome}`,
+    survival,
+  ]
+
+  if (myContributionStats.value.nightActions > 0) {
+    items.push(`밤 행동 ${myContributionStats.value.nightActions}회 수행`)
+  }
+
+  if (myContributionStats.value.votes > 0) {
+    items.push(`처형 투표 ${myContributionStats.value.votes}회 참여`)
+  }
+
+  if (myContributionStats.value.checks > 0) {
+    items.push(`경찰 조사 ${myContributionStats.value.checks}회 수행`)
+  }
+
+  if (myContributionStats.value.saves > 0) {
+    items.push(`의사 보호 ${myContributionStats.value.saves}회 수행`)
+  }
+
+  if (myContributionStats.value.attacks > 0) {
+    items.push(`마피아 습격 선택 ${myContributionStats.value.attacks}회 참여`)
+  }
+
+  if (items.length === 2) {
+    items.push('기록된 능력/투표 행동은 없습니다.')
+  }
+
+  return {
+    title: `${roleLabel}로 ${player.is_winner ? '승리' : '패배'}`,
+    description: `${player.nickname}님의 이번 게임 기여 요약입니다.`,
+    items,
+  }
+})
 const returnToLobbySeconds = computed(() => {
   if (!isGameOverScreen.value || !game.value?.return_to_lobby_at) {
     return 0
@@ -790,6 +853,17 @@ onBeforeUnmount(() => {
             <button type="button" class="return-button" :disabled="isReturningToLobby" @click="returnToLobbyNow">
               지금 대기방으로 돌아가기
             </button>
+          </section>
+
+          <section class="result-panel my-contribution-panel">
+            <span class="section-kicker">내 기여</span>
+            <div class="my-contribution-summary">
+              <strong>{{ myContributionSummary.title }}</strong>
+              <p>{{ myContributionSummary.description }}</p>
+            </div>
+            <ul class="my-contribution-list">
+              <li v-for="item in myContributionSummary.items" :key="item">{{ item }}</li>
+            </ul>
           </section>
         </div>
 
@@ -1644,7 +1718,7 @@ button:disabled {
 .game-over-grid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .result-panel {
@@ -1730,6 +1804,45 @@ button:disabled {
   font-weight: 900;
   min-height: 48px;
   padding: 0.72rem 1rem;
+}
+
+.my-contribution-panel {
+  border-color: rgba(52, 211, 153, 0.25);
+}
+
+.my-contribution-summary {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(52, 211, 153, 0.16);
+  border-radius: 10px;
+  display: grid;
+  gap: 0.28rem;
+  padding: 0.8rem;
+}
+
+.my-contribution-summary strong {
+  color: #bbf7d0;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.my-contribution-summary p {
+  color: rgba(255, 245, 224, 0.72);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.my-contribution-list {
+  color: rgba(255, 245, 224, 0.84);
+  display: grid;
+  gap: 0.42rem;
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.my-contribution-list li::marker {
+  color: #86efac;
 }
 
 .player-result-panel {
@@ -2058,6 +2171,10 @@ button:disabled {
 
 @media (max-width: 980px) {
   .game-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .game-over-grid {
     grid-template-columns: 1fr;
   }
 
