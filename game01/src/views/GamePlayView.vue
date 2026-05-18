@@ -52,6 +52,7 @@ const isEnding = ref(false)
 const isReturningToLobby = ref(false)
 const isEndConfirmOpen = ref(false)
 const nowTick = ref(Date.now())
+const fallbackReturnToLobbyAt = ref(null)
 const chatMessagesRef = ref(null)
 const chatInputRef = ref(null)
 const lastExpiredSyncAt = ref(0)
@@ -399,13 +400,21 @@ const myContributionSummary = computed(() => {
   }
 })
 const returnToLobbySeconds = computed(() => {
-  if (!isGameOverScreen.value || !game.value?.return_to_lobby_at) {
+  const returnAt = game.value?.return_to_lobby_at || fallbackReturnToLobbyAt.value
+
+  if (!isGameOverScreen.value || !returnAt) {
+    return 0
+  }
+
+  const returnAtTime = new Date(returnAt).getTime()
+
+  if (Number.isNaN(returnAtTime)) {
     return 0
   }
 
   return Math.max(
     0,
-    Math.ceil((new Date(game.value.return_to_lobby_at).getTime() - nowTick.value) / 1000),
+    Math.ceil((returnAtTime - nowTick.value) / 1000),
   )
 })
 
@@ -551,12 +560,17 @@ async function loadGame({ silent = false } = {}) {
     await loadRoleSideData()
 
     if (nextGame?.status === 'ended') {
+      if (!nextGame.return_to_lobby_at && !fallbackReturnToLobbyAt.value) {
+        fallbackReturnToLobbyAt.value = new Date(Date.now() + 15000).toISOString()
+      }
+
       await loadGameResult(nextGame.id)
     } else {
       gameResult.value = null
+      fallbackReturnToLobbyAt.value = null
     }
 
-    if (nextRoom.status === 'waiting' || nextRoom.phase === 'before_start') {
+    if (nextGame?.status !== 'ended' && (nextRoom.status === 'waiting' || nextRoom.phase === 'before_start')) {
       router.push(`/rooms/${roomId.value}`)
     }
   } catch (error) {
