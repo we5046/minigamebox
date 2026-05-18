@@ -332,6 +332,7 @@ const selectedParticipantId = computed(() =>
 const isGameOverScreen = computed(
   () => game.value?.status === 'ended' || room.value?.status === 'game_over',
 )
+const hasGameResult = computed(() => Boolean(gameResult.value?.summary))
 
 const resultSummary = computed(() => gameResult.value?.summary || null)
 const resultPlayers = computed(() => (Array.isArray(resultSummary.value?.players) ? resultSummary.value.players : []))
@@ -482,7 +483,12 @@ async function loadGameResult(gameId) {
 }
 
 async function maybeReturnToLobby() {
-  if (!isGameOverScreen.value || returnToLobbySeconds.value > 0 || isReturningToLobby.value) {
+  if (
+    !isGameOverScreen.value ||
+    !hasGameResult.value ||
+    returnToLobbySeconds.value > 0 ||
+    isReturningToLobby.value
+  ) {
     return
   }
 
@@ -647,12 +653,14 @@ async function loadGame({ silent = false } = {}) {
 
     await loadRoleSideData()
 
-    if (nextGame?.status === 'ended') {
-      if (!nextGame.return_to_lobby_at && !fallbackReturnToLobbyAt.value) {
-        fallbackReturnToLobbyAt.value = new Date(Date.now() + 15000).toISOString()
+    if (nextGame?.status === 'ended' || nextRoom.status === 'game_over') {
+      if (!nextGame?.return_to_lobby_at && !fallbackReturnToLobbyAt.value) {
+        fallbackReturnToLobbyAt.value = new Date(Date.now() + 60000).toISOString()
       }
 
-      await loadGameResult(nextGame.id)
+      if (nextGame?.id) {
+        await loadGameResult(nextGame.id)
+      }
     } else {
       gameResult.value = null
       fallbackReturnToLobbyAt.value = null
