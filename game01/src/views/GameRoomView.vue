@@ -82,6 +82,8 @@ let roomHeartbeatTimer = null;
 let roomHeartbeatPromise = null;
 let roomHeartbeatFailureCount = 0;
 let nextRoomHeartbeatAt = 0;
+let roomTransitionPollTimer = null;
+let roomSyncPromise = null;
 let sentInviteRefreshTimer = null;
 let inviteCountdownTimer = null;
 let unsubscribePresenceUsers = null;
@@ -495,6 +497,31 @@ function handleVisibilityChange() {
   }
 }
 
+function startRoomTransitionPolling() {
+  if (roomTransitionPollTimer) {
+    return;
+  }
+
+  roomTransitionPollTimer = setInterval(() => {
+    if (
+      route.name === 'game-room' &&
+      room.value?.status === 'waiting' &&
+      !isUpdating.value
+    ) {
+      syncRoom();
+    }
+  }, 3_000);
+}
+
+function stopRoomTransitionPolling() {
+  if (!roomTransitionPollTimer) {
+    return;
+  }
+
+  clearInterval(roomTransitionPollTimer);
+  roomTransitionPollTimer = null;
+}
+
 onMounted(() => {
   unsubscribePresenceUsers = subscribeToPresenceUsers((users) => {
     presenceUsers.value = users;
@@ -515,6 +542,7 @@ onMounted(() => {
     inviteCountdownTick.value = Date.now();
   }, 1000);
   unsubscribeRoom = subscribeToRoom(props.roomId, handleRoomRealtimeEvent);
+  startRoomTransitionPolling();
   document.addEventListener('visibilitychange', handleVisibilityChange);
 });
 
@@ -525,6 +553,7 @@ onBeforeUnmount(() => {
   publicChatChannel.value = null;
   unsubscribePresenceUsers?.();
   stopRoomHeartbeat();
+  stopRoomTransitionPolling();
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   if (syncTimer) {
     clearTimeout(syncTimer);
@@ -1009,21 +1038,29 @@ async function syncRoom() {
     return;
   }
 
-  try {
-    room.value = await getRoom(props.roomId);
-    lastSyncedAt.value = new Date();
-    await syncRoomPresence();
-    redirectToGameIfStarted();
-  } catch (error) {
-    if (
-      error.message.includes('Not Found') ||
-      error.message.includes('Failed to load room')
-    ) {
-      router.push('/home');
-      return;
-    }
-    toastStore.error(error.message);
+  if (!roomSyncPromise) {
+    roomSyncPromise = (async () => {
+      try {
+        room.value = await getRoom(props.roomId);
+        lastSyncedAt.value = new Date();
+        await syncRoomPresence();
+        redirectToGameIfStarted();
+      } catch (error) {
+        if (
+          error.message.includes('Not Found') ||
+          error.message.includes('Failed to load room')
+        ) {
+          router.push('/home');
+          return;
+        }
+        toastStore.error(error.message);
+      } finally {
+        roomSyncPromise = null;
+      }
+    })();
   }
+
+  await roomSyncPromise;
 }
 
 async function joinRoom() {
@@ -1086,6 +1123,7 @@ function redirectToGameIfStarted() {
     room.value?.status === 'playing' &&
     route.name !== 'game-play'
   ) {
+    stopRoomTransitionPolling();
     router.push(`/rooms/${props.roomId}/game`);
   }
 }
