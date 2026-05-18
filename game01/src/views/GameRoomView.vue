@@ -21,8 +21,10 @@ import {
   updateRoom,
 } from '@/api/roomApi';
 import {
+  subscribeToPublicChat,
   subscribeToRoomChat,
   sendRoomChatMessage,
+  sendWhisperChatMessage,
   normalizeBroadcastMessage,
 } from '@/api/chatApi';
 import {
@@ -70,13 +72,16 @@ const inviteSearchQuery = ref('');
 
 let unsubscribeRoom = null;
 let roomChatSubscription = null;
+let publicChatSubscription = null;
 let syncTimer = null;
 let sentInviteRefreshTimer = null;
 let inviteCountdownTimer = null;
 let unsubscribePresenceUsers = null;
 const chatChannel = ref(null);
+const publicChatChannel = ref(null);
 const hasAnnouncedEntry = ref(false);
 const inviteCountdownTick = ref(Date.now());
+const lastWhisperReplyTarget = ref(null);
 
 const chatMessages = ref([
   {
@@ -396,7 +401,7 @@ async function syncRoomPresence() {
     nickname: savedUser.value.nickname,
     status: room.value.status === 'playing' ? 'playing' : 'room',
     roomId: props.roomId,
-    canReceiveWhisper: true,
+    canReceiveWhisper: room.value.status !== 'playing',
   });
 }
 
@@ -408,6 +413,9 @@ onMounted(() => {
   const sub = subscribeToRoomChat(props.roomId, handleChatEvent);
   roomChatSubscription = sub.unsubscribe;
   chatChannel.value = sub.channel;
+  const publicSub = subscribeToPublicChat(handlePublicChatEvent);
+  publicChatSubscription = publicSub.unsubscribe;
+  publicChatChannel.value = publicSub.channel;
 
   fetchRoom();
   loadInviteFriends();
@@ -422,6 +430,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unsubscribeRoom?.();
   roomChatSubscription?.();
+  publicChatSubscription?.();
+  publicChatChannel.value = null;
   unsubscribePresenceUsers?.();
   if (syncTimer) {
     clearTimeout(syncTimer);
@@ -460,11 +470,203 @@ function handleChatEvent(payload) {
   scrollToBottom();
 }
 
+function handlePublicChatEvent(payload) {
+  if (payload?.type === 'subscription-status') return;
+  if (!payload?.payload) return;
+
+  const message = normalizeBroadcastMessage(payload.payload);
+
+  if (!message.isWhisper) {
+    return;
+  }
+
+  if (
+    message.userId !== savedUser.value?.id &&
+    message.targetUserId !== savedUser.value?.id
+  ) {
+    return;
+  }
+
+  if (
+    message.targetUserId === savedUser.value?.id &&
+    message.userId !== savedUser.value?.id
+  ) {
+    lastWhisperReplyTarget.value = {
+      id: message.userId,
+      nickname: message.nickname,
+    };
+  }
+
+  chatMessages.value.push(message);
+  scrollToBottom();
+}
+
+function normalizeMemberNickname(nickname) {
+  return String(nickname || '')
+    .trim()
+    .toLowerCase();
+}
+
+function getWhisperMembers() {
+  const members = new Map();
+
+  presenceUsers.value.forEach((user) => {
+    if (user?.id && user?.nickname) {
+      members.set(user.id, user);
+    }
+  });
+
+  friendships.value
+    .filter((friendship) => friendship.status === 'accepted')
+    .forEach((friendship) => {
+      const friend = friendship.friend;
+
+      if (friend?.id && friend?.nickname) {
+        members.set(friend.id, friend);
+      }
+    });
+
+  if (lastWhisperReplyTarget.value?.id) {
+    members.set(lastWhisperReplyTarget.value.id, lastWhisperReplyTarget.value);
+  }
+
+  return [...members.values()];
+}
+
+function findWhisperMemberByNickname(nickname) {
+  const normalizedNickname = normalizeMemberNickname(nickname);
+
+  if (!normalizedNickname) {
+    return null;
+  }
+
+  return (
+    getWhisperMembers().find(
+      (member) =>
+        normalizeMemberNickname(member.nickname) === normalizedNickname,
+    ) || null
+  );
+}
+
+function parseChatCommand(content) {
+  const whisperMatch = content.match(/^\/(?:귓속말|w)\s+(\S+)\s+([\s\S]+)$/);
+
+  if (whisperMatch) {
+    const whisperContent = whisperMatch[2].trim();
+
+    if (!whisperContent) {
+      return {
+        type: 'error',
+        message: '사용법: /귓속말 대상닉네임 메시지 또는 /w 대상닉네임 메시지',
+      };
+    }
+
+    return {
+      type: 'whisper',
+      nickname: whisperMatch[1],
+      content: whisperContent,
+    };
+  }
+
+  if (
+    content === '/귓속말' ||
+    content.startsWith('/귓속말 ') ||
+    content === '/w' ||
+    content.startsWith('/w ')
+  ) {
+    return {
+      type: 'error',
+      message: '사용법: /귓속말 대상닉네임 메시지 또는 /w 대상닉네임 메시지',
+    };
+  }
+
+  const replyMatch = content.match(/^\/(?:r|답장)\s+([\s\S]+)$/);
+
+  if (replyMatch) {
+    const replyContent = replyMatch[1].trim();
+
+    if (!replyContent) {
+      return {
+        type: 'error',
+        message: '사용법: /r 메시지 또는 /답장 메시지',
+      };
+    }
+
+    return {
+      type: 'reply',
+      content: replyContent,
+    };
+  }
+
+  if (content === '/r' || content === '/답장') {
+    return {
+      type: 'error',
+      message: '사용법: /r 메시지 또는 /답장 메시지',
+    };
+  }
+
+  return null;
+}
+
+async function sendWhisperToTarget(target, content) {
+  if (room.value?.status === 'playing') {
+    throw new Error('게임 진행 중인 방에서는 귓속말을 보낼 수 없습니다.');
+  }
+
+  if (!target?.id || target.id === savedUser.value?.id) {
+    throw new Error('귓속말 대상을 선택할 수 없습니다.');
+  }
+
+  const targetPresence = presenceUsers.value.find((user) => user.id === target.id);
+  if (!targetPresence?.canReceiveWhisper) {
+    throw new Error('[상대방이 채팅을 볼 수 없는 상태입니다.]');
+  }
+
+  await sendWhisperChatMessage(publicChatChannel.value, {
+    userId: savedUser.value.id,
+    nickname: currentPlayer.value?.nickname || savedUser.value.nickname,
+    targetUserId: target.id,
+    targetNickname: target.nickname,
+    content,
+  });
+}
+
 async function submitChat() {
   const content = chatDraft.value.trim();
   if (!content || !savedUser.value || !chatChannel.value) return;
 
   try {
+    const command = parseChatCommand(content);
+
+    if (command?.type === 'error') {
+      toastStore.error(command.message);
+      return;
+    }
+
+    if (command?.type === 'whisper') {
+      const target = findWhisperMemberByNickname(command.nickname);
+
+      if (!target) {
+        toastStore.error(`${command.nickname}을(를) 로비 유저 또는 친구 목록에서 찾을 수 없습니다.`);
+        return;
+      }
+
+      await sendWhisperToTarget(target, command.content);
+      chatDraft.value = '';
+      return;
+    }
+
+    if (command?.type === 'reply') {
+      if (!lastWhisperReplyTarget.value) {
+        toastStore.error('답장할 귓속말 대상이 없습니다.');
+        return;
+      }
+
+      await sendWhisperToTarget(lastWhisperReplyTarget.value, command.content);
+      chatDraft.value = '';
+      return;
+    }
+
     await sendRoomChatMessage(chatChannel.value, {
       userId: savedUser.value.id,
       nickname: currentPlayer.value?.nickname || savedUser.value.nickname,
@@ -1792,7 +1994,7 @@ async function leaveRoom() {
             v-for="msg in chatMessages"
             :key="msg.id"
             class="chat-message"
-            :class="{ 'system-message': msg.isSystem }"
+            :class="{ 'system-message': msg.isSystem, whisper: msg.isWhisper }"
           >
             <span class="chat-time">[{{ msg.createdAt }}]</span>
             <template v-if="msg.isSystem">
@@ -1806,7 +2008,8 @@ async function leaveRoom() {
                   host: room.hostUserId === msg.userId,
                 }"
               >
-                {{ msg.nickname }}:
+                <span v-if="msg.isWhisper" class="whisper-label">귓속말</span>
+                {{ msg.isWhisper ? `${msg.nickname} → ${msg.targetNickname}` : msg.nickname }}:
               </strong>
               <span class="chat-content">{{ msg.content }}</span>
             </template>
@@ -1816,7 +2019,7 @@ async function leaveRoom() {
           <input
             v-model="chatDraft"
             type="text"
-            placeholder="메시지를 입력하세요..."
+            placeholder="메시지 또는 /w 대상닉네임 메시지"
             maxlength="200"
             :disabled="!chatChannel"
           />
@@ -3221,6 +3424,10 @@ async function leaveRoom() {
   word-break: break-all;
 }
 
+.chat-message.whisper {
+  color: #f9a8d4;
+}
+
 .chat-time {
   color: rgba(255, 255, 255, 0.3);
   font-size: 0.75rem;
@@ -3238,8 +3445,20 @@ async function leaveRoom() {
   color: #86efac;
 }
 
+.whisper-label {
+  display: inline-block;
+  margin-right: 0.35rem;
+  color: #f9a8d4;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
 .chat-content {
   color: rgba(255, 245, 224, 0.9);
+}
+
+.chat-message.whisper .chat-content {
+  color: #fbcfe8;
 }
 
 .system-message .chat-content.system {
