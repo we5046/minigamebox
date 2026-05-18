@@ -990,7 +990,7 @@ function findWhisperMemberByNickname(nickname) {
 }
 
 function parseChatCommand(content) {
-  const whisperMatch = content.match(/^\/귓속말\s+(\S+)\s+([\s\S]+)$/);
+  const whisperMatch = content.match(/^\/(?:귓속말|w)\s+(\S+)\s+([\s\S]+)$/);
 
   if (whisperMatch) {
     const whisperContent = whisperMatch[2].trim();
@@ -998,7 +998,7 @@ function parseChatCommand(content) {
     if (!whisperContent) {
       return {
         type: 'error',
-        message: '사용법: /귓속말 대상닉네임 메시지',
+        message: '사용법: /귓속말 대상닉네임 메시지 또는 /w 대상닉네임 메시지',
       };
     }
 
@@ -1009,10 +1009,15 @@ function parseChatCommand(content) {
     };
   }
 
-  if (content === '/귓속말' || content.startsWith('/귓속말 ')) {
+  if (
+    content === '/귓속말' ||
+    content.startsWith('/귓속말 ') ||
+    content === '/w' ||
+    content.startsWith('/w ')
+  ) {
     return {
       type: 'error',
-      message: '사용법: /귓속말 대상닉네임 메시지',
+      message: '사용법: /귓속말 대상닉네임 메시지 또는 /w 대상닉네임 메시지',
     };
   }
 
