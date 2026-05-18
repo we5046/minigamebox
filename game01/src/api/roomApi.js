@@ -4,6 +4,7 @@ const roomListChannels = new Map()
 const roomDetailChannels = new Map()
 const gameChannels = new Map()
 const ROOM_LIST_CHANNEL_KEY = 'rooms-list'
+const ROOM_PLAYER_STALE_MS = 45_000
 
 export const DEFAULT_ROOM_DETAIL_SETTINGS = {
   nightTimeSeconds: 30,
@@ -17,6 +18,11 @@ export const DEFAULT_ROOM_DETAIL_SETTINGS = {
 }
 
 function toPlayer(row) {
+  const lastSeenAt = row.last_seen_at || row.joined_at
+  const lastSeenTime = lastSeenAt ? new Date(lastSeenAt).getTime() : 0
+  const isStale = lastSeenTime > 0 && Date.now() - lastSeenTime > ROOM_PLAYER_STALE_MS
+  const connectionStatus = isStale ? 'disconnected' : row.connection_status || 'active'
+
   return {
     userId: row.user_id,
     nickname: row.profiles?.nickname || '알 수 없음',
@@ -26,14 +32,22 @@ function toPlayer(row) {
     isHost: row.is_host,
     isReady: row.is_ready,
     isAlive: row.is_alive !== false,
+    connectionStatus,
+    isConnected: connectionStatus === 'active',
+    lastSeenAt,
+    disconnectedAt: row.disconnected_at || null,
     joinedAt: row.joined_at,
   }
 }
 
 export function normalizeRoom(room) {
-  const players = (room.room_players || [])
+  const allPlayers = (room.room_players || [])
     .map(toPlayer)
     .sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt))
+  const players =
+    room.status === 'waiting'
+      ? allPlayers.filter((player) => player.isConnected)
+      : allPlayers
   const hostPlayer = players.find((player) => player.userId === room.host_user_id)
 
   return {
@@ -100,6 +114,9 @@ const roomSelect = `
     is_host,
     is_ready,
     is_alive,
+    connection_status,
+    last_seen_at,
+    disconnected_at,
     joined_at,
     profiles (
       nickname,
@@ -111,6 +128,8 @@ const roomSelect = `
 `
 
 export async function getRooms() {
+  await cleanupStaleRoomPlayers().catch(() => {})
+
   const { data, error } = await supabase
     .from('rooms')
     .select(roomSelect)
@@ -124,6 +143,8 @@ export async function getRooms() {
 }
 
 export async function getRoom(roomId) {
+  await cleanupStaleRoomPlayers().catch(() => {})
+
   const { data, error } = await supabase.from('rooms').select(roomSelect).eq('id', roomId).single()
 
   if (error) {
@@ -572,6 +593,28 @@ export async function leaveRoom(roomId) {
   }
 
   return null
+}
+
+export async function heartbeatRoomPresence(roomId) {
+  const { error } = await supabase.rpc('heartbeat_room_presence', {
+    p_room_id: roomId,
+  })
+
+  if (error) {
+    throw createSupabaseError('heartbeatRoomPresence: heartbeat_room_presence rpc failed', error, '방 접속 상태를 갱신하지 못했습니다.')
+  }
+}
+
+export async function cleanupStaleRoomPlayers(staleAfterSeconds = 45) {
+  const { data, error } = await supabase.rpc('cleanup_stale_room_players', {
+    p_stale_after_seconds: staleAfterSeconds,
+  })
+
+  if (error) {
+    throw createSupabaseError('cleanupStaleRoomPlayers: cleanup_stale_room_players rpc failed', error, '만료된 방 참가자 정리에 실패했습니다.')
+  }
+
+  return data || 0
 }
 
 export async function deleteRoom(roomId) {

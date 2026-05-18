@@ -13,6 +13,7 @@ import { useRoomStore } from '@/stores/room';
 import { useToastStore } from '@/stores/toast';
 import {
   getRoom,
+  heartbeatRoomPresence,
   joinRoom as joinRoomRequest,
   leaveRoom as leaveRoomRequest,
   setPlayerReady,
@@ -74,6 +75,7 @@ let unsubscribeRoom = null;
 let roomChatSubscription = null;
 let publicChatSubscription = null;
 let syncTimer = null;
+let roomHeartbeatTimer = null;
 let sentInviteRefreshTimer = null;
 let inviteCountdownTimer = null;
 let unsubscribePresenceUsers = null;
@@ -82,6 +84,7 @@ const publicChatChannel = ref(null);
 const hasAnnouncedEntry = ref(false);
 const inviteCountdownTick = ref(Date.now());
 const lastWhisperReplyTarget = ref(null);
+const ROOM_HEARTBEAT_INTERVAL_MS = 15000;
 
 const chatMessages = ref([
   {
@@ -405,6 +408,47 @@ async function syncRoomPresence() {
   });
 }
 
+async function sendRoomHeartbeat({ resync = false } = {}) {
+  if (!savedUser.value || !room.value?.id) {
+    return;
+  }
+
+  try {
+    await heartbeatRoomPresence(props.roomId);
+
+    if (resync) {
+      await syncRoom();
+    }
+  } catch (error) {
+    console.warn('[Room] Heartbeat failed.', error);
+  }
+}
+
+function startRoomHeartbeat() {
+  if (roomHeartbeatTimer) {
+    return;
+  }
+
+  roomHeartbeatTimer = setInterval(() => {
+    sendRoomHeartbeat();
+  }, ROOM_HEARTBEAT_INTERVAL_MS);
+}
+
+function stopRoomHeartbeat() {
+  if (!roomHeartbeatTimer) {
+    return;
+  }
+
+  clearInterval(roomHeartbeatTimer);
+  roomHeartbeatTimer = null;
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    sendRoomHeartbeat({ resync: true });
+  }
+}
+
 onMounted(() => {
   unsubscribePresenceUsers = subscribeToPresenceUsers((users) => {
     presenceUsers.value = users;
@@ -425,6 +469,7 @@ onMounted(() => {
     inviteCountdownTick.value = Date.now();
   }, 1000);
   unsubscribeRoom = subscribeToRoom(props.roomId, handleRoomRealtimeEvent);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 });
 
 onBeforeUnmount(() => {
@@ -433,6 +478,8 @@ onBeforeUnmount(() => {
   publicChatSubscription?.();
   publicChatChannel.value = null;
   unsubscribePresenceUsers?.();
+  stopRoomHeartbeat();
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
   if (syncTimer) {
     clearTimeout(syncTimer);
   }
@@ -702,6 +749,8 @@ async function fetchRoom() {
     }
 
     await syncRoomPresence();
+    await sendRoomHeartbeat();
+    startRoomHeartbeat();
     redirectToGameIfStarted();
   } catch (error) {
     toastStore.error(error.message);
@@ -863,6 +912,8 @@ async function joinRoom() {
   lastSyncedAt.value = new Date();
   announceRoomEntry();
   await syncRoomPresence();
+  await sendRoomHeartbeat();
+  startRoomHeartbeat();
   return;
 
   // Send enter message
@@ -963,8 +1014,33 @@ function scheduleSyncRoom() {
   }, 120);
 }
 
+function isHeartbeatOnlyRoomPlayerUpdate(payload) {
+  if (payload?.table !== 'room_players' || payload?.eventType !== 'UPDATE') {
+    return false;
+  }
+
+  const previous = payload.old || {};
+  const next = payload.new || {};
+  const visibleFields = [
+    'user_id',
+    'is_host',
+    'is_ready',
+    'role',
+    'is_alive',
+    'connection_status',
+    'disconnected_at',
+    'joined_at',
+  ];
+
+  return visibleFields.every((field) => previous[field] === next[field]);
+}
+
 function handleRoomRealtimeEvent(payload) {
   if (payload?.type === 'subscription-status') {
+    return;
+  }
+
+  if (isHeartbeatOnlyRoomPlayerUpdate(payload)) {
     return;
   }
 
@@ -1230,6 +1306,7 @@ async function leaveRoom() {
   }
 
   isUpdating.value = true;
+  stopRoomHeartbeat();
 
   // Send leave message
   if (chatChannel.value) {
@@ -1929,7 +2006,10 @@ async function leaveRoom() {
             v-for="player in players"
             :key="player.userId"
             class="player-card"
-            :class="{ 'is-me': player.userId === savedUser?.id }"
+            :class="{
+              'is-me': player.userId === savedUser?.id,
+              disconnected: player.isConnected === false,
+            }"
           >
             <div class="player-avatar-wrapper">
               <img
@@ -1956,7 +2036,7 @@ async function leaveRoom() {
                 class="badge ready-badge"
                 :class="{ active: player.isReady }"
               >
-                {{ player.isReady ? 'READY' : 'WAIT' }}
+                {{ player.isConnected === false ? 'OFFLINE' : player.isReady ? 'READY' : 'WAIT' }}
               </span>
             </div>
           </li>
@@ -3243,6 +3323,14 @@ async function leaveRoom() {
   );
 }
 
+.player-card.disconnected {
+  opacity: 0.58;
+}
+
+.player-card.disconnected .player-avatar {
+  filter: grayscale(1);
+}
+
 .player-avatar-wrapper {
   position: relative;
   width: 48px;
@@ -3322,6 +3410,12 @@ async function leaveRoom() {
   color: #86efac;
   border-color: rgba(34, 197, 94, 0.4);
   box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
+}
+
+.player-card.disconnected .ready-badge {
+  background: rgba(148, 163, 184, 0.14);
+  border-color: rgba(148, 163, 184, 0.28);
+  color: rgba(226, 232, 240, 0.72);
 }
 
 .empty-slot {
