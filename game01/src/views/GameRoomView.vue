@@ -15,6 +15,7 @@ import {
   getRoom,
   heartbeatRoomPresence,
   joinRoom as joinRoomRequest,
+  kickRoomPlayer,
   leaveRoom as leaveRoomRequest,
   ROOM_PRESENCE_TIMEOUTS,
   setPlayerReady,
@@ -54,6 +55,7 @@ const room = ref(null);
 const isLoading = ref(false);
 const isUpdating = ref(false);
 const isEditingRoom = ref(false);
+const hasLoadedRoomOnce = ref(false);
 const editRoomTitle = ref('');
 const editRoomDescription = ref('');
 const editRoomMaxPlayers = ref(8);
@@ -80,12 +82,12 @@ let roomHeartbeatTimer = null;
 let sentInviteRefreshTimer = null;
 let inviteCountdownTimer = null;
 let unsubscribePresenceUsers = null;
+let isLeavingRoomExplicitly = false;
 const chatChannel = ref(null);
 const publicChatChannel = ref(null);
 const hasAnnouncedEntry = ref(false);
 const inviteCountdownTick = ref(Date.now());
 const lastWhisperReplyTarget = ref(null);
-const ROOM_HEARTBEAT_INTERVAL_MS = 15000;
 
 const chatMessages = ref([
   {
@@ -421,6 +423,19 @@ async function sendRoomHeartbeat({ resync = false } = {}) {
       await syncRoom();
     }
   } catch (error) {
+    const rawMessage = error.cause?.message || error.supabaseError?.message || '';
+
+    if (
+      rawMessage.includes('Room participant required') ||
+      error.message?.includes('Room participant required') ||
+      error.message?.includes('방 참가자')
+    ) {
+      stopRoomHeartbeat();
+      toastStore.error('방에서 강퇴되었습니다.');
+      router.push('/home');
+      return;
+    }
+
     console.warn('[Room] Heartbeat failed.', error);
   }
 }
@@ -432,11 +447,7 @@ function startRoomHeartbeat() {
 
   roomHeartbeatTimer = setInterval(() => {
     sendRoomHeartbeat();
-<<<<<<< HEAD
-  }, ROOM_HEARTBEAT_INTERVAL_MS);
-=======
   }, ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs);
->>>>>>> e7811b4 (문제사항수정)
 }
 
 function stopRoomHeartbeat() {
@@ -600,7 +611,38 @@ function findWhisperMemberByNickname(nickname) {
   );
 }
 
+function findRoomPlayerByNickname(nickname) {
+  const normalizedNickname = normalizeMemberNickname(nickname);
+
+  if (!normalizedNickname) {
+    return null;
+  }
+
+  return (
+    players.value.find(
+      (player) =>
+        normalizeMemberNickname(player.nickname) === normalizedNickname,
+    ) || null
+  );
+}
+
 function parseChatCommand(content) {
+  const kickMatch = content.match(/^\/(?:kick|강퇴)\s+(\S+)$/);
+
+  if (kickMatch) {
+    return {
+      type: 'kick',
+      nickname: kickMatch[1],
+    };
+  }
+
+  if (content === '/kick' || content.startsWith('/kick ') || content === '/강퇴' || content.startsWith('/강퇴 ')) {
+    return {
+      type: 'error',
+      message: '사용법: /kick 대상닉네임 또는 /강퇴 대상닉네임',
+    };
+  }
+
   const whisperMatch = content.match(/^\/(?:귓속말|w)\s+(\S+)\s+([\s\S]+)$/);
 
   if (whisperMatch) {
@@ -683,6 +725,39 @@ async function sendWhisperToTarget(target, content) {
   });
 }
 
+async function kickPlayerByNickname(nickname) {
+  if (!isHost.value) {
+    throw new Error('방장만 강퇴할 수 있습니다.');
+  }
+
+  if (room.value?.status !== 'waiting') {
+    throw new Error('대기 중인 방에서만 강퇴할 수 있습니다.');
+  }
+
+  const target = findRoomPlayerByNickname(nickname);
+
+  if (!target) {
+    throw new Error(`${nickname}을(를) 현재 방 참가자 목록에서 찾을 수 없습니다.`);
+  }
+
+  if (target.userId === savedUser.value?.id) {
+    throw new Error('자기 자신은 강퇴할 수 없습니다.');
+  }
+
+  await kickRoomPlayer(props.roomId, target.userId);
+
+  if (chatChannel.value) {
+    await sendRoomChatMessage(chatChannel.value, {
+      userId: 'system',
+      nickname: 'System',
+      content: `${target.nickname}님이 방장에 의해 강퇴되었습니다.`,
+      isSystem: true,
+    }).catch(() => {});
+  }
+
+  await syncRoom();
+}
+
 async function submitChat() {
   const content = chatDraft.value.trim();
   if (!content || !savedUser.value || !chatChannel.value) return;
@@ -692,6 +767,12 @@ async function submitChat() {
 
     if (command?.type === 'error') {
       toastStore.error(command.message);
+      return;
+    }
+
+    if (command?.type === 'kick') {
+      await kickPlayerByNickname(command.nickname);
+      chatDraft.value = '';
       return;
     }
 
@@ -743,16 +824,24 @@ async function fetchRoom() {
   isLoading.value = true;
 
   try {
+    const hadLoadedRoom = hasLoadedRoomOnce.value;
     room.value = await getRoom(props.roomId);
     lastSyncedAt.value = new Date();
 
     if (savedUser.value && !currentPlayer.value) {
+      if (hadLoadedRoom) {
+        stopRoomHeartbeat();
+        router.push('/home');
+        return;
+      }
+
       await joinRoom();
     } else if (savedUser.value && route.query.invited === '1') {
       announceRoomEntry();
       clearInviteEntryQuery();
     }
 
+    hasLoadedRoomOnce.value = true;
     await syncRoomPresence();
     await sendRoomHeartbeat();
     startRoomHeartbeat();
@@ -1045,6 +1134,21 @@ function handleRoomRealtimeEvent(payload) {
     return;
   }
 
+  if (
+    payload?.table === 'room_players' &&
+    payload?.eventType === 'DELETE' &&
+    payload.old?.user_id === savedUser.value?.id
+  ) {
+    if (isLeavingRoomExplicitly) {
+      return;
+    }
+
+    stopRoomHeartbeat();
+    toastStore.error('방에서 강퇴되었습니다.');
+    router.push('/home');
+    return;
+  }
+
   if (isHeartbeatOnlyRoomPlayerUpdate(payload)) {
     return;
   }
@@ -1311,6 +1415,7 @@ async function leaveRoom() {
   }
 
   isUpdating.value = true;
+  isLeavingRoomExplicitly = true;
   stopRoomHeartbeat();
 
   // Send leave message
@@ -1327,6 +1432,7 @@ async function leaveRoom() {
     await leaveRoomRequest(props.roomId);
     router.push('/home');
   } catch (error) {
+    isLeavingRoomExplicitly = false;
     toastStore.error(error.message);
   } finally {
     isUpdating.value = false;
