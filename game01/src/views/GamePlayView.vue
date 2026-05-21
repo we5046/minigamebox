@@ -59,7 +59,6 @@ const fallbackReturnToLobbyAt = ref(null)
 const chatMessagesRef = ref(null)
 const chatInputRef = ref(null)
 const lastExpiredSyncAt = ref(0)
-const HARD_RELOAD_ON_PHASE_CHANGE = true
 
 let unsubscribeRoom = null
 let unsubscribeGame = null
@@ -470,11 +469,6 @@ function mergeGameRealtimePayload(nextGame) {
   if (!nextGame?.id) return
 
   const previousPhase = game.value?.phase
-  const shouldReloadForPhaseChange =
-    HARD_RELOAD_ON_PHASE_CHANGE &&
-    previousPhase &&
-    nextGame.phase &&
-    nextGame.phase !== previousPhase
 
   game.value = {
     ...(game.value || {}),
@@ -491,15 +485,6 @@ function mergeGameRealtimePayload(nextGame) {
     }
 
     lastExpiredSyncAt.value = 0
-  }
-
-  if (shouldReloadForPhaseChange) {
-    const reloadKey = `${nextGame.id}:${nextGame.round_no}:${nextGame.phase}:${nextGame.phase_ends_at}`
-
-    if (sessionStorage.getItem('lastPhaseReloadKey') !== reloadKey) {
-      sessionStorage.setItem('lastPhaseReloadKey', reloadKey)
-      window.location.reload()
-    }
   }
 }
 
