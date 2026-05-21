@@ -431,6 +431,16 @@ export async function skipCurrentPhase(roomId) {
   return Array.isArray(data) ? data[0] || null : data
 }
 
+export async function processDueGamePhases() {
+  const { data, error } = await supabase.rpc('process_due_game_phases')
+
+  if (error) {
+    throw createSupabaseError('processDueGamePhases: process_due_game_phases rpc failed', error, '게임 단계를 갱신하지 못했습니다.')
+  }
+
+  return data || 0
+}
+
 function getSkipPhaseErrorMessage(error) {
   const message = error?.message || ''
 

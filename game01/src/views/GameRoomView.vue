@@ -1197,6 +1197,97 @@ function isHeartbeatOnlyRoomPlayerUpdate(payload) {
   return visibleFields.every((field) => previous[field] === next[field]);
 }
 
+function toRealtimePlayer(row, existingPlayer = null) {
+  return {
+    ...(existingPlayer || {}),
+    userId: row.user_id,
+    nickname: existingPlayer?.nickname || '알 수 없음',
+    avatar: existingPlayer?.avatar || 'default-mafia',
+    level: existingPlayer?.level || 1,
+    title: existingPlayer?.title || 'Rookie Mafia',
+    isHost: row.is_host,
+    isReady: row.is_ready,
+    isAlive: row.is_alive !== false,
+    connectionStatus: row.connection_status || existingPlayer?.connectionStatus || 'active',
+    isConnected: (row.connection_status || existingPlayer?.connectionStatus || 'active') === 'active',
+    lastSeenAt: row.last_seen_at || existingPlayer?.lastSeenAt || row.joined_at,
+    disconnectedAt: row.disconnected_at || null,
+    joinedAt: row.joined_at || existingPlayer?.joinedAt,
+  };
+}
+
+function mergeRoomPayload(nextRoom) {
+  if (!nextRoom?.id || !room.value) {
+    return;
+  }
+
+  room.value = {
+    ...room.value,
+    id: nextRoom.id,
+    title: nextRoom.title ?? room.value.title,
+    description: nextRoom.description ?? room.value.description,
+    code: nextRoom.code ?? room.value.code,
+    hostUserId: nextRoom.host_user_id ?? room.value.hostUserId,
+    status: nextRoom.status ?? room.value.status,
+    maxPlayers: nextRoom.max_players ?? room.value.maxPlayers,
+    phase: nextRoom.phase ?? room.value.phase,
+    nightTimeSeconds: nextRoom.night_time_seconds ?? room.value.nightTimeSeconds,
+    voteTimeSeconds: nextRoom.vote_time_seconds ?? room.value.voteTimeSeconds,
+    discussionTimeSeconds: nextRoom.discussion_time_seconds ?? room.value.discussionTimeSeconds,
+    minStartPlayers: nextRoom.min_start_players ?? room.value.minStartPlayers,
+    tieVoteRule: nextRoom.tie_vote_rule ?? room.value.tieVoteRule,
+    spectatorAllowed: nextRoom.spectator_allowed ?? room.value.spectatorAllowed,
+    firstNightAbilityAllowed: nextRoom.first_night_ability_allowed ?? room.value.firstNightAbilityAllowed,
+    finalDefenseEnabled: nextRoom.final_defense_enabled ?? room.value.finalDefenseEnabled,
+    roleRevealMode: nextRoom.role_reveal_mode ?? room.value.roleRevealMode,
+    entryMode: nextRoom.entry_mode ?? room.value.entryMode,
+    entryPassword: nextRoom.entry_password ?? room.value.entryPassword,
+    roleConfig: nextRoom.role_config ?? room.value.roleConfig,
+    updatedAt: nextRoom.updated_at ?? room.value.updatedAt,
+  };
+}
+
+function mergeRoomPlayerPayload(payload) {
+  if (!room.value || payload?.table !== 'room_players') {
+    return false;
+  }
+
+  const userId = payload.new?.user_id || payload.old?.user_id;
+  if (!userId) {
+    return false;
+  }
+
+  const currentPlayers = room.value.players || [];
+
+  if (payload.eventType === 'DELETE') {
+    room.value = {
+      ...room.value,
+      players: currentPlayers.filter((player) => player.userId !== userId),
+    };
+    return true;
+  }
+
+  if (!payload.new) {
+    return false;
+  }
+
+  const existingPlayer = currentPlayers.find((player) => player.userId === userId);
+  const nextPlayer = toRealtimePlayer(payload.new, existingPlayer);
+  const nextPlayers = existingPlayer
+    ? currentPlayers.map((player) => (player.userId === userId ? nextPlayer : player))
+    : [...currentPlayers, nextPlayer];
+
+  nextPlayers.sort((a, b) => new Date(a.joinedAt || 0) - new Date(b.joinedAt || 0));
+
+  room.value = {
+    ...room.value,
+    players: nextPlayers,
+    currentPlayers: nextPlayers.length,
+  };
+
+  return true;
+}
+
 function handleRoomRealtimeEvent(payload) {
   if (payload?.type === 'subscription-status') {
     return;
@@ -1219,6 +1310,20 @@ function handleRoomRealtimeEvent(payload) {
 
   if (isHeartbeatOnlyRoomPlayerUpdate(payload)) {
     return;
+  }
+
+  if (payload?.table === 'room_players') {
+    const merged = mergeRoomPlayerPayload(payload);
+
+    if (merged && ['INSERT', 'DELETE'].includes(payload.eventType)) {
+      scheduleSyncRoom();
+    }
+
+    return;
+  }
+
+  if (payload?.table === 'rooms' && payload.new) {
+    mergeRoomPayload(payload.new);
   }
 
   if (payload?.new?.status === 'playing') {

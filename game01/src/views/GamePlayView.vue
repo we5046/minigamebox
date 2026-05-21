@@ -17,6 +17,7 @@ import {
   getRoom,
   getVoteStatus,
   heartbeatRoomPresence,
+  processDueGamePhases,
   returnRoomToLobby,
   ROOM_PRESENCE_TIMEOUTS,
   skipCurrentPhase,
@@ -464,6 +465,41 @@ function selectParticipant(userId) {
   }
 }
 
+function mergeGameRealtimePayload(nextGame) {
+  if (!nextGame?.id) return
+
+  const previousPhase = game.value?.phase
+
+  game.value = {
+    ...(game.value || {}),
+    ...nextGame,
+  }
+
+  if (nextGame.phase && nextGame.phase !== previousPhase) {
+    if (nextGame.phase !== 'night') {
+      selectedNightTarget.value = ''
+    }
+
+    if (nextGame.phase !== 'vote') {
+      selectedVoteTarget.value = ''
+    }
+
+    lastExpiredSyncAt.value = 0
+  }
+}
+
+function mergeRoomRealtimePayload(nextRoom) {
+  if (!nextRoom?.id) return
+
+  room.value = {
+    ...(room.value || {}),
+    id: nextRoom.id,
+    status: nextRoom.status ?? room.value?.status,
+    phase: nextRoom.phase ?? room.value?.phase,
+    updatedAt: nextRoom.updated_at ?? room.value?.updatedAt,
+  }
+}
+
 function getResultTeamLabel(role) {
   return role === 'mafia' ? '마피아 팀' : '시민 팀'
 }
@@ -707,9 +743,12 @@ async function maybeSyncExpiredGameState() {
   lastExpiredSyncAt.value = now
 
   try {
+    await processDueGamePhases()
     await loadGame({ silent: true })
+    await loadMessages()
   } catch (error) {
-    toastStore.error(error.message)
+    console.warn('[Game] Failed to sync expired phase.', error)
+    await loadGame({ silent: true })
   }
 }
 
@@ -876,17 +915,27 @@ onMounted(async () => {
 
   unsubscribeRoom = subscribeToRoom(roomId.value, (payload) => {
     if (payload?.type === 'subscription-status') return
+    if (payload?.table === 'rooms' && payload.new) {
+      mergeRoomRealtimePayload(payload.new)
+    }
     loadGame({ silent: true })
   })
 
   unsubscribeGame = subscribeToGame(roomId.value, (payload) => {
     if (payload?.type === 'subscription-status') return
+    if (payload.new) {
+      mergeGameRealtimePayload(payload.new)
+    }
     loadGame({ silent: true })
   })
 
   unsubscribeMessages = subscribeToGameMessages(roomId.value, game.value?.id, (payload) => {
     if (payload?.type === 'subscription-status') return
-    pushMessage(normalizeGameMessage(payload.new))
+    const message = normalizeGameMessage(payload.new)
+    pushMessage(message)
+    if (['night_start', 'day_start', 'vote_start', 'final_defense_start'].includes(message.eventKey)) {
+      loadGame({ silent: true })
+    }
   })
 })
 
