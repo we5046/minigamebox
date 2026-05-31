@@ -64,12 +64,15 @@ let unsubscribeRoom = null
 let unsubscribeGame = null
 let unsubscribeMessages = null
 let countdownTimer = null
+let gameStatePollTimer = null
 let roomHeartbeatTimer = null
 let roomHeartbeatPromise = null
 let roomHeartbeatFailureCount = 0
 let nextRoomHeartbeatAt = 0
+let gameSyncPromise = null
 const uploadedLogGameIds = new Set()
 const EXPIRED_PHASE_SYNC_RETRY_MS = 1_000
+const GAME_STATE_POLL_INTERVAL_MS = 2_000
 
 const roleLabels = {
   citizen: '시민',
@@ -667,57 +670,66 @@ function stopRoomHeartbeat() {
 }
 
 async function loadGame({ silent = false } = {}) {
+  if (gameSyncPromise) {
+    return gameSyncPromise
+  }
+
   if (!silent) {
     isLoading.value = true
   }
 
-  try {
-    const heartbeatOk = await sendRoomHeartbeat({ force: !silent })
+  gameSyncPromise = (async () => {
+    try {
+      const heartbeatOk = await sendRoomHeartbeat({ force: !silent })
 
-    if (!heartbeatOk && route.name !== 'game-play') {
-      return
-    }
-
-    const [nextRoom, nextGame, nextRole] = await Promise.all([
-      getRoom(roomId.value),
-      getCurrentGame(roomId.value),
-      getMyGameRole(roomId.value),
-    ])
-
-    room.value = nextRoom
-    game.value = nextGame
-    myRole.value = nextRole
-
-    await loadRoleSideData()
-
-    if (nextGame?.status === 'ended' || nextRoom.status === 'game_over') {
-      if (!nextGame?.return_to_lobby_at && !fallbackReturnToLobbyAt.value) {
-        fallbackReturnToLobbyAt.value = new Date(Date.now() + 60000).toISOString()
+      if (!heartbeatOk && route.name !== 'game-play') {
+        return
       }
 
-      if (nextGame?.id) {
-        await loadGameResult(nextGame.id)
+      const [nextRoom, nextGame, nextRole] = await Promise.all([
+        getRoom(roomId.value),
+        getCurrentGame(roomId.value),
+        getMyGameRole(roomId.value),
+      ])
+
+      room.value = nextRoom
+      game.value = nextGame
+      myRole.value = nextRole
+
+      await loadRoleSideData()
+
+      if (nextGame?.status === 'ended' || nextRoom.status === 'game_over') {
+        if (!nextGame?.return_to_lobby_at && !fallbackReturnToLobbyAt.value) {
+          fallbackReturnToLobbyAt.value = new Date(Date.now() + 60000).toISOString()
+        }
+
+        if (nextGame?.id) {
+          await loadGameResult(nextGame.id)
+        }
+      } else {
+        gameResult.value = null
+        fallbackReturnToLobbyAt.value = null
       }
-    } else {
-      gameResult.value = null
-      fallbackReturnToLobbyAt.value = null
-    }
 
-    if (nextGame?.status !== 'ended' && (nextRoom.status === 'waiting' || nextRoom.phase === 'before_start')) {
-      router.push(`/rooms/${roomId.value}`)
-    }
-  } catch (error) {
-    if (isMissingRoomError(error)) {
-      await router.push('/home')
-      return
-    }
+      if (nextGame?.status !== 'ended' && (nextRoom.status === 'waiting' || nextRoom.phase === 'before_start')) {
+        router.push(`/rooms/${roomId.value}`)
+      }
+    } catch (error) {
+      if (isMissingRoomError(error)) {
+        await router.push('/home')
+        return
+      }
 
-    toastStore.error(error.message)
-  } finally {
-    if (!silent) {
-      isLoading.value = false
+      toastStore.error(error.message)
+    } finally {
+      gameSyncPromise = null
+      if (!silent) {
+        isLoading.value = false
+      }
     }
-  }
+  })()
+
+  return gameSyncPromise
 }
 
 async function loadMessages() {
@@ -914,6 +926,10 @@ onMounted(async () => {
     maybeReturnToLobby()
   }, 1000)
 
+  gameStatePollTimer = setInterval(() => {
+    loadGame({ silent: true })
+  }, GAME_STATE_POLL_INTERVAL_MS)
+
   unsubscribeRoom = subscribeToRoom(roomId.value, (payload) => {
     if (payload?.type === 'subscription-status') return
     if (payload?.table === 'rooms' && payload.new) {
@@ -945,6 +961,7 @@ onBeforeUnmount(() => {
   unsubscribeGame?.()
   unsubscribeMessages?.()
   if (countdownTimer) clearInterval(countdownTimer)
+  if (gameStatePollTimer) clearInterval(gameStatePollTimer)
   stopRoomHeartbeat()
 })
 </script>

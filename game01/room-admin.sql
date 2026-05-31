@@ -478,6 +478,101 @@ $$;
 revoke all on function public.cleanup_stale_room_players(integer, integer) from public;
 grant execute on function public.cleanup_stale_room_players(integer, integer) to authenticated;
 
+grant select, insert on public.game_messages to authenticated;
+
+alter table public.game_messages enable row level security;
+
+drop policy if exists "room participants can read game messages" on public.game_messages;
+drop policy if exists "eligible players can send game messages" on public.game_messages;
+
+create policy "room participants can read game messages"
+  on public.game_messages for select
+  to authenticated
+  using (
+    exists (
+      select 1
+      from public.room_players
+      where room_players.room_id = game_messages.room_id
+        and room_players.user_id = auth.uid()
+        and (
+          game_messages.is_system is true
+          or coalesce(game_messages.channel_type, 'public') = 'public'
+          or (
+            coalesce(game_messages.channel_type, 'public') = 'mafia'
+            and room_players.role = 'mafia'
+          )
+          or (
+            coalesce(game_messages.channel_type, 'public') = 'police'
+            and room_players.role = 'police'
+          )
+        )
+    )
+  );
+
+create policy "eligible players can send game messages"
+  on public.game_messages for insert
+  to authenticated
+  with check (
+    user_id = auth.uid()
+    and message_type = 'chat'
+    and is_system is false
+    and event_key is null
+    and coalesce(channel_type, 'public') in ('public', 'mafia', 'police')
+    and exists (
+      select 1
+      from public.room_players
+      where room_players.room_id = game_messages.room_id
+        and room_players.user_id = auth.uid()
+        and room_players.is_alive is true
+        and (
+          coalesce(game_messages.channel_type, 'public') = 'public'
+          or (
+            coalesce(game_messages.channel_type, 'public') = 'mafia'
+            and room_players.role = 'mafia'
+          )
+          or (
+            coalesce(game_messages.channel_type, 'public') = 'police'
+            and room_players.role = 'police'
+          )
+        )
+    )
+    and exists (
+      select 1
+      from public.games
+      where games.id = game_messages.game_id
+        and games.room_id = game_messages.room_id
+        and games.status = 'playing'
+        and (
+          (
+            coalesce(game_messages.channel_type, 'public') = 'public'
+            and games.phase in ('day', 'discussion', 'vote', 'final_defense')
+            and (
+              games.phase <> 'final_defense'
+              or games.final_defense_target_user_id = auth.uid()
+            )
+          )
+          or (
+            coalesce(game_messages.channel_type, 'public') in ('mafia', 'police')
+            and games.phase = 'night'
+          )
+        )
+    )
+  );
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'games'
+  ) then
+    alter publication supabase_realtime add table public.games;
+  end if;
+end;
+$$;
+
 commit;
 
 notify pgrst, 'reload schema';
