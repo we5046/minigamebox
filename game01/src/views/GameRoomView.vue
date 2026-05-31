@@ -73,6 +73,7 @@ const isLoadingInviteFriends = ref(false);
 const presenceUsers = ref([]);
 const isInviteModalOpen = ref(false);
 const inviteSearchQuery = ref('');
+const isRoomBriefingOpen = ref(false);
 
 let unsubscribeRoom = null;
 let roomChatSubscription = null;
@@ -2200,7 +2201,24 @@ async function leaveRoom() {
         </div>
       </form>
 
-      <div v-if="roomBriefing" class="room-rules-grid">
+      <section v-if="roomBriefing" class="room-rules-disclosure">
+        <button
+          type="button"
+          class="room-rules-toggle"
+          :class="{ active: isRoomBriefingOpen }"
+          :aria-expanded="isRoomBriefingOpen"
+          aria-controls="room-rules-content"
+          @click="isRoomBriefingOpen = !isRoomBriefingOpen"
+        >
+          <span>
+            <b>게임 정보 &amp; 라운드 진행</b>
+            <small>역할 구성, 방 규칙, 단계별 진행 시간을 확인합니다.</small>
+          </span>
+          <strong aria-hidden="true">{{ isRoomBriefingOpen ? '−' : '+' }}</strong>
+        </button>
+      </section>
+
+      <div v-if="roomBriefing && isRoomBriefingOpen" id="room-rules-content" class="room-rules-grid">
         <section class="rules-briefing-panel">
           <div class="rules-panel-heading">
             <p>Room Briefing</p>
@@ -2976,6 +2994,77 @@ async function leaveRoom() {
   font-size: 0.76rem;
   font-style: normal;
   font-weight: 900;
+}
+
+.room-rules-disclosure {
+  position: relative;
+  z-index: 1;
+}
+
+.room-rules-toggle {
+  align-items: center;
+  background:
+    linear-gradient(90deg, rgba(255, 138, 0, 0.1), rgba(229, 46, 113, 0.045)),
+    rgba(15, 9, 6, 0.8);
+  border: 1px solid rgba(255, 190, 85, 0.18);
+  border-radius: 10px;
+  color: #fff1d6;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 1rem;
+  justify-content: space-between;
+  min-height: 3.5rem;
+  padding: 0.7rem 0.85rem 0.7rem 1rem;
+  text-align: left;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
+  width: 100%;
+}
+
+.room-rules-toggle:hover,
+.room-rules-toggle.active {
+  background:
+    linear-gradient(90deg, rgba(255, 138, 0, 0.16), rgba(229, 46, 113, 0.07)),
+    rgba(20, 12, 8, 0.88);
+  border-color: rgba(255, 190, 85, 0.38);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.room-rules-toggle span {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.room-rules-toggle b {
+  color: #fff1d6;
+  font-size: 0.94rem;
+  font-weight: 900;
+}
+
+.room-rules-toggle small {
+  color: rgba(255, 245, 224, 0.58);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.room-rules-toggle > strong {
+  align-items: center;
+  background: rgba(255, 190, 85, 0.1);
+  border: 1px solid rgba(255, 190, 85, 0.2);
+  border-radius: 6px;
+  color: #ffbe55;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 1.25rem;
+  height: 2rem;
+  justify-content: center;
+  line-height: 1;
+  width: 2rem;
 }
 
 .room-rules-grid {
@@ -4566,6 +4655,10 @@ async function leaveRoom() {
 }
 
 @media (max-width: 480px) {
+  .room-rules-toggle small {
+    display: none;
+  }
+
   .rule-status-list {
     grid-template-columns: 1fr;
   }

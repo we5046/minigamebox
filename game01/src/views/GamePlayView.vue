@@ -583,6 +583,10 @@ function clearPlayerRoleMemos() {
   savePlayerRoleMemos()
 }
 
+function closePlayerMemoPanel() {
+  selectedMemoPlayerId.value = ''
+}
+
 function selectParticipant(userId) {
   selectedMemoPlayerId.value = userId
 
@@ -1320,7 +1324,6 @@ onBeforeUnmount(() => {
             <div>
               <span class="eyebrow">LIVE DISCUSSION</span>
               <h2 class="chat-title">{{ chatPanelTitle }}</h2>
-              <h1>실시간 채팅</h1>
             </div>
             <span class="chat-status-badge" :class="{ locked: !canChat && !canSkipPhaseCommand }">
               {{ canChat ? '채팅 가능' : canSkipPhaseCommand ? '스킵 가능' : '채팅 잠김' }}
@@ -1517,34 +1520,44 @@ onBeforeUnmount(() => {
               <span v-if="phaseKey === 'final_defense' && player.isFinalDefenseTarget">변론 대상</span>
             </button>
           </div>
-          <section class="player-memo-panel" :class="{ empty: !selectedMemoPlayer }">
+          <section v-if="selectedMemoPlayer" class="player-memo-panel">
             <div class="player-memo-heading">
               <div>
                 <span class="section-kicker">개인 역할 메모</span>
-                <strong>{{ selectedMemoPlayer?.nickname || '참가자를 선택하세요' }}</strong>
+                <strong>{{ selectedMemoPlayer.nickname }}</strong>
               </div>
-              <button
-                v-if="Object.keys(playerRoleMemos).length > 0"
-                type="button"
-                class="memo-reset-button"
-                @click="clearPlayerRoleMemos"
-              >
-                전체 초기화
-              </button>
+              <div class="player-memo-actions">
+                <button
+                  v-if="Object.keys(playerRoleMemos).length > 0"
+                  type="button"
+                  class="memo-reset-button"
+                  @click="clearPlayerRoleMemos"
+                >
+                  전체 초기화
+                </button>
+                <button
+                  type="button"
+                  class="memo-close-button"
+                  aria-label="역할 메모 닫기"
+                  title="닫기"
+                  @click="closePlayerMemoPanel"
+                >
+                  &times;
+                </button>
+              </div>
             </div>
-            <p v-if="!selectedMemoPlayer">참가자 카드를 누르면 나만 볼 수 있는 색상 메모를 남길 수 있습니다.</p>
-            <div v-else class="player-memo-options">
+            <div class="player-memo-options">
               <button
                 v-for="option in playerMemoOptions"
                 :key="option.tone"
                 type="button"
                 class="player-memo-option"
                 :class="[option.tone, { active: (selectedMemoPlayer.memoRole || '') === option.key }]"
+                :title="`${option.label} 메모: ${option.description}`"
                 @click="setPlayerRoleMemo(option.key)"
               >
                 <span class="memo-color-swatch"></span>
                 <strong>{{ option.label }}</strong>
-                <small>{{ option.description }}</small>
               </button>
             </div>
           </section>
@@ -2278,25 +2291,16 @@ button:disabled {
 }
 
 .player-memo-panel {
+  align-items: center;
   background: rgba(8, 7, 6, 0.42);
   border: 1px solid rgba(255, 190, 85, 0.16);
   border-radius: 8px;
-  display: grid;
-  gap: 0.7rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  justify-content: space-between;
   margin-top: 0.75rem;
-  padding: 0.75rem;
-}
-
-.player-memo-panel.empty {
-  border-style: dashed;
-}
-
-.player-memo-panel p {
-  color: rgba(255, 245, 224, 0.58);
-  font-size: 0.76rem;
-  font-weight: 800;
-  line-height: 1.5;
-  margin: 0;
+  padding: 0.62rem 0.7rem;
 }
 
 .player-memo-heading {
@@ -2309,11 +2313,22 @@ button:disabled {
 .player-memo-heading strong {
   color: #fff1d6;
   display: block;
-  font-size: 0.9rem;
-  margin-top: 0.2rem;
+  font-size: 0.84rem;
+  margin-top: 0.12rem;
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.memo-reset-button {
+.player-memo-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.memo-reset-button,
+.memo-close-button {
   background: rgba(255, 255, 255, 0.045);
   border: 1px solid rgba(255, 190, 85, 0.18);
   border-radius: 6px;
@@ -2325,10 +2340,23 @@ button:disabled {
   padding: 0.4rem 0.56rem;
 }
 
+.memo-close-button {
+  align-items: center;
+  display: inline-flex;
+  font-size: 1rem;
+  height: 1.9rem;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  width: 1.9rem;
+}
+
 .player-memo-options {
-  display: grid;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
   gap: 0.45rem;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  justify-content: flex-end;
 }
 
 .player-memo-option {
@@ -2338,12 +2366,11 @@ button:disabled {
   border-radius: 7px;
   color: rgba(255, 245, 224, 0.76);
   cursor: pointer;
-  display: grid;
+  display: inline-flex;
   font: inherit;
-  gap: 0.16rem;
-  justify-items: start;
+  gap: 0.35rem;
   min-width: 0;
-  padding: 0.48rem;
+  padding: 0.42rem 0.5rem;
 }
 
 .player-memo-option:hover,
@@ -2355,12 +2382,6 @@ button:disabled {
 
 .player-memo-option strong {
   font-size: 0.76rem;
-}
-
-.player-memo-option small {
-  color: rgba(255, 245, 224, 0.5);
-  font-size: 0.64rem;
-  font-weight: 800;
 }
 
 .memo-color-swatch {
@@ -3109,7 +3130,18 @@ button:disabled {
   }
 
   .player-memo-options {
+    display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .player-memo-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .player-memo-heading {
+    width: 100%;
   }
 }
 </style>
