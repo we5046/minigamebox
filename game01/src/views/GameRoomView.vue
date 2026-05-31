@@ -17,6 +17,7 @@ import {
   joinRoom as joinRoomRequest,
   kickRoomPlayer,
   leaveRoom as leaveRoomRequest,
+  DEFAULT_ROOM_DETAIL_SETTINGS,
   ROOM_PRESENCE_TIMEOUTS,
   setPlayerReady,
   startGame as startGameRequest,
@@ -352,6 +353,23 @@ function getRecommendedRoleConfig(maxPlayers) {
   return { citizen, mafia, police, doctor };
 }
 
+function applyClassicEditRoomSettings() {
+  editRoomRoleConfig.value = getDefaultRoleConfig(editRoomMaxPlayers.value);
+  editNightTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.nightTimeSeconds;
+  editVoteTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds;
+  editRoomDiscussionTimeSeconds.value =
+    DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds;
+  editRoomMinStartPlayers.value =
+    DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers;
+  editRoomTieVoteRule.value = DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule;
+  editSpectatorAllowed.value = DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed;
+  editFirstNightAbilityAllowed.value =
+    DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed;
+  editFinalDefenseEnabled.value =
+    DEFAULT_ROOM_DETAIL_SETTINGS.finalDefenseEnabled;
+  editRoleRevealMode.value = 'private';
+}
+
 function getEffectiveRoleConfig(roleConfig, maxPlayers) {
   return roleConfig || getDefaultRoleConfig(maxPlayers);
 }
@@ -578,7 +596,7 @@ watch([editRoomMaxPlayers, editRoomDescription], () => {
     return;
   }
 
-  editRoomRoleConfig.value = getDefaultRoleConfig(editRoomMaxPlayers.value);
+  applyClassicEditRoomSettings();
 });
 
 function handleChatEvent(payload) {
@@ -1389,6 +1407,10 @@ function openEditRoomForm() {
   isEditEntryPasswordVisible.value = false;
   isEditAdvancedOpen.value = true;
   isEditingRoom.value = true;
+
+  if (!isFriendlyEditMode.value) {
+    applyClassicEditRoomSettings();
+  }
 }
 
 function closeEditRoomForm() {
@@ -1439,6 +1461,7 @@ function selectEditRoomMode(mode) {
   }
 
   isRecommendedEditRolesEnabled.value = false;
+  applyClassicEditRoomSettings();
 }
 
 function adjustEditRoomMaxPlayers(amount) {
@@ -1838,6 +1861,13 @@ async function leaveRoom() {
               🛠 커스텀
             </button>
           </div>
+          <p class="mode-description">
+            {{
+              isFriendlyEditMode
+                ? '역할 구성과 세부 규칙을 직접 조정할 수 있습니다.'
+                : '공식 역할 구성과 표준 규칙으로 빠르게 시작합니다.'
+            }}
+          </p>
         </div>
 
         <div class="room-custom-grid">
@@ -1848,6 +1878,7 @@ async function leaveRoom() {
                 type="button"
                 class="option-btn"
                 :class="{ active: editRoleRevealMode === 'private' }"
+                :disabled="!isFriendlyEditMode"
                 @click="editRoleRevealMode = 'private'"
               >
                 비공개
@@ -1856,6 +1887,7 @@ async function leaveRoom() {
                 type="button"
                 class="option-btn"
                 :class="{ active: editRoleRevealMode === 'public' }"
+                :disabled="!isFriendlyEditMode"
                 @click="editRoleRevealMode = 'public'"
               >
                 공개
@@ -1963,7 +1995,7 @@ async function leaveRoom() {
           </div>
         </div>
 
-        <section class="advanced-settings-panel">
+        <section v-if="isFriendlyEditMode" class="advanced-settings-panel">
           <button
             type="button"
             class="advanced-settings-toggle"
@@ -2107,6 +2139,10 @@ async function leaveRoom() {
             </div>
           </div>
         </section>
+        <p v-else class="classic-rules-note">
+          클래식은 비공개 역할, 표준 진행 시간, 기본 투표 규칙으로
+          고정됩니다. 세부 규칙을 바꾸려면 커스텀을 선택하세요.
+        </p>
 
         <section
           class="role-config-section"
@@ -4204,6 +4240,30 @@ async function leaveRoom() {
   display: grid;
   gap: 1.15rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mode-description,
+.classic-rules-note {
+  color: rgba(255, 245, 224, 0.64);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.mode-description {
+  margin-top: 0.55rem;
+}
+
+.classic-rules-note {
+  background: rgba(255, 190, 85, 0.05);
+  border: 1px solid rgba(255, 190, 85, 0.14);
+  border-radius: 0.7rem;
+  padding: 0.85rem 1rem;
+}
+
+.option-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
 .advanced-settings-panel {
