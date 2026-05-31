@@ -1101,7 +1101,7 @@ watch([phaseKey, nightRoleChatChannel, isAlive], ([phase, teamChannel, alive]) =
 })
 
 watch(
-  () => [savedUser.value?.id, roomId.value, game.value?.id],
+  [() => savedUser.value?.id, roomId, () => game.value?.id],
   () => {
     selectedMemoPlayerId.value = ''
     loadPlayerRoleMemos()
