@@ -8,6 +8,10 @@ alter table public.room_players
   add column if not exists last_seen_at timestamptz not null default now(),
   add column if not exists disconnected_at timestamptz;
 
+-- Realtime UPDATE payloads need the previous values so the client can ignore
+-- last_seen_at-only heartbeats without skipping visible player-state changes.
+alter table public.room_players replica identity full;
+
 -- Remove historical overloads. Default arguments made PostgREST unable to
 -- choose between the legacy 17-argument function and the current function.
 drop function if exists public.create_room(text, text, integer);
@@ -560,16 +564,24 @@ create policy "eligible players can send game messages"
   );
 
 do $$
+declare
+  v_table_name text;
 begin
-  if not exists (
-    select 1
-    from pg_publication_tables
-    where pubname = 'supabase_realtime'
-      and schemaname = 'public'
-      and tablename = 'games'
-  ) then
-    alter publication supabase_realtime add table public.games;
-  end if;
+  foreach v_table_name in array array['rooms', 'room_players', 'games', 'game_messages']
+  loop
+    if not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = v_table_name
+    ) then
+      execute format(
+        'alter publication supabase_realtime add table public.%I',
+        v_table_name
+      );
+    end if;
+  end loop;
 end;
 $$;
 

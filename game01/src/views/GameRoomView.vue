@@ -1315,7 +1315,7 @@ function handleRoomRealtimeEvent(payload) {
   if (payload?.table === 'room_players') {
     const merged = mergeRoomPlayerPayload(payload);
 
-    if (merged && ['INSERT', 'DELETE'].includes(payload.eventType)) {
+    if (merged && ['INSERT', 'UPDATE', 'DELETE'].includes(payload.eventType)) {
       scheduleSyncRoom();
     }
 
@@ -1578,6 +1578,10 @@ async function startGame() {
     toastStore.error(error.message);
   } finally {
     isUpdating.value = false;
+    if (shouldSyncAfterUpdate.value) {
+      shouldSyncAfterUpdate.value = false;
+      syncRoom();
+    }
   }
 }
 

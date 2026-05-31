@@ -70,6 +70,7 @@ let roomHeartbeatPromise = null
 let roomHeartbeatFailureCount = 0
 let nextRoomHeartbeatAt = 0
 let gameSyncPromise = null
+let messagesSyncPromise = null
 const uploadedLogGameIds = new Set()
 const EXPIRED_PHASE_SYNC_RETRY_MS = 1_000
 const GAME_STATE_POLL_INTERVAL_MS = 2_000
@@ -733,13 +734,23 @@ async function loadGame({ silent = false } = {}) {
 }
 
 async function loadMessages() {
-  try {
-    const nextMessages = await getGameMessages(roomId.value, game.value?.id)
-    messages.value = nextMessages.filter(canSeeGameMessage)
-    nextTick(scrollChatToBottom)
-  } catch (error) {
-    toastStore.error(error.message)
+  if (messagesSyncPromise) {
+    return messagesSyncPromise
   }
+
+  messagesSyncPromise = (async () => {
+    try {
+      const nextMessages = await getGameMessages(roomId.value, game.value?.id)
+      messages.value = nextMessages.filter(canSeeGameMessage)
+      nextTick(scrollChatToBottom)
+    } catch (error) {
+      toastStore.error(error.message)
+    } finally {
+      messagesSyncPromise = null
+    }
+  })()
+
+  return messagesSyncPromise
 }
 
 
@@ -926,8 +937,9 @@ onMounted(async () => {
     maybeReturnToLobby()
   }, 1000)
 
-  gameStatePollTimer = setInterval(() => {
-    loadGame({ silent: true })
+  gameStatePollTimer = setInterval(async () => {
+    await loadGame({ silent: true })
+    await loadMessages()
   }, GAME_STATE_POLL_INTERVAL_MS)
 
   unsubscribeRoom = subscribeToRoom(roomId.value, (payload) => {
