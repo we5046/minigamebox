@@ -42,33 +42,47 @@ function createDefaultStats() {
 
 function normalizeProfileDisplay(bundle, authProfile = null) {
   const profile = bundle?.profile || {}
-  const stats = bundle?.stats || {}
+  const stats = authProfile?.stats || {}
 
-  const winRateValue = Number(stats.overall_win_rate || 0)
+  const winRateValue = Number(stats.overall_win_rate ?? stats.winRate ?? 0)
   const winRate = `${Math.round(winRateValue)}%`
 
   return {
     id: profile.id || authProfile?.id || null,
-    loginId: profile.login_id || authProfile?.login_id || 'guest',
+    loginId: profile.loginId || profile.login_id || authProfile?.login_id || 'guest',
     nickname: profile.nickname || authProfile?.nickname || 'GuestPlayer',
     characterName:
-      profile.character_name || authProfile?.character_name || 'Rookie Mafia',
+      profile.characterName ||
+      profile.character_name ||
+      authProfile?.character_name ||
+      'Rookie Mafia',
     title:
+      profile.title ||
+      profile.representativeTitle ||
       profile.representative_title ||
       profile.character_name ||
       authProfile?.representative_title ||
       authProfile?.character_name ||
       'Rookie Mafia',
-    representativeTitle: profile.representative_title || '',
+    representativeTitle:
+      profile.representativeTitle ||
+      profile.representative_title ||
+      authProfile?.representative_title ||
+      '',
     avatar: profile.avatar || authProfile?.avatar || 'default-mafia',
     level: profile.level ?? authProfile?.level ?? 1,
     coin: profile.coin ?? authProfile?.coin ?? 0,
-    exp: profile.experience_percent ?? authProfile?.experience_percent ?? 0,
-    expPercent: profile.experience_percent ?? authProfile?.experience_percent ?? 0,
+    exp: profile.exp ?? profile.experience_percent ?? authProfile?.experience_percent ?? 0,
+    expPercent:
+      profile.exp ??
+      profile.experience_percent ??
+      authProfile?.experience_percent ??
+      0,
     winRate,
     winRateValue,
     winStreak: bundle?.winStreak || 0,
     quote:
+      profile.quote ||
       profile.profile_quote ||
       authProfile?.profile_quote ||
       '오늘 밤 누가 거짓말을 하고 있을까?',
@@ -94,6 +108,7 @@ function buildAuthSyncProfile(rawProfile, rawStats) {
 }
 
 let profileSubscription = null
+let subscribedUserId = null
 let currentUserId = null
 let refreshTimer = null
 
@@ -116,11 +131,13 @@ export const useProfileStore = defineStore('profile', () => {
 
   function unsubscribeFromProfileChanges() {
     if (!profileSubscription) {
+      subscribedUserId = null
       return
     }
 
     const channel = profileSubscription
     profileSubscription = null
+    subscribedUserId = null
     supabase.removeChannel(channel)
   }
 
@@ -164,6 +181,10 @@ export const useProfileStore = defineStore('profile', () => {
   }
 
   function subscribeToProfileChanges(userId) {
+    if (profileSubscription && subscribedUserId === userId) {
+      return
+    }
+
     unsubscribeFromProfileChanges()
 
     if (!userId) {
@@ -179,6 +200,7 @@ export const useProfileStore = defineStore('profile', () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'player_achievements', filter: `user_id=eq.${userId}` }, queueRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'player_cosmetics', filter: `user_id=eq.${userId}` }, queueRefresh)
       .subscribe()
+    subscribedUserId = userId
   }
 
   function queueRefresh() {

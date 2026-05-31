@@ -12,6 +12,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   function setUser(nextUser) {
     user.value = nextUser
+
+    if (nextUser) {
+      setCurrentUser(nextUser)
+    } else {
+      clearCurrentUser()
+    }
   }
 
   async function fetchUser(sessionUser) {

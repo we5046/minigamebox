@@ -639,9 +639,21 @@ do $$
 declare
   v_table_name text;
 begin
-  foreach v_table_name in array array['rooms', 'room_players', 'games', 'game_messages']
+  foreach v_table_name in array array[
+    'rooms',
+    'room_players',
+    'games',
+    'game_messages',
+    'profiles',
+    'player_stats',
+    'player_role_stats',
+    'player_recent_matches',
+    'player_achievements',
+    'player_cosmetics'
+  ]
   loop
-    if not exists (
+    if to_regclass(format('public.%I', v_table_name)) is not null
+      and not exists (
       select 1
       from pg_publication_tables
       where pubname = 'supabase_realtime'

@@ -2480,7 +2480,9 @@ async function logout() {
             <span class="online-pill">Online</span>
           </div>
           <div class="profile-main">
-            <div class="avatar" aria-hidden="true">M</div>
+            <div class="avatar" aria-hidden="true">
+              {{ character.nickname.slice(0, 1).toUpperCase() }}
+            </div>
             <div>
               <h2>{{ character.nickname }}</h2>
               <p>{{ character.title }}</p>

@@ -9,6 +9,8 @@ function getEmptyMyPage(user) {
       loginId: user?.loginId || 'guest',
       level: user?.character?.level || 1,
       title: user?.character?.name || 'Rookie Mafia',
+      characterName: user?.character?.name || 'Rookie Mafia',
+      representativeTitle: user?.representativeTitle || '',
       avatar: user?.character?.avatar || 'default-mafia',
       coin: user?.character?.coin || 0,
       exp: 0,
@@ -64,6 +66,9 @@ function normalizeMyPageData(user, rows) {
       loginId: profileRow?.login_id || empty.profile.loginId,
       level: profileRow?.level ?? empty.profile.level,
       title: profileRow?.representative_title || profileRow?.character_name || empty.profile.title,
+      characterName: profileRow?.character_name || empty.profile.characterName,
+      representativeTitle:
+        profileRow?.representative_title || empty.profile.representativeTitle,
       avatar: profileRow?.avatar || empty.profile.avatar,
       coin: profileRow?.coin ?? empty.profile.coin,
       exp: profileRow?.experience_percent ?? empty.profile.exp,
