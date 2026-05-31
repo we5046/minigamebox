@@ -152,6 +152,10 @@ watch(savedUser, (nextUser, previousUser) => {
           <h2>{{ profile.nickname }}</h2>
           <p class="title-badge">{{ profile.title }}</p>
           <blockquote>{{ profile.quote }}</blockquote>
+          <div class="wallet-balance">
+            <span>보유 골드</span>
+            <strong>{{ Number(profile.coin || 0).toLocaleString() }} G</strong>
+          </div>
           <div class="level-row">
             <span>Lv. {{ profile.level }}</span>
             <span>{{ profile.exp }}%</span>
@@ -445,6 +449,30 @@ blockquote {
   font-style: italic;
   margin: 0;
   padding-left: 0.9rem;
+}
+
+.wallet-balance {
+  align-items: center;
+  background: rgba(255, 190, 85, 0.1);
+  border: 1px solid rgba(255, 190, 85, 0.28);
+  border-radius: 0.75rem;
+  display: flex;
+  gap: 0.8rem;
+  justify-content: space-between;
+  max-width: 28rem;
+  padding: 0.65rem 0.8rem;
+}
+
+.wallet-balance span {
+  color: rgba(255, 245, 224, 0.72);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.wallet-balance strong {
+  color: #ffd28a;
+  font-size: 1rem;
+  font-weight: 900;
 }
 
 .level-row {

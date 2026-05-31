@@ -2517,8 +2517,8 @@ async function logout() {
               <dd>{{ character.winStreak }} Win</dd>
             </div>
             <div>
-              <dt>Coin</dt>
-              <dd>{{ character.coin }}</dd>
+              <dt>보유 골드</dt>
+              <dd>{{ Number(character.coin || 0).toLocaleString() }} G</dd>
             </div>
           </dl>
         </section>
