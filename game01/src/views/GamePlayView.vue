@@ -46,6 +46,7 @@ const visibleTeamMembers = ref([])
 const voteStatus = ref([])
 const messages = ref([])
 const chatDraft = ref('')
+const activeChatTab = ref('public')
 const selectedNightTarget = ref('')
 const selectedVoteTarget = ref('')
 const isLoading = ref(false)
@@ -166,6 +167,7 @@ const chatChannelLabels = {
   public: '전체',
   mafia: '마피아',
   police: '경찰',
+  dead: '사후',
 }
 
 const savedUser = computed(() => authStore.user)
@@ -236,13 +238,48 @@ const nightRoleChatChannel = computed(() => {
   if (roleKey.value === 'police') return 'police'
   return ''
 })
-const chatChannelType = computed(() =>
-  phaseKey.value === 'night' && nightRoleChatChannel.value ? nightRoleChatChannel.value : 'public',
+const availableChatTabs = computed(() => {
+  if (!isAlive.value) {
+    return [
+      { key: 'public', label: '전체 로그', writable: false },
+      { key: 'dead', label: '사후', writable: true },
+      { key: 'mafia', label: '마피아 관전', writable: false },
+      { key: 'police', label: '경찰 관전', writable: false },
+    ]
+  }
+
+  const tabs = [{ key: 'public', label: '전체', writable: true }]
+
+  if (roleKey.value === 'mafia') {
+    tabs.push({ key: 'mafia', label: '마피아', writable: true })
+  }
+
+  if (roleKey.value === 'police') {
+    tabs.push({ key: 'police', label: '경찰', writable: true })
+  }
+
+  return tabs
+})
+const activeChatTabInfo = computed(
+  () => availableChatTabs.value.find((tab) => tab.key === activeChatTab.value) || availableChatTabs.value[0],
 )
+const chatChannelType = computed(() => activeChatTabInfo.value?.key || 'public')
 const chatChannelLabel = computed(() => chatChannelLabels[chatChannelType.value] || '전체')
 const canChatInCurrentPhase = computed(() => {
+  if (!activeChatTabInfo.value?.writable) {
+    return false
+  }
+
+  if (chatChannelType.value === 'dead') {
+    return !isAlive.value
+  }
+
+  if (['mafia', 'police'].includes(chatChannelType.value)) {
+    return phaseKey.value === 'night' && chatChannelType.value === nightRoleChatChannel.value
+  }
+
   if (phaseKey.value === 'night') {
-    return Boolean(nightRoleChatChannel.value)
+    return false
   }
 
   if (phaseKey.value === 'final_defense') {
@@ -254,7 +291,6 @@ const canChatInCurrentPhase = computed(() => {
 const canChat = computed(
   () =>
     canChatInCurrentPhase.value &&
-    isAlive.value &&
     room.value?.status === 'playing' &&
     Boolean(game.value?.id) &&
     Boolean(savedUser.value?.id),
@@ -292,6 +328,7 @@ const isSkipCommand = computed(() => ['/스킵', '/skip'].includes(chatDraft.val
 const canSkipPhaseCommand = computed(
   () =>
     isHost.value &&
+    isAlive.value &&
     room.value?.status === 'playing' &&
     Boolean(game.value?.id) &&
     !isGameEnded.value,
@@ -300,14 +337,26 @@ const canUseChatInput = computed(() => canChat.value || canSkipPhaseCommand.valu
 const canSubmitChatInput = computed(() => canChat.value || (canSkipPhaseCommand.value && isSkipCommand.value))
 const actionGuide = computed(() => actionGuides[phaseKey.value] || '다음 단계를 기다리세요.')
 const chatPanelTitle = computed(() => {
-  if (phaseKey.value === 'night' && nightRoleChatChannel.value) {
+  if (chatChannelType.value === 'dead') {
+    return '사후 채팅'
+  }
+
+  if (chatChannelType.value !== 'public') {
     return `${chatChannelLabel.value} 팀 채팅`
   }
 
   return chatPanelTitles[phaseKey.value] || '게임 채팅'
 })
 const chatPhaseBanner = computed(() => {
-  if (phaseKey.value === 'night' && nightRoleChatChannel.value) {
+  if (chatChannelType.value === 'dead') {
+    return '사망한 플레이어끼리만 대화할 수 있는 사후 채팅입니다.'
+  }
+
+  if (!isAlive.value && ['mafia', 'police'].includes(chatChannelType.value)) {
+    return `사망한 플레이어는 ${chatChannelLabel.value} 팀 채팅을 읽기만 할 수 있습니다.`
+  }
+
+  if (chatChannelType.value !== 'public') {
     return `${chatChannelLabel.value} 팀만 볼 수 있는 밤 채팅입니다.`
   }
 
@@ -316,9 +365,15 @@ const chatPhaseBanner = computed(() => {
 const chatPlaceholder = computed(
   () =>
     canChat.value
-      ? phaseKey.value === 'night'
+      ? chatChannelType.value === 'dead'
+        ? '사망한 플레이어끼리 대화할 수 있습니다'
+        : phaseKey.value === 'night'
         ? `${chatChannelLabel.value} 팀 채팅을 입력하세요`
         : chatPlaceholders[phaseKey.value] || '메시지를 입력하세요'
+      : !isAlive.value && ['mafia', 'police'].includes(chatChannelType.value)
+        ? '사망한 플레이어는 이 채팅을 읽기만 할 수 있습니다'
+      : !isAlive.value && chatChannelType.value === 'public'
+        ? '사망한 플레이어는 전체 채팅을 읽기만 할 수 있습니다'
       : phaseKey.value === 'final_defense'
         ? canSkipPhaseCommand.value
           ? '변론 대상만 채팅할 수 있습니다. 방장은 /스킵으로 넘길 수 있습니다'
@@ -479,9 +534,20 @@ function canSeeGameMessage(message) {
 
   const messageChannel = message.channelType || 'public'
   if (messageChannel === 'public') return true
+  if (!isAlive.value) return ['dead', 'mafia', 'police'].includes(messageChannel)
 
   return messageChannel === roleKey.value
 }
+
+const visibleMessages = computed(() =>
+  messages.value.filter((message) => {
+    if (message.isSystem || message.messageType === 'system') {
+      return activeChatTab.value === 'public'
+    }
+
+    return (message.channelType || 'public') === activeChatTab.value
+  }),
+)
 
 function selectParticipant(userId) {
   if (canNightAction.value) {
@@ -952,6 +1018,29 @@ watch(roleKey, () => {
   messages.value = messages.value.filter(canSeeGameMessage)
 })
 
+watch(isAlive, (alive, wasAlive) => {
+  messages.value = messages.value.filter(canSeeGameMessage)
+
+  if (!alive && wasAlive !== false) {
+    activeChatTab.value = 'dead'
+    toastStore.info('사망했습니다. 이제 사후 채팅에 참여할 수 있습니다.')
+  }
+})
+
+watch(availableChatTabs, (tabs) => {
+  if (!tabs.some((tab) => tab.key === activeChatTab.value)) {
+    activeChatTab.value = tabs[0]?.key || 'public'
+  }
+})
+
+watch([phaseKey, nightRoleChatChannel, isAlive], ([phase, teamChannel, alive]) => {
+  if (!alive) {
+    return
+  }
+
+  activeChatTab.value = phase === 'night' && teamChannel ? teamChannel : 'public'
+})
+
 onMounted(async () => {
   await loadGame()
   startRoomHeartbeat()
@@ -1174,9 +1263,22 @@ onBeforeUnmount(() => {
             {{ chatPhaseBanner }}
           </div>
 
+          <nav class="chat-tabs" aria-label="채팅 채널">
+            <button
+              v-for="tab in availableChatTabs"
+              :key="tab.key"
+              type="button"
+              class="chat-tab"
+              :class="[tab.key, { active: activeChatTab === tab.key }]"
+              @click="activeChatTab = tab.key"
+            >
+              {{ tab.label }}
+            </button>
+          </nav>
+
           <div ref="chatMessagesRef" class="chat-messages">
             <div
-              v-for="message in messages"
+              v-for="message in visibleMessages"
               :key="message.id"
               :class="
                 message.messageType === 'system'
@@ -1192,7 +1294,7 @@ onBeforeUnmount(() => {
               </template>
 
               <template v-else>
-                <div class="chat-bubble">
+                <div class="chat-bubble" :class="`channel-${message.channelType || 'public'}`">
                   <div class="chat-meta">
                     <strong>{{ message.nickname }}</strong>
                     <span v-if="message.channelType !== 'public'" class="chat-channel-chip">
@@ -1205,7 +1307,7 @@ onBeforeUnmount(() => {
               </template>
             </div>
 
-            <div v-if="messages.length === 0" class="empty-chat">
+            <div v-if="visibleMessages.length === 0" class="empty-chat">
               아직 메시지가 없습니다. 토론이 시작되면 이곳에서 대화가 진행됩니다.
             </div>
           </div>
@@ -2359,6 +2461,53 @@ button:disabled {
   padding: 0.72rem 1.25rem;
 }
 
+.chat-tabs {
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(255, 190, 85, 0.1);
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.45rem;
+  overflow-x: auto;
+  padding: 0.62rem 1.25rem;
+}
+
+.chat-tab {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  color: rgba(255, 245, 224, 0.68);
+  cursor: pointer;
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 900;
+  padding: 0.34rem 0.62rem;
+}
+
+.chat-tab.active {
+  background: rgba(255, 190, 85, 0.14);
+  border-color: rgba(255, 190, 85, 0.38);
+  color: #ffd28a;
+}
+
+.chat-tab.mafia.active {
+  background: rgba(127, 29, 29, 0.32);
+  border-color: rgba(248, 113, 113, 0.68);
+  color: #fecaca;
+}
+
+.chat-tab.police.active {
+  background: rgba(30, 64, 175, 0.3);
+  border-color: rgba(96, 165, 250, 0.64);
+  color: #dbeafe;
+}
+
+.chat-tab.dead.active {
+  background: rgba(88, 28, 135, 0.28);
+  border-color: rgba(192, 132, 252, 0.56);
+  color: #e9d5ff;
+}
+
 .system-message-row {
   align-items: center;
   align-self: center;
@@ -2420,6 +2569,21 @@ button:disabled {
     linear-gradient(180deg, rgba(255, 190, 85, 0.15), rgba(96, 42, 18, 0.22)),
     rgba(0, 0, 0, 0.25);
   border-color: rgba(255, 190, 85, 0.22);
+}
+
+.chat-bubble.channel-mafia {
+  background: rgba(127, 29, 29, 0.26);
+  border-color: rgba(248, 113, 113, 0.56);
+}
+
+.chat-bubble.channel-police {
+  background: rgba(30, 64, 175, 0.24);
+  border-color: rgba(96, 165, 250, 0.52);
+}
+
+.chat-bubble.channel-dead {
+  background: rgba(88, 28, 135, 0.22);
+  border-color: rgba(192, 132, 252, 0.48);
 }
 
 .chat-meta {

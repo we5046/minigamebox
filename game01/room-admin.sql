@@ -545,11 +545,21 @@ create policy "room participants can read game messages"
           or coalesce(game_messages.channel_type, 'public') = 'public'
           or (
             coalesce(game_messages.channel_type, 'public') = 'mafia'
-            and room_players.role = 'mafia'
+            and (
+              room_players.role = 'mafia'
+              or room_players.is_alive is false
+            )
           )
           or (
             coalesce(game_messages.channel_type, 'public') = 'police'
-            and room_players.role = 'police'
+            and (
+              room_players.role = 'police'
+              or room_players.is_alive is false
+            )
+          )
+          or (
+            coalesce(game_messages.channel_type, 'public') = 'dead'
+            and room_players.is_alive is false
           )
         )
     )
@@ -563,22 +573,30 @@ create policy "eligible players can send game messages"
     and message_type = 'chat'
     and is_system is false
     and event_key is null
-    and coalesce(channel_type, 'public') in ('public', 'mafia', 'police')
+    and coalesce(channel_type, 'public') in ('public', 'mafia', 'police', 'dead')
     and exists (
       select 1
       from public.room_players
       where room_players.room_id = game_messages.room_id
         and room_players.user_id = auth.uid()
-        and room_players.is_alive is true
         and (
-          coalesce(game_messages.channel_type, 'public') = 'public'
-          or (
-            coalesce(game_messages.channel_type, 'public') = 'mafia'
-            and room_players.role = 'mafia'
+          (
+            coalesce(game_messages.channel_type, 'public') = 'dead'
+            and room_players.is_alive is false
           )
           or (
-            coalesce(game_messages.channel_type, 'public') = 'police'
-            and room_players.role = 'police'
+            room_players.is_alive is true
+            and (
+              coalesce(game_messages.channel_type, 'public') = 'public'
+              or (
+                coalesce(game_messages.channel_type, 'public') = 'mafia'
+                and room_players.role = 'mafia'
+              )
+              or (
+                coalesce(game_messages.channel_type, 'public') = 'police'
+                and room_players.role = 'police'
+              )
+            )
           )
         )
     )
@@ -601,6 +619,7 @@ create policy "eligible players can send game messages"
             coalesce(game_messages.channel_type, 'public') in ('mafia', 'police')
             and games.phase = 'night'
           )
+          or coalesce(game_messages.channel_type, 'public') = 'dead'
         )
     )
   );
