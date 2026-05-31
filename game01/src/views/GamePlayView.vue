@@ -1190,7 +1190,6 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>
             <span>남은 시간 <b>{{ remainingSeconds }}초</b></span>
-            <button type="button" @click="router.push(`/rooms/${roomId}`)">대기방 보기</button>
             <button
               v-if="isHost"
               class="end-game-button"

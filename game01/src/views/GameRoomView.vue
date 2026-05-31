@@ -2649,14 +2649,16 @@ async function leaveRoom() {
 }
 
 .room-control-panel {
+  align-self: flex-start;
   background: rgba(20, 15, 10, 0.6);
   border: 1px solid rgba(255, 120, 52, 0.15);
   border-radius: 8px;
-  padding: 1.2rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  min-width: 220px;
+  gap: 0.62rem;
+  max-width: 31rem;
+  min-width: min(31rem, 42vw);
+  padding: 0.78rem;
   box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
   position: relative;
   z-index: 1;
@@ -2667,7 +2669,7 @@ async function leaveRoom() {
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid rgba(255, 120, 52, 0.2);
-  padding-bottom: 0.5rem;
+  padding-bottom: 0.38rem;
 }
 
 .control-title {
@@ -2691,15 +2693,17 @@ async function leaveRoom() {
 
 .room-actions {
   display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
 .action-btn {
+  flex: 1 1 auto;
   font-family: inherit;
   font-weight: 900;
-  font-size: 1rem;
-  padding: 0.85rem 1.5rem;
+  font-size: 0.82rem;
+  min-height: 2.35rem;
+  padding: 0.58rem 0.78rem;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -2737,15 +2741,17 @@ async function leaveRoom() {
 }
 
 .danger-btn {
-  background: transparent;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 0.85rem;
-  padding: 0.5rem;
+  background: rgba(127, 29, 29, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.16);
+  color: rgba(252, 165, 165, 0.72);
+  font-size: 0.78rem;
+  padding: 0.5rem 0.68rem;
 }
 
 .danger-btn:hover:not(:disabled) {
+  background: rgba(127, 29, 29, 0.18);
+  border-color: rgba(248, 113, 113, 0.34);
   color: #fca5a5;
-  text-decoration: underline;
 }
 
 .action-btn:disabled {
@@ -4597,6 +4603,8 @@ async function leaveRoom() {
     flex-direction: column;
   }
   .room-control-panel {
+    max-width: none;
+    min-width: 0;
     width: 100%;
   }
   .room-actions {
