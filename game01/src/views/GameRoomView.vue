@@ -880,6 +880,24 @@ function scrollToBottom() {
   });
 }
 
+function isRoomLoadError(error) {
+  const raw = error.cause || error.supabaseError || {};
+  const message = error.message || '';
+
+  return (
+    raw.code === 'PGRST116' ||
+    raw.details?.includes('0 rows') ||
+    message.includes('Not Found') ||
+    message.includes('Failed to load room') ||
+    message.includes('방 정보를 불러오지 못했습니다')
+  );
+}
+
+async function redirectToMainLobby() {
+  stopRoomHeartbeat();
+  await router.replace({ name: 'home' });
+}
+
 async function fetchRoom() {
   isLoading.value = true;
 
@@ -907,6 +925,12 @@ async function fetchRoom() {
     startRoomHeartbeat();
     redirectToGameIfStarted();
   } catch (error) {
+    if (isRoomLoadError(error)) {
+      toastStore.error('방 정보를 불러오지 못했습니다. 메인 로비로 이동합니다.');
+      await redirectToMainLobby();
+      return;
+    }
+
     toastStore.error(error.message);
   } finally {
     isLoading.value = false;
@@ -1047,11 +1071,8 @@ async function syncRoom() {
         await syncRoomPresence();
         redirectToGameIfStarted();
       } catch (error) {
-        if (
-          error.message.includes('Not Found') ||
-          error.message.includes('Failed to load room')
-        ) {
-          router.push('/home');
+        if (isRoomLoadError(error)) {
+          await redirectToMainLobby();
           return;
         }
         toastStore.error(error.message);

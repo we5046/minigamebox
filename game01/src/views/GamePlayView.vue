@@ -730,7 +730,11 @@ async function loadRoleSideData() {
 
 function isMissingRoomError(error) {
   const raw = error.cause || error.supabaseError || {}
-  return raw.code === 'PGRST116' || raw.details?.includes('0 rows')
+  return (
+    raw.code === 'PGRST116' ||
+    raw.details?.includes('0 rows') ||
+    error.message?.includes('방 정보를 불러오지 못했습니다')
+  )
 }
 
 function getRoomHeartbeatBackoffMs() {
@@ -849,7 +853,7 @@ async function loadGame({ silent = false } = {}) {
       }
     } catch (error) {
       if (isMissingRoomError(error)) {
-        await router.push('/home')
+        await router.replace({ name: 'home' })
         return
       }
 
