@@ -198,7 +198,7 @@ export async function createRoom({
   })
 
   if (error) {
-    throw createSupabaseError('createRoom: create_room rpc failed', error, '방 생성에 실패했습니다.')
+    throw createSupabaseError('createRoom: create_room rpc failed', error, getCreateRoomErrorMessage(error))
   }
 
   if (!room?.id) {
@@ -218,6 +218,24 @@ export async function createRoom({
   }
 
   return getRoom(room.id)
+}
+
+function getCreateRoomErrorMessage(error) {
+  const message = error?.message || ''
+
+  if (error?.code === 'PGRST203') {
+    return '방 생성 DB 함수가 중복 배포되었습니다. Supabase에 room-admin.sql을 다시 적용해야 합니다.'
+  }
+
+  if (error?.code === 'PGRST202' || message.includes('Could not find the function public.create_room')) {
+    return '방 생성 DB 함수가 배포되지 않았습니다. Supabase에 room-admin.sql을 적용해야 합니다.'
+  }
+
+  if (message.includes('Not authenticated')) {
+    return '로그인이 필요합니다.'
+  }
+
+  return message || '방 생성에 실패했습니다.'
 }
 
 export async function joinRoom(roomId, entryPassword = '') {

@@ -31,6 +31,10 @@
 
 이 항목은 `room-admin.sql`에 `create_room`, `join_room`, `leave_room`을 추가해 해결했습니다. 이제 이 저장소의 SQL 파일만으로도 방 생성, 입장, 퇴장 RPC를 재현할 수 있습니다.
 
+추가로 기존 DB에 남아 있던 레거시 `create_room` 오버로드를 제거하도록 구성했습니다. 프론트엔드와 동일한 14개 인자 함수만 다시 생성하므로 PostgREST의 `PGRST203` 함수 선택 오류를 방지합니다.
+
+`heartbeat_room_presence`, `cleanup_stale_room_players`도 같은 파일에서 재생성합니다. 게임 화면의 만료 단계 재동기화 간격은 3초에서 1초로 줄였습니다.
+
 적용 내용:
 
 - `create_room`: 방 생성, 고유 방 코드 생성, 생성자를 호스트 참가자로 등록

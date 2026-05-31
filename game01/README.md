@@ -36,3 +36,25 @@ npm run dev
 ```sh
 npm run build
 ```
+
+## Supabase RPC deployment
+
+Apply the SQL files in this order after the base tables exist:
+
+1. `room-admin.sql`
+
+`room-admin.sql` removes historical `create_room` overloads before recreating
+the RPC used by the frontend. This avoids PostgREST `PGRST203` errors. It also
+recreates the room presence heartbeat and stale-player cleanup RPCs used by the
+lobby and game screens.
+
+After applying the file in the Supabase SQL Editor, verify that only one
+`create_room` function remains:
+
+```sql
+select p.oid::regprocedure
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname = 'create_room';
+```

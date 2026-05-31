@@ -43,3 +43,4 @@ __screenshots__/
 
 # SQL
 *.sql
+!room-admin.sql

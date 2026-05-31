@@ -13,6 +13,8 @@ const presenceSubscribers = new Set()
 let lastPresenceUsers = []
 let currentPresencePayload = null
 let hasWarnedPresenceUnavailable = false
+let presenceTrackPromise = null
+let pendingPresencePayload = null
 
 function clearPresenceReadyTimer() {
   if (presenceReadyTimer) {
@@ -58,6 +60,16 @@ function emitPresenceUsers() {
 
   lastPresenceUsers = normalizePresenceUsers(presenceChannel.presenceState())
   presenceSubscribers.forEach((callback) => callback(lastPresenceUsers))
+}
+
+function hasSamePresencePayload(left, right) {
+  return (
+    left?.userId === right?.userId &&
+    left?.nickname === right?.nickname &&
+    left?.status === right?.status &&
+    left?.roomId === right?.roomId &&
+    left?.canReceiveWhisper === right?.canReceiveWhisper
+  )
 }
 
 function createPresenceChannel(userId) {
@@ -156,7 +168,7 @@ export async function setCurrentUserPresence({
     return
   }
 
-  currentPresencePayload = {
+  const nextPresencePayload = {
     userId,
     nickname: nickname || currentPresencePayload?.nickname || 'GuestPlayer',
     status: status || currentPresencePayload?.status || 'offline',
@@ -164,18 +176,44 @@ export async function setCurrentUserPresence({
     canReceiveWhisper,
   }
 
-  const result = await channel.track({
-    nickname: currentPresencePayload.nickname,
-    status: currentPresencePayload.status,
-    roomId: currentPresencePayload.roomId,
-    canReceiveWhisper: currentPresencePayload.canReceiveWhisper,
-    onlineAt: new Date().toISOString(),
-  })
+  if (
+    hasSamePresencePayload(currentPresencePayload, nextPresencePayload) ||
+    hasSamePresencePayload(pendingPresencePayload, nextPresencePayload)
+  ) {
+    return
+  }
 
-  if (result !== 'ok') {
+  const previousTrackPromise = presenceTrackPromise
+  pendingPresencePayload = nextPresencePayload
+  const nextTrackPromise = (async () => {
+    await previousTrackPromise?.catch(() => {})
+    const result = await channel.track({
+      nickname: nextPresencePayload.nickname,
+      status: nextPresencePayload.status,
+      roomId: nextPresencePayload.roomId,
+      canReceiveWhisper: nextPresencePayload.canReceiveWhisper,
+      onlineAt: new Date().toISOString(),
+    })
+
+    if (result === 'ok' && presenceChannel === channel) {
+      currentPresencePayload = nextPresencePayload
+      hasWarnedPresenceUnavailable = false
+      return
+    }
+
     if (!hasWarnedPresenceUnavailable) {
       hasWarnedPresenceUnavailable = true
       console.warn('[Presence] Failed to track current user presence.', { result })
+    }
+  })()
+  presenceTrackPromise = nextTrackPromise
+
+  try {
+    await nextTrackPromise
+  } finally {
+    if (presenceTrackPromise === nextTrackPromise) {
+      presenceTrackPromise = null
+      pendingPresencePayload = null
     }
   }
 }
@@ -193,6 +231,8 @@ export async function clearCurrentUserPresence() {
   rejectPresenceReady = null
   clearPresenceReadyTimer()
   currentPresencePayload = null
+  presenceTrackPromise = null
+  pendingPresencePayload = null
   hasWarnedPresenceUnavailable = false
   lastPresenceUsers = []
 

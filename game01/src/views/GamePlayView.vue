@@ -69,6 +69,7 @@ let roomHeartbeatPromise = null
 let roomHeartbeatFailureCount = 0
 let nextRoomHeartbeatAt = 0
 const uploadedLogGameIds = new Set()
+const EXPIRED_PHASE_SYNC_RETRY_MS = 1_000
 
 const roleLabels = {
   citizen: '시민',
@@ -736,7 +737,7 @@ async function maybeSyncExpiredGameState() {
   }
 
   const now = Date.now()
-  if (now - lastExpiredSyncAt.value < 3000) {
+  if (now - lastExpiredSyncAt.value < EXPIRED_PHASE_SYNC_RETRY_MS) {
     return
   }
 
