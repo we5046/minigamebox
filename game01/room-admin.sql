@@ -512,7 +512,7 @@ begin
   end if;
 
   return query
-  select rp.user_id, rp.role
+  select rp.user_id, rp.role::text
   from public.room_players rp
   join public.rooms r on r.id = rp.room_id
   where rp.room_id = p_room_id

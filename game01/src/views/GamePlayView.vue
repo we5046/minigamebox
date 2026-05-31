@@ -648,6 +648,10 @@ async function loadRoleSideData() {
   voteStatus.value = voteStatusResult.status === 'fulfilled' ? voteStatusResult.value : []
   visibleTeamMembers.value =
     visibleTeamMembersResult.status === 'fulfilled' ? visibleTeamMembersResult.value : []
+
+  if (visibleTeamMembersResult.status === 'rejected') {
+    console.warn('[Game] Failed to load visible team members.', visibleTeamMembersResult.reason)
+  }
 }
 
 function isMissingRoomError(error) {
