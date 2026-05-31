@@ -46,7 +46,8 @@ const visibleTeamMembers = ref([])
 const voteStatus = ref([])
 const messages = ref([])
 const chatDraft = ref('')
-const activeChatTab = ref('public')
+const deadChatDraft = ref('')
+const activeMainChatChannel = ref('public')
 const selectedNightTarget = ref('')
 const selectedVoteTarget = ref('')
 const isLoading = ref(false)
@@ -119,18 +120,6 @@ const actionGuides = {
   result: '이번 라운드 결과를 확인하세요.',
   ended: '게임이 종료되었습니다.',
   finished: '게임이 종료되었습니다.',
-}
-
-const chatPanelTitles = {
-  role_reveal: '게임 로그',
-  night: '밤 진행 로그',
-  day: '실시간 채팅',
-  discussion: '실시간 채팅',
-  vote: '투표 토론',
-  final_defense: '최후의 변론',
-  result: '결과 로그',
-  ended: '게임 종료',
-  finished: '게임 종료',
 }
 
 const chatPhaseBanners = {
@@ -238,42 +227,27 @@ const nightRoleChatChannel = computed(() => {
   if (roleKey.value === 'police') return 'police'
   return ''
 })
-const availableChatTabs = computed(() => {
-  if (!isAlive.value) {
-    return [
-      { key: 'public', label: '전체 로그', writable: false },
-      { key: 'dead', label: '사후', writable: true },
-      { key: 'mafia', label: '마피아 관전', writable: false },
-      { key: 'police', label: '경찰 관전', writable: false },
-    ]
-  }
-
-  const tabs = [{ key: 'public', label: '전체', writable: true }]
+const availableMainChatChannels = computed(() => {
+  const channels = [{ key: 'public', label: '전체' }]
 
   if (roleKey.value === 'mafia') {
-    tabs.push({ key: 'mafia', label: '마피아', writable: true })
+    channels.push({ key: 'mafia', label: '마피아' })
   }
 
   if (roleKey.value === 'police') {
-    tabs.push({ key: 'police', label: '경찰', writable: true })
+    channels.push({ key: 'police', label: '경찰' })
   }
 
-  return tabs
+  return channels
 })
-const activeChatTabInfo = computed(
-  () => availableChatTabs.value.find((tab) => tab.key === activeChatTab.value) || availableChatTabs.value[0],
+const activeMainChatChannelInfo = computed(
+  () =>
+    availableMainChatChannels.value.find((channel) => channel.key === activeMainChatChannel.value) ||
+    availableMainChatChannels.value[0],
 )
-const chatChannelType = computed(() => activeChatTabInfo.value?.key || 'public')
+const chatChannelType = computed(() => activeMainChatChannelInfo.value?.key || 'public')
 const chatChannelLabel = computed(() => chatChannelLabels[chatChannelType.value] || '전체')
 const canChatInCurrentPhase = computed(() => {
-  if (!activeChatTabInfo.value?.writable) {
-    return false
-  }
-
-  if (chatChannelType.value === 'dead') {
-    return !isAlive.value
-  }
-
   if (['mafia', 'police'].includes(chatChannelType.value)) {
     return phaseKey.value === 'night' && chatChannelType.value === nightRoleChatChannel.value
   }
@@ -291,6 +265,14 @@ const canChatInCurrentPhase = computed(() => {
 const canChat = computed(
   () =>
     canChatInCurrentPhase.value &&
+    isAlive.value &&
+    room.value?.status === 'playing' &&
+    Boolean(game.value?.id) &&
+    Boolean(savedUser.value?.id),
+)
+const canSendDeadChat = computed(
+  () =>
+    !isAlive.value &&
     room.value?.status === 'playing' &&
     Boolean(game.value?.id) &&
     Boolean(savedUser.value?.id),
@@ -336,28 +318,10 @@ const canSkipPhaseCommand = computed(
 const canUseChatInput = computed(() => canChat.value || canSkipPhaseCommand.value)
 const canSubmitChatInput = computed(() => canChat.value || (canSkipPhaseCommand.value && isSkipCommand.value))
 const actionGuide = computed(() => actionGuides[phaseKey.value] || '다음 단계를 기다리세요.')
-const chatPanelTitle = computed(() => {
-  if (chatChannelType.value === 'dead') {
-    return '사후 채팅'
-  }
-
-  if (chatChannelType.value !== 'public') {
-    return `${chatChannelLabel.value} 팀 채팅`
-  }
-
-  return chatPanelTitles[phaseKey.value] || '게임 채팅'
-})
+const chatPanelTitle = computed(() => (isAlive.value ? '메인 채팅' : '메인 채팅 관전'))
 const chatPhaseBanner = computed(() => {
-  if (chatChannelType.value === 'dead') {
-    return '사망한 플레이어끼리만 대화할 수 있는 사후 채팅입니다.'
-  }
-
-  if (!isAlive.value && ['mafia', 'police'].includes(chatChannelType.value)) {
-    return `사망한 플레이어는 ${chatChannelLabel.value} 팀 채팅을 읽기만 할 수 있습니다.`
-  }
-
-  if (chatChannelType.value !== 'public') {
-    return `${chatChannelLabel.value} 팀만 볼 수 있는 밤 채팅입니다.`
+  if (!isAlive.value) {
+    return '사망한 플레이어는 전체 로그와 밤 채팅을 관전할 수 있습니다.'
   }
 
   return chatPhaseBanners[phaseKey.value] || '현재 게임 진행 상황을 확인하세요.'
@@ -365,15 +329,11 @@ const chatPhaseBanner = computed(() => {
 const chatPlaceholder = computed(
   () =>
     canChat.value
-      ? chatChannelType.value === 'dead'
-        ? '사망한 플레이어끼리 대화할 수 있습니다'
-        : phaseKey.value === 'night'
+      ? phaseKey.value === 'night'
         ? `${chatChannelLabel.value} 팀 채팅을 입력하세요`
         : chatPlaceholders[phaseKey.value] || '메시지를 입력하세요'
-      : !isAlive.value && ['mafia', 'police'].includes(chatChannelType.value)
-        ? '사망한 플레이어는 이 채팅을 읽기만 할 수 있습니다'
-      : !isAlive.value && chatChannelType.value === 'public'
-        ? '사망한 플레이어는 전체 채팅을 읽기만 할 수 있습니다'
+      : !isAlive.value
+        ? '사망자는 메인 채팅에 참여할 수 없습니다. 사후 채팅을 이용하세요'
       : phaseKey.value === 'final_defense'
         ? canSkipPhaseCommand.value
           ? '변론 대상만 채팅할 수 있습니다. 방장은 /스킵으로 넘길 수 있습니다'
@@ -539,14 +499,18 @@ function canSeeGameMessage(message) {
   return messageChannel === roleKey.value
 }
 
-const visibleMessages = computed(() =>
+const mainVisibleMessages = computed(() =>
   messages.value.filter((message) => {
     if (message.isSystem || message.messageType === 'system') {
-      return activeChatTab.value === 'public'
+      return true
     }
 
-    return (message.channelType || 'public') === activeChatTab.value
+    const messageChannel = message.channelType || 'public'
+    return messageChannel !== 'dead'
   }),
+)
+const deadChatMessages = computed(() =>
+  isAlive.value ? [] : messages.value.filter((message) => message.channelType === 'dead'),
 )
 
 function selectParticipant(userId) {
@@ -924,6 +888,30 @@ async function handleSendMessage() {
   }
 }
 
+async function handleSendDeadMessage() {
+  if (isSending.value || !deadChatDraft.value.trim() || !canSendDeadChat.value) return
+
+  isSending.value = true
+
+  try {
+    const sentMessage = await sendGameMessage({
+      roomId: roomId.value,
+      gameId: game.value?.id,
+      userId: savedUser.value?.id,
+      nickname: savedUser.value?.nickname || '알 수 없음',
+      content: deadChatDraft.value,
+      channelType: 'dead',
+    })
+
+    deadChatDraft.value = ''
+    pushMessage(sentMessage)
+  } catch (error) {
+    toastStore.error(error.message)
+  } finally {
+    isSending.value = false
+  }
+}
+
 async function handleSkipPhaseCommand() {
   if (!canSkipPhaseCommand.value) {
     toastStore.error('방장만 /스킵 명령을 사용할 수 있습니다.')
@@ -1022,14 +1010,14 @@ watch(isAlive, (alive, wasAlive) => {
   messages.value = messages.value.filter(canSeeGameMessage)
 
   if (!alive && wasAlive !== false) {
-    activeChatTab.value = 'dead'
     toastStore.info('사망했습니다. 이제 사후 채팅에 참여할 수 있습니다.')
+    loadMessages()
   }
 })
 
-watch(availableChatTabs, (tabs) => {
-  if (!tabs.some((tab) => tab.key === activeChatTab.value)) {
-    activeChatTab.value = tabs[0]?.key || 'public'
+watch(availableMainChatChannels, (channels) => {
+  if (!channels.some((channel) => channel.key === activeMainChatChannel.value)) {
+    activeMainChatChannel.value = channels[0]?.key || 'public'
   }
 })
 
@@ -1038,7 +1026,7 @@ watch([phaseKey, nightRoleChatChannel, isAlive], ([phase, teamChannel, alive]) =
     return
   }
 
-  activeChatTab.value = phase === 'night' && teamChannel ? teamChannel : 'public'
+  activeMainChatChannel.value = phase === 'night' && teamChannel ? teamChannel : 'public'
 })
 
 onMounted(async () => {
@@ -1247,7 +1235,8 @@ onBeforeUnmount(() => {
       </section>
 
       <main v-else class="game-layout">
-        <section class="chat-panel">
+        <div class="chat-area" :class="{ dead: !isAlive }">
+        <section class="chat-panel main-chat-panel">
           <header class="chat-header">
             <div>
               <span class="eyebrow">LIVE DISCUSSION</span>
@@ -1263,22 +1252,22 @@ onBeforeUnmount(() => {
             {{ chatPhaseBanner }}
           </div>
 
-          <nav class="chat-tabs" aria-label="채팅 채널">
+          <nav v-if="isAlive && availableMainChatChannels.length > 1" class="chat-tabs" aria-label="전송 채널">
             <button
-              v-for="tab in availableChatTabs"
-              :key="tab.key"
+              v-for="channel in availableMainChatChannels"
+              :key="channel.key"
               type="button"
               class="chat-tab"
-              :class="[tab.key, { active: activeChatTab === tab.key }]"
-              @click="activeChatTab = tab.key"
+              :class="[channel.key, { active: activeMainChatChannel === channel.key }]"
+              @click="activeMainChatChannel = channel.key"
             >
-              {{ tab.label }}
+              {{ channel.label }}
             </button>
           </nav>
 
           <div ref="chatMessagesRef" class="chat-messages">
             <div
-              v-for="message in visibleMessages"
+              v-for="message in mainVisibleMessages"
               :key="message.id"
               :class="
                 message.messageType === 'system'
@@ -1307,7 +1296,7 @@ onBeforeUnmount(() => {
               </template>
             </div>
 
-            <div v-if="visibleMessages.length === 0" class="empty-chat">
+            <div v-if="mainVisibleMessages.length === 0" class="empty-chat">
               아직 메시지가 없습니다. 토론이 시작되면 이곳에서 대화가 진행됩니다.
             </div>
           </div>
@@ -1325,6 +1314,57 @@ onBeforeUnmount(() => {
             </button>
           </form>
         </section>
+
+        <section v-if="!isAlive" class="chat-panel dead-chat-panel">
+          <header class="chat-header">
+            <div>
+              <span class="eyebrow">AFTERLIFE</span>
+              <h2 class="chat-title">사후 채팅</h2>
+            </div>
+            <span class="chat-status-badge">채팅 가능</span>
+          </header>
+
+          <div class="chat-phase-banner dead">
+            사망한 플레이어끼리만 대화할 수 있습니다.
+          </div>
+
+          <div class="chat-messages">
+            <div
+              v-for="message in deadChatMessages"
+              :key="message.id"
+              :class="[
+                'chat-message-row',
+                message.userId === savedUser?.id ? 'mine' : 'other',
+              ]"
+            >
+              <div class="chat-bubble channel-dead">
+                <div class="chat-meta">
+                  <strong>{{ message.nickname }}</strong>
+                  <span class="chat-channel-chip dead">사후</span>
+                  <time>{{ message.createdAt }}</time>
+                </div>
+                <p>{{ message.content }}</p>
+              </div>
+            </div>
+
+            <div v-if="deadChatMessages.length === 0" class="empty-chat">
+              아직 사후 채팅 메시지가 없습니다.
+            </div>
+          </div>
+
+          <form class="chat-input-area" @submit.prevent="handleSendDeadMessage">
+            <input
+              v-model="deadChatDraft"
+              :disabled="!canSendDeadChat || isSending"
+              placeholder="사망한 플레이어끼리 대화할 수 있습니다"
+              maxlength="240"
+            />
+            <button type="submit" :disabled="!canSendDeadChat || isSending || !deadChatDraft.trim()">
+              전송
+            </button>
+          </form>
+        </section>
+        </div>
 
         <section class="info-card survivors-card survivors-card-main" :class="{ voting: phaseKey === 'vote' }">
           <header class="survivors-card-header">
@@ -1613,9 +1653,16 @@ button:disabled {
   grid-template-columns: minmax(0, 7fr) minmax(18rem, 3fr);
 }
 
-.chat-panel {
+.chat-area {
   grid-column: 1;
   grid-row: 1;
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.chat-area.dead {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .survivors-card-main {
@@ -2461,6 +2508,12 @@ button:disabled {
   padding: 0.72rem 1.25rem;
 }
 
+.chat-phase-banner.dead {
+  background: rgba(88, 28, 135, 0.2);
+  border-bottom-color: rgba(192, 132, 252, 0.22);
+  color: #e9d5ff;
+}
+
 .chat-tabs {
   background: rgba(0, 0, 0, 0.2);
   border-bottom: 1px solid rgba(255, 190, 85, 0.1);
@@ -2609,6 +2662,12 @@ button:disabled {
   padding: 0.12rem 0.42rem;
 }
 
+.chat-channel-chip.dead {
+  background: rgba(88, 28, 135, 0.35);
+  border-color: rgba(192, 132, 252, 0.52);
+  color: #e9d5ff;
+}
+
 .chat-meta time {
   color: rgba(255, 245, 224, 0.42);
   font-size: 0.72rem;
@@ -2730,10 +2789,15 @@ button:disabled {
   }
 
   .chat-panel,
+  .chat-area,
   .survivors-card-main,
   .game-info-panel {
     grid-column: auto;
     grid-row: auto;
+  }
+
+  .chat-area.dead {
+    grid-template-columns: 1fr;
   }
 
   .game-info-panel {
