@@ -608,6 +608,18 @@ export async function getMyRoleInfo(roomId) {
   return data || null
 }
 
+export async function getVisibleTeamMembers(roomId) {
+  const { data, error } = await supabase.rpc('get_visible_team_members', {
+    p_room_id: roomId,
+  })
+
+  if (error) {
+    throw createSupabaseError('getVisibleTeamMembers: get_visible_team_members rpc failed', error, '팀원 정보를 불러오지 못했습니다.')
+  }
+
+  return data || []
+}
+
 export async function getVoteStatus(roomId) {
   const { data, error } = await supabase.rpc('get_vote_status', {
     p_room_id: roomId,

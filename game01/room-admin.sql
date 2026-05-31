@@ -482,6 +482,48 @@ $$;
 revoke all on function public.cleanup_stale_room_players(integer, integer) from public;
 grant execute on function public.cleanup_stale_room_players(integer, integer) to authenticated;
 
+drop function if exists public.get_visible_team_members(uuid);
+
+create function public.get_visible_team_members(p_room_id uuid)
+returns table (
+  user_id uuid,
+  team_role text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_team_role text;
+begin
+  if v_user_id is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select role
+    into v_team_role
+  from public.room_players
+  where room_id = p_room_id
+    and user_id = v_user_id;
+
+  if v_team_role not in ('mafia', 'police') then
+    return;
+  end if;
+
+  return query
+  select rp.user_id, rp.role
+  from public.room_players rp
+  join public.rooms r on r.id = rp.room_id
+  where rp.room_id = p_room_id
+    and rp.role = v_team_role
+    and r.status = 'playing';
+end;
+$$;
+
+revoke all on function public.get_visible_team_members(uuid) from public;
+grant execute on function public.get_visible_team_members(uuid) to authenticated;
+
 grant select, insert on public.game_messages to authenticated;
 
 alter table public.game_messages enable row level security;

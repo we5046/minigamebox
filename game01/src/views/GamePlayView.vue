@@ -14,6 +14,7 @@ import {
   getGameResult,
   getMyGameRole,
   getMyRoleInfo,
+  getVisibleTeamMembers,
   getRoom,
   getVoteStatus,
   heartbeatRoomPresence,
@@ -41,6 +42,7 @@ const game = ref(null)
 const gameResult = ref(null)
 const myRole = ref(null)
 const roleInfo = ref(null)
+const visibleTeamMembers = ref([])
 const voteStatus = ref([])
 const messages = ref([])
 const chatDraft = ref('')
@@ -200,12 +202,17 @@ const isFinalDefenseTarget = computed(
   () => phaseKey.value === 'final_defense' && savedUser.value?.id === finalDefenseTargetId.value,
 )
 const playersWithStatus = computed(() =>
-  (room.value?.players || []).map((player) => ({
-    ...player,
-    isMe: player.userId === savedUser.value?.id,
-    isMyVoteTarget: myVoteTargetId.value === player.userId,
-    isFinalDefenseTarget: finalDefenseTargetId.value === player.userId,
-  })),
+  (room.value?.players || []).map((player) => {
+    const visibleTeamMember = visibleTeamMembers.value.find((member) => member.user_id === player.userId)
+
+    return {
+      ...player,
+      isMe: player.userId === savedUser.value?.id,
+      isMyVoteTarget: myVoteTargetId.value === player.userId,
+      isFinalDefenseTarget: finalDefenseTargetId.value === player.userId,
+      visibleTeamRole: visibleTeamMember?.team_role || '',
+    }
+  }),
 )
 const alivePlayers = computed(() => playersWithStatus.value.filter((player) => player.isAlive !== false))
 const targetPlayers = computed(() => alivePlayers.value)
@@ -349,6 +356,8 @@ const resultWinnerLabel = computed(() =>
   resultWinner.value === 'mafia' ? '마피아 팀 승리' : '시민 팀 승리',
 )
 const resultWinnerAccent = computed(() => (resultWinner.value === 'mafia' ? 'mafia' : 'citizen'))
+const resultMvp = computed(() => resultSummary.value?.mvp || gameResult.value?.mvp || null)
+const resultSurvivorCount = computed(() => resultPlayers.value.filter((player) => player.is_alive).length)
 const myResultPlayer = computed(
   () => resultPlayers.value.find((player) => player.user_id === savedUser.value?.id) || null,
 )
@@ -583,16 +592,19 @@ function pushMessage(message) {
 
 async function loadRoleSideData() {
   try {
-    const [nextRoleInfo, nextVoteStatus] = await Promise.all([
+    const [nextRoleInfo, nextVoteStatus, nextVisibleTeamMembers] = await Promise.all([
       getMyRoleInfo(roomId.value),
       getVoteStatus(roomId.value),
+      getVisibleTeamMembers(roomId.value).catch(() => []),
     ])
 
     roleInfo.value = nextRoleInfo
     voteStatus.value = nextVoteStatus
+    visibleTeamMembers.value = nextVisibleTeamMembers
   } catch (error) {
     roleInfo.value = null
     voteStatus.value = []
+    visibleTeamMembers.value = []
   }
 }
 
@@ -992,32 +1004,65 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="status-actions">
-          <span>남은 시간 <b>{{ remainingSeconds }}초</b></span>
-          <button type="button" @click="router.push(`/rooms/${roomId}`)">대기방 보기</button>
-          <button
-            v-if="isHost"
-            class="end-game-button"
-            type="button"
-            :disabled="isEnding"
-            @click="isEndConfirmOpen = true"
-          >
-            게임 종료
-          </button>
+          <template v-if="isGameOverScreen">
+            <div class="game-over-countdown">
+              <strong>{{ returnToLobbySeconds }}초</strong>
+              <span>후 대기방으로 이동</span>
+            </div>
+            <button type="button" :disabled="isReturningToLobby" @click="returnToLobbyNow">
+              대기방으로 돌아가기
+            </button>
+          </template>
+          <template v-else>
+            <span>남은 시간 <b>{{ remainingSeconds }}초</b></span>
+            <button type="button" @click="router.push(`/rooms/${roomId}`)">대기방 보기</button>
+            <button
+              v-if="isHost"
+              class="end-game-button"
+              type="button"
+              :disabled="isEnding"
+              @click="isEndConfirmOpen = true"
+            >
+              게임 종료
+            </button>
+          </template>
         </div>
       </header>
 
       <section v-if="isGameOverScreen" class="game-over-screen">
-        <header class="game-over-header">
-          <div>
-            <span class="eyebrow">GAME OVER</span>
-            <h2>{{ resultWinnerLabel }}</h2>
-            <p class="game-over-reason">{{ resultEndReason }}</p>
-          </div>
-          <div class="game-over-countdown">
-            <strong>{{ returnToLobbySeconds }}초</strong>
-            <span>후 대기방으로 이동합니다</span>
-          </div>
+        <header class="game-over-hero" :class="resultWinnerAccent">
+          <span class="eyebrow">GAME OVER</span>
+          <h2>🏆 {{ resultWinnerLabel }}</h2>
+          <p class="game-over-reason">{{ resultEndReason }}</p>
         </header>
+
+        <div class="result-primary-grid" :class="{ 'without-mvp': !resultMvp }">
+          <section v-if="resultMvp" class="result-panel mvp-panel">
+            <span class="section-kicker">🏅 이번 판 MVP</span>
+            <strong class="mvp-name">{{ resultMvp.nickname }}</strong>
+            <div class="result-badge-row">
+              <span>{{ getResultTeamLabel(resultMvp.role) }}</span>
+              <span>{{ resultMvp.is_alive ? '생존' : '사망' }}</span>
+            </div>
+            <p>{{ resultMvp.reason || resultMvp.summary || '이번 게임에서 인상적인 활약을 보여주었습니다.' }}</p>
+          </section>
+
+          <section class="result-panel my-result-panel">
+            <span class="section-kicker">내 결과</span>
+            <template v-if="myResultPlayer">
+              <strong class="my-result-title">{{ myContributionSummary.title }}</strong>
+              <div class="result-badge-row">
+                <span>{{ getResultTeamLabel(myResultPlayer.role) }}</span>
+                <span>{{ myResultPlayer.is_alive ? '생존' : '사망' }}</span>
+                <span :class="{ victory: myResultPlayer.is_winner, defeat: !myResultPlayer.is_winner }">
+                  {{ myResultPlayer.is_winner ? '승리' : '패배' }}
+                </span>
+              </div>
+              <p>{{ myContributionSummary.description }}</p>
+            </template>
+            <p v-else>이번 게임의 개인 결과를 불러오지 못했습니다.</p>
+          </section>
+        </div>
 
         <div class="game-over-grid">
           <section class="result-panel winner-panel" :class="resultWinnerAccent">
@@ -1031,7 +1076,7 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="result-panel">
-            <span class="section-kicker">요약</span>
+            <span class="section-kicker">게임 요약</span>
             <div class="result-summary-grid">
               <article>
                 <strong>승리 팀</strong>
@@ -1042,17 +1087,18 @@ onBeforeUnmount(() => {
                 <p>{{ resultEndReason }}</p>
               </article>
               <article>
-                <strong>대기방 복귀</strong>
-                <p>{{ returnToLobbySeconds }}초 후</p>
+                <strong>라운드</strong>
+                <p>Round {{ game?.round_no || 1 }}</p>
+              </article>
+              <article>
+                <strong>생존자</strong>
+                <p>{{ resultSurvivorCount }} / {{ resultPlayers.length }}명</p>
               </article>
             </div>
-            <button type="button" class="return-button" :disabled="isReturningToLobby" @click="returnToLobbyNow">
-              지금 대기방으로 돌아가기
-            </button>
           </section>
 
           <section class="result-panel my-contribution-panel">
-            <span class="section-kicker">내 기여</span>
+            <span class="section-kicker">내 기여 상세</span>
             <div class="my-contribution-summary">
               <strong>{{ myContributionSummary.title }}</strong>
               <p>{{ myContributionSummary.description }}</p>
@@ -1078,14 +1124,17 @@ onBeforeUnmount(() => {
                   <span>{{ getResultTeamLabel(player.role) }}</span>
                 </div>
                 <div class="player-result-status">
-                  <span>{{ player.is_alive ? '생존' : '사망' }}</span>
-                  <b v-if="player.is_winner">승리</b>
-                  <b v-else>패배</b>
+                  <span :class="{ alive: player.is_alive, dead: !player.is_alive }">
+                    {{ player.is_alive ? '생존' : '사망' }}
+                  </span>
+                  <b :class="{ victory: player.is_winner, defeat: !player.is_winner }">
+                    {{ player.is_winner ? '승리' : '패배' }}
+                  </b>
                 </div>
               </header>
 
               <ul v-if="player.logs?.length" class="player-log-list">
-                <li v-for="log in player.logs.slice(0, 5)" :key="log">{{ log }}</li>
+                <li v-for="log in player.logs.slice(0, 3)" :key="log">{{ log }}</li>
               </ul>
               <p v-else class="player-log-empty">기록된 행동 로그가 없습니다.</p>
             </article>
@@ -1212,6 +1261,8 @@ onBeforeUnmount(() => {
                 dead: !player.isAlive,
                 me: player.isMe,
                 selected: player.userId === selectedParticipantId,
+                'team-mafia': player.visibleTeamRole === 'mafia',
+                'team-police': player.visibleTeamRole === 'police',
               }"
               :disabled="!canNightAction && !canVote"
               @click="selectParticipant(player.userId)"
@@ -1274,7 +1325,12 @@ onBeforeUnmount(() => {
                 v-for="player in playersWithStatus"
                 :key="player.userId"
                 class="survivor-chip"
-                :class="{ dead: !player.isAlive, me: player.isMe }"
+                :class="{
+                  dead: !player.isAlive,
+                  me: player.isMe,
+                  'team-mafia': player.visibleTeamRole === 'mafia',
+                  'team-police': player.visibleTeamRole === 'police',
+                }"
               >
                 <strong>{{ player.nickname }}</strong>
                 <span v-if="player.isMe">나</span>
@@ -1844,6 +1900,24 @@ button:disabled {
   border-color: rgba(255, 190, 85, 0.36);
 }
 
+.survivor-chip.team-mafia {
+  background: rgba(127, 29, 29, 0.16);
+  border-color: rgba(248, 113, 113, 0.38);
+}
+
+.survivor-chip.team-mafia strong {
+  color: #fca5a5;
+}
+
+.survivor-chip.team-police {
+  background: rgba(30, 64, 175, 0.14);
+  border-color: rgba(96, 165, 250, 0.36);
+}
+
+.survivor-chip.team-police strong {
+  color: #93c5fd;
+}
+
 .survivor-chip.dead {
   opacity: 0.55;
 }
@@ -1866,49 +1940,73 @@ button:disabled {
   z-index: 1;
 }
 
-.game-over-header {
-  align-items: start;
+.game-over-hero {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
+    linear-gradient(180deg, rgba(255, 190, 85, 0.1), rgba(255, 255, 255, 0.02)),
     rgba(14, 10, 8, 0.82);
-  border: 1px solid rgba(255, 190, 85, 0.16);
+  border: 1px solid rgba(255, 190, 85, 0.34);
   border-radius: 16px;
-  display: flex;
-  gap: 1rem;
-  justify-content: space-between;
-  padding: 1.2rem 1.25rem;
+  box-shadow: inset 0 0 52px rgba(255, 190, 85, 0.06);
+  padding: 3rem 1.5rem;
+  text-align: center;
 }
 
-.game-over-header h2 {
+.game-over-hero.mafia {
+  border-color: rgba(248, 113, 113, 0.45);
+  box-shadow: inset 0 0 58px rgba(127, 29, 29, 0.2);
+}
+
+.game-over-hero.citizen {
+  border-color: rgba(255, 190, 85, 0.42);
+}
+
+.game-over-hero h2 {
   color: #fff1d6;
-  font-size: clamp(1.9rem, 3vw, 2.6rem);
+  font-size: clamp(2.5rem, 5vw, 4.7rem);
   font-weight: 900;
-  margin: 0.18rem 0 0;
+  line-height: 1.08;
+  margin: 0.55rem 0 0;
 }
 
 .game-over-reason {
   color: rgba(255, 245, 224, 0.78);
-  font-weight: 800;
+  font-size: 1.05rem;
+  font-weight: 850;
   line-height: 1.5;
-  margin: 0.35rem 0 0;
+  margin: 0.8rem 0 0;
 }
 
 .game-over-countdown {
-  align-items: center;
-  background: rgba(0, 0, 0, 0.24);
-  border: 1px solid rgba(255, 190, 85, 0.16);
-  border-radius: 12px;
-  color: rgba(255, 245, 224, 0.8);
+  align-items: end;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 190, 85, 0.14);
+  border-radius: 8px;
+  color: rgba(255, 245, 224, 0.68);
   display: grid;
-  gap: 0.15rem;
-  padding: 0.9rem 1rem;
+  gap: 0.08rem;
+  padding: 0.48rem 0.68rem;
   text-align: right;
 }
 
 .game-over-countdown strong {
   color: #ffbe55;
-  font-size: 1.7rem;
+  font-size: 1.05rem;
   line-height: 1;
+}
+
+.game-over-countdown span {
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.result-primary-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.result-primary-grid.without-mvp {
+  grid-template-columns: 1fr;
 }
 
 .game-over-grid {
@@ -1926,6 +2024,72 @@ button:disabled {
   display: grid;
   gap: 0.9rem;
   padding: 1rem;
+}
+
+.mvp-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 190, 85, 0.15), rgba(255, 190, 85, 0.035)),
+    rgba(14, 10, 8, 0.84);
+  border-color: rgba(255, 190, 85, 0.48);
+  box-shadow:
+    0 0 0 1px rgba(255, 190, 85, 0.08),
+    0 16px 42px rgba(255, 154, 31, 0.12);
+}
+
+.mvp-name,
+.my-result-title {
+  color: #fff1d6;
+  font-size: 1.65rem;
+  font-weight: 900;
+}
+
+.mvp-panel p,
+.my-result-panel p {
+  color: rgba(255, 245, 224, 0.76);
+  font-weight: 800;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.my-result-panel {
+  background:
+    linear-gradient(180deg, rgba(52, 211, 153, 0.1), rgba(255, 255, 255, 0.016)),
+    rgba(14, 10, 8, 0.82);
+  border-color: rgba(52, 211, 153, 0.28);
+}
+
+.result-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.result-badge-row span,
+.player-result-status span,
+.player-result-status b {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  color: rgba(255, 245, 224, 0.78);
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 0.2rem 0.5rem;
+}
+
+.result-badge-row .victory,
+.player-result-status .victory,
+.player-result-status .alive {
+  background: rgba(52, 211, 153, 0.1);
+  border-color: rgba(52, 211, 153, 0.22);
+  color: #bbf7d0;
+}
+
+.result-badge-row .defeat,
+.player-result-status .defeat,
+.player-result-status .dead {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.22);
+  color: #fecaca;
 }
 
 .result-panel.winner-panel.mafia {
@@ -1966,7 +2130,7 @@ button:disabled {
 .result-summary-grid {
   display: grid;
   gap: 0.65rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .result-summary-grid article {
@@ -1988,18 +2152,6 @@ button:disabled {
   color: rgba(255, 245, 224, 0.88);
   font-weight: 850;
   margin: 0;
-}
-
-.return-button {
-  background: linear-gradient(180deg, #ffbe55, #b86b1b);
-  border: 0;
-  border-radius: 10px;
-  color: #231107;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 900;
-  min-height: 48px;
-  padding: 0.72rem 1rem;
 }
 
 .my-contribution-panel {
@@ -2062,12 +2214,16 @@ button:disabled {
 }
 
 .player-result-card.winner {
-  border-color: rgba(255, 190, 85, 0.4);
-  box-shadow: 0 0 0 1px rgba(255, 190, 85, 0.12);
+  border-color: rgba(52, 211, 153, 0.34);
+  box-shadow: 0 0 0 1px rgba(255, 190, 85, 0.1);
 }
 
 .player-result-card.mafia {
   background: rgba(127, 29, 29, 0.14);
+}
+
+.player-result-card:not(.winner) {
+  border-color: rgba(248, 113, 113, 0.2);
 }
 
 .player-result-header {
@@ -2084,8 +2240,7 @@ button:disabled {
   font-weight: 900;
 }
 
-.player-result-header span,
-.player-result-status span {
+.player-result-header div:first-child span {
   color: rgba(255, 245, 224, 0.62);
   font-size: 0.78rem;
   font-weight: 800;
@@ -2095,12 +2250,6 @@ button:disabled {
   display: grid;
   gap: 0.15rem;
   justify-items: end;
-}
-
-.player-result-status b {
-  color: #ffbe55;
-  font-size: 0.8rem;
-  font-weight: 900;
 }
 
 .player-log-list {
@@ -2371,6 +2520,10 @@ button:disabled {
   }
 
   .game-over-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .result-primary-grid {
     grid-template-columns: 1fr;
   }
 
