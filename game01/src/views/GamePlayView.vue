@@ -50,6 +50,8 @@ const deadChatDraft = ref('')
 const activeMainChatChannel = ref('public')
 const selectedNightTarget = ref('')
 const selectedVoteTarget = ref('')
+const selectedMemoPlayerId = ref('')
+const playerRoleMemos = ref({})
 const isLoading = ref(false)
 const isSending = ref(false)
 const isSubmittingAction = ref(false)
@@ -85,6 +87,13 @@ const roleLabels = {
   police: '경찰',
   doctor: '의사',
 }
+
+const playerMemoOptions = [
+  { key: '', label: '기본', description: '미분류', tone: 'default' },
+  { key: 'mafia', label: '마피아', description: '의심', tone: 'mafia' },
+  { key: 'police', label: '경찰', description: '신뢰', tone: 'police' },
+  { key: 'doctor', label: '의사', description: '보호', tone: 'doctor' },
+]
 
 const phaseLabels = {
   role_reveal: '역할 확인',
@@ -218,6 +227,7 @@ const playersWithStatus = computed(() =>
       isMe: player.userId === savedUser.value?.id,
       isMyVoteTarget: myVoteTargetId.value === player.userId,
       isFinalDefenseTarget: finalDefenseTargetId.value === player.userId,
+      memoRole: playerRoleMemos.value[player.userId] || '',
       visibleTeamRole: visibleTeamMember?.team_role || visibleTeamMember?.teamRole || fallbackTeamRole,
     }
   }),
@@ -373,6 +383,9 @@ const selectedParticipantId = computed(() =>
         ? finalDefenseTargetId.value
       : '',
 )
+const selectedMemoPlayer = computed(() =>
+  playersWithStatus.value.find((player) => player.userId === selectedMemoPlayerId.value) || null,
+)
 
 const isGameOverScreen = computed(
   () => game.value?.status === 'ended' || room.value?.status === 'game_over',
@@ -515,7 +528,64 @@ const deadChatMessages = computed(() =>
   isAlive.value ? [] : messages.value.filter((message) => message.channelType === 'dead'),
 )
 
+function getPlayerMemoStorageKey() {
+  const userId = savedUser.value?.id
+  const gameId = game.value?.id
+
+  return userId && roomId.value && gameId
+    ? `mafia-night-player-memos:${userId}:${roomId.value}:${gameId}`
+    : ''
+}
+
+function loadPlayerRoleMemos() {
+  const storageKey = getPlayerMemoStorageKey()
+
+  if (!storageKey) {
+    playerRoleMemos.value = {}
+    return
+  }
+
+  try {
+    playerRoleMemos.value = JSON.parse(localStorage.getItem(storageKey) || '{}')
+  } catch {
+    playerRoleMemos.value = {}
+  }
+}
+
+function savePlayerRoleMemos() {
+  const storageKey = getPlayerMemoStorageKey()
+  if (!storageKey) return
+
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(playerRoleMemos.value))
+  } catch (error) {
+    console.warn('[Game] Failed to save private player memos.', error)
+  }
+}
+
+function setPlayerRoleMemo(role) {
+  if (!selectedMemoPlayerId.value) return
+
+  const nextMemos = { ...playerRoleMemos.value }
+
+  if (role) {
+    nextMemos[selectedMemoPlayerId.value] = role
+  } else {
+    delete nextMemos[selectedMemoPlayerId.value]
+  }
+
+  playerRoleMemos.value = nextMemos
+  savePlayerRoleMemos()
+}
+
+function clearPlayerRoleMemos() {
+  playerRoleMemos.value = {}
+  savePlayerRoleMemos()
+}
+
 function selectParticipant(userId) {
+  selectedMemoPlayerId.value = userId
+
   if (canNightAction.value) {
     selectedNightTarget.value = userId
     return
@@ -1030,6 +1100,14 @@ watch([phaseKey, nightRoleChatChannel, isAlive], ([phase, teamChannel, alive]) =
   activeMainChatChannel.value = phase === 'night' && teamChannel ? teamChannel : 'public'
 })
 
+watch(
+  () => [savedUser.value?.id, roomId.value, game.value?.id],
+  () => {
+    selectedMemoPlayerId.value = ''
+    loadPlayerRoleMemos()
+  },
+)
+
 onMounted(async () => {
   await loadGame()
   startRoomHeartbeat()
@@ -1419,15 +1497,19 @@ onBeforeUnmount(() => {
                 dead: !player.isAlive,
                 me: player.isMe,
                 selected: player.userId === selectedParticipantId,
+                'memo-editing': player.userId === selectedMemoPlayerId,
                 'team-mafia': player.visibleTeamRole === 'mafia',
                 'team-police': player.visibleTeamRole === 'police',
+                [`memo-${player.memoRole}`]: player.memoRole,
               }"
-              :disabled="!canNightAction && !canVote"
               @click="selectParticipant(player.userId)"
             >
               <strong>{{ player.nickname }}</strong>
               <span v-if="player.visibleTeamRole === 'mafia'" class="team-identity-label mafia">마피아 팀</span>
               <span v-if="player.visibleTeamRole === 'police'" class="team-identity-label police">경찰 팀</span>
+              <span v-if="player.memoRole" class="player-memo-label" :class="player.memoRole">
+                메모 {{ roleLabels[player.memoRole] }}
+              </span>
               <span v-if="player.isMe">나</span>
               <span v-if="player.isHost">방장</span>
               <span>{{ player.isAlive ? '생존' : '사망' }}</span>
@@ -1435,6 +1517,37 @@ onBeforeUnmount(() => {
               <span v-if="phaseKey === 'final_defense' && player.isFinalDefenseTarget">변론 대상</span>
             </button>
           </div>
+          <section class="player-memo-panel" :class="{ empty: !selectedMemoPlayer }">
+            <div class="player-memo-heading">
+              <div>
+                <span class="section-kicker">개인 역할 메모</span>
+                <strong>{{ selectedMemoPlayer?.nickname || '참가자를 선택하세요' }}</strong>
+              </div>
+              <button
+                v-if="Object.keys(playerRoleMemos).length > 0"
+                type="button"
+                class="memo-reset-button"
+                @click="clearPlayerRoleMemos"
+              >
+                전체 초기화
+              </button>
+            </div>
+            <p v-if="!selectedMemoPlayer">참가자 카드를 누르면 나만 볼 수 있는 색상 메모를 남길 수 있습니다.</p>
+            <div v-else class="player-memo-options">
+              <button
+                v-for="option in playerMemoOptions"
+                :key="option.tone"
+                type="button"
+                class="player-memo-option"
+                :class="[option.tone, { active: (selectedMemoPlayer.memoRole || '') === option.key }]"
+                @click="setPlayerRoleMemo(option.key)"
+              >
+                <span class="memo-color-swatch"></span>
+                <strong>{{ option.label }}</strong>
+                <small>{{ option.description }}</small>
+              </button>
+            </div>
+          </section>
         </section>
         <aside class="game-info-panel">
           <section class="info-card my-info-card">
@@ -1490,11 +1603,15 @@ onBeforeUnmount(() => {
                   me: player.isMe,
                   'team-mafia': player.visibleTeamRole === 'mafia',
                   'team-police': player.visibleTeamRole === 'police',
+                  [`memo-${player.memoRole}`]: player.memoRole,
                 }"
               >
                 <strong>{{ player.nickname }}</strong>
                 <span v-if="player.visibleTeamRole === 'mafia'" class="team-identity-label mafia">마피아 팀</span>
                 <span v-if="player.visibleTeamRole === 'police'" class="team-identity-label police">경찰 팀</span>
+                <span v-if="player.memoRole" class="player-memo-label" :class="player.memoRole">
+                  메모 {{ roleLabels[player.memoRole] }}
+                </span>
                 <span v-if="player.isMe">나</span>
                 <span v-if="player.isHost">방장</span>
                 <span>{{ player.isAlive ? '생존' : '사망' }}</span>
@@ -2028,6 +2145,7 @@ button:disabled {
   border: 1px solid rgba(255, 190, 85, 0.13);
   border-radius: 10px;
   color: rgba(255, 245, 224, 0.82);
+  cursor: pointer;
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
@@ -2115,6 +2233,154 @@ button:disabled {
   box-shadow:
     0 0 0 1px rgba(255, 190, 85, 0.15),
     0 0 0 3px rgba(255, 190, 85, 0.08);
+}
+
+.survivor-chip.memo-editing {
+  outline: 1px dashed rgba(255, 210, 138, 0.72);
+  outline-offset: 3px;
+}
+
+.survivor-chip.memo-mafia {
+  background: rgba(127, 29, 29, 0.3);
+  border-color: rgba(248, 113, 113, 0.64);
+}
+
+.survivor-chip.memo-police {
+  background: rgba(30, 64, 175, 0.28);
+  border-color: rgba(96, 165, 250, 0.64);
+}
+
+.survivor-chip.memo-doctor {
+  background: rgba(20, 83, 45, 0.3);
+  border-color: rgba(74, 222, 128, 0.58);
+}
+
+.survivor-chip .player-memo-label {
+  border-width: 1px;
+}
+
+.survivor-chip .player-memo-label.mafia {
+  background: rgba(153, 27, 27, 0.7);
+  border-color: rgba(252, 165, 165, 0.48);
+  color: #fee2e2;
+}
+
+.survivor-chip .player-memo-label.police {
+  background: rgba(30, 64, 175, 0.68);
+  border-color: rgba(147, 197, 253, 0.48);
+  color: #dbeafe;
+}
+
+.survivor-chip .player-memo-label.doctor {
+  background: rgba(21, 128, 61, 0.62);
+  border-color: rgba(134, 239, 172, 0.44);
+  color: #dcfce7;
+}
+
+.player-memo-panel {
+  background: rgba(8, 7, 6, 0.42);
+  border: 1px solid rgba(255, 190, 85, 0.16);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+}
+
+.player-memo-panel.empty {
+  border-style: dashed;
+}
+
+.player-memo-panel p {
+  color: rgba(255, 245, 224, 0.58);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.player-memo-heading {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.player-memo-heading strong {
+  color: #fff1d6;
+  display: block;
+  font-size: 0.9rem;
+  margin-top: 0.2rem;
+}
+
+.memo-reset-button {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 190, 85, 0.18);
+  border-radius: 6px;
+  color: rgba(255, 245, 224, 0.7);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 900;
+  padding: 0.4rem 0.56rem;
+}
+
+.player-memo-options {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.player-memo-option {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  color: rgba(255, 245, 224, 0.76);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 0.16rem;
+  justify-items: start;
+  min-width: 0;
+  padding: 0.48rem;
+}
+
+.player-memo-option:hover,
+.player-memo-option:focus-visible,
+.player-memo-option.active {
+  border-color: rgba(255, 190, 85, 0.56);
+  box-shadow: 0 0 0 2px rgba(255, 190, 85, 0.08);
+}
+
+.player-memo-option strong {
+  font-size: 0.76rem;
+}
+
+.player-memo-option small {
+  color: rgba(255, 245, 224, 0.5);
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.memo-color-swatch {
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  height: 0.7rem;
+  width: 0.7rem;
+}
+
+.player-memo-option.mafia .memo-color-swatch {
+  background: #ef4444;
+}
+
+.player-memo-option.police .memo-color-swatch {
+  background: #3b82f6;
+}
+
+.player-memo-option.doctor .memo-color-swatch {
+  background: #22c55e;
 }
 
 .game-info-panel .survivors-card {
@@ -2840,6 +3106,10 @@ button:disabled {
 
   .game-info-panel {
     grid-template-columns: 1fr;
+  }
+
+  .player-memo-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>
