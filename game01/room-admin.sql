@@ -6,6 +6,12 @@ begin;
 alter table public.rooms
   add column if not exists game_type text not null default 'mafia';
 
+alter table public.profiles
+  add column if not exists level integer not null default 1,
+  add column if not exists experience integer not null default 0,
+  add column if not exists experience_percent integer not null default 0,
+  add column if not exists coin integer not null default 0;
+
 alter table public.room_players
   add column if not exists connection_status text not null default 'active',
   add column if not exists last_seen_at timestamptz not null default now(),
@@ -535,6 +541,273 @@ $$;
 revoke all on function public.get_visible_team_members(uuid) from public;
 grant execute on function public.get_visible_team_members(uuid) to authenticated;
 
+create table if not exists public.game_rewards (
+  id uuid primary key default gen_random_uuid(),
+  game_id uuid not null references public.games(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  exp_amount integer not null default 0,
+  coin_amount integer not null default 0,
+  reason jsonb not null default '[]'::jsonb,
+  old_level integer not null,
+  new_level integer not null,
+  old_experience integer not null,
+  new_experience integer not null,
+  experience_percent integer not null,
+  created_at timestamptz not null default now(),
+  constraint unique_game_user_reward unique (game_id, user_id)
+);
+
+alter table public.game_rewards enable row level security;
+
+revoke all on table public.game_rewards from public;
+grant select on table public.game_rewards to authenticated;
+
+drop policy if exists "players can read own game rewards" on public.game_rewards;
+
+create policy "players can read own game rewards"
+  on public.game_rewards for select
+  to authenticated
+  using (user_id = auth.uid());
+
+drop function if exists public.award_game_rewards(uuid);
+
+create function public.award_game_rewards(p_game_id uuid)
+returns table (
+  user_id uuid,
+  nickname text,
+  exp_gained integer,
+  coin_gained integer,
+  old_level integer,
+  new_level integer,
+  old_experience integer,
+  new_experience integer,
+  experience_percent integer,
+  reasons jsonb
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_request_user_id uuid := auth.uid();
+  v_game public.games;
+  v_player record;
+  v_profile public.profiles;
+  v_reward_id uuid;
+  v_exp_amount integer;
+  v_coin_amount integer;
+  v_reasons jsonb;
+  v_old_level integer;
+  v_new_level integer;
+  v_old_experience integer;
+  v_new_experience integer;
+  v_required_exp integer;
+  v_experience_percent integer;
+begin
+  if v_request_user_id is null and pg_trigger_depth() = 0 then
+    raise exception 'Not authenticated';
+  end if;
+
+  select *
+    into v_game
+  from public.games
+  where id = p_game_id
+  for update;
+
+  if not found then
+    raise exception 'Game not found';
+  end if;
+
+  if v_game.status not in ('ended', 'finished') then
+    raise exception 'Game is not finished';
+  end if;
+
+  if pg_trigger_depth() = 0 and not exists (
+    select 1
+    from public.game_result_players grp
+    where grp.game_id = p_game_id
+      and grp.user_id = v_request_user_id
+  ) then
+    raise exception 'Game participant required';
+  end if;
+
+  -- Keep eligibility rules here so minimum-round and disconnect handling can
+  -- be tightened later without allowing the browser to decide rewards.
+  for v_player in
+    select grp.user_id, grp.is_winner, grp.is_alive
+    from public.game_result_players grp
+    where grp.game_id = p_game_id
+  loop
+    v_exp_amount := 20;
+    v_coin_amount := 5;
+    v_reasons := jsonb_build_array('참가 보상');
+
+    if v_player.is_winner is true then
+      v_exp_amount := v_exp_amount + 40;
+      v_coin_amount := v_coin_amount + 15;
+      v_reasons := v_reasons || jsonb_build_array('승리 보상');
+    end if;
+
+    if v_player.is_alive is true then
+      v_exp_amount := v_exp_amount + 20;
+      v_coin_amount := v_coin_amount + 5;
+      v_reasons := v_reasons || jsonb_build_array('생존 보상');
+    end if;
+
+    v_exp_amount := least(v_exp_amount, 100);
+    v_coin_amount := least(v_coin_amount, 30);
+
+    select *
+      into v_profile
+    from public.profiles
+    where id = v_player.user_id
+    for update;
+
+    if not found then
+      continue;
+    end if;
+
+    v_old_level := greatest(coalesce(v_profile.level, 1), 1);
+    v_new_level := v_old_level;
+    v_old_experience := greatest(coalesce(v_profile.experience, 0), 0);
+    v_new_experience := v_old_experience + v_exp_amount;
+
+    loop
+      v_required_exp := 100 + ((v_new_level - 1) * 50);
+      exit when v_new_experience < v_required_exp;
+
+      v_new_experience := v_new_experience - v_required_exp;
+      v_new_level := v_new_level + 1;
+    end loop;
+
+    v_required_exp := 100 + ((v_new_level - 1) * 50);
+    v_experience_percent := least(
+      floor((v_new_experience::numeric / v_required_exp::numeric) * 100)::integer,
+      100
+    );
+    v_reward_id := null;
+
+    insert into public.game_rewards (
+      game_id,
+      user_id,
+      exp_amount,
+      coin_amount,
+      reason,
+      old_level,
+      new_level,
+      old_experience,
+      new_experience,
+      experience_percent
+    ) values (
+      p_game_id,
+      v_player.user_id,
+      v_exp_amount,
+      v_coin_amount,
+      v_reasons,
+      v_old_level,
+      v_new_level,
+      v_old_experience,
+      v_new_experience,
+      v_experience_percent
+    )
+    on conflict (game_id, user_id) do nothing
+    returning id into v_reward_id;
+
+    if v_reward_id is not null then
+      update public.profiles
+      set
+        level = v_new_level,
+        experience = v_new_experience,
+        experience_percent = v_experience_percent,
+        coin = greatest(coalesce(coin, 0), 0) + v_coin_amount
+      where id = v_player.user_id;
+    end if;
+  end loop;
+
+  return query
+  select
+    gr.user_id,
+    coalesce(p.nickname, 'GuestPlayer'),
+    gr.exp_amount,
+    gr.coin_amount,
+    gr.old_level,
+    gr.new_level,
+    gr.old_experience,
+    gr.new_experience,
+    gr.experience_percent,
+    gr.reason
+  from public.game_rewards gr
+  join public.profiles p on p.id = gr.user_id
+  where gr.game_id = p_game_id
+  order by gr.created_at asc;
+end;
+$$;
+
+revoke all on function public.award_game_rewards(uuid) from public;
+grant execute on function public.award_game_rewards(uuid) to authenticated;
+
+create or replace function public.award_inserted_game_result_rewards()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if exists (
+    select 1
+    from public.games
+    where id = new.game_id
+      and status in ('ended', 'finished')
+  ) then
+    perform public.award_game_rewards(new.game_id);
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.award_inserted_game_result_rewards() from public;
+
+drop trigger if exists award_inserted_game_result_rewards
+  on public.game_result_players;
+
+create trigger award_inserted_game_result_rewards
+  after insert on public.game_result_players
+  for each row
+  execute function public.award_inserted_game_result_rewards();
+
+create or replace function public.award_ended_game_rewards()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.status in ('ended', 'finished')
+    and old.status is distinct from new.status
+    and exists (
+      select 1
+      from public.game_result_players
+      where game_id = new.id
+    )
+  then
+    perform public.award_game_rewards(new.id);
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.award_ended_game_rewards() from public;
+
+drop trigger if exists award_ended_game_rewards
+  on public.games;
+
+create trigger award_ended_game_rewards
+  after update of status on public.games
+  for each row
+  execute function public.award_ended_game_rewards();
+
 grant select, insert on public.game_messages to authenticated;
 
 alter table public.game_messages enable row level security;
@@ -644,6 +917,7 @@ begin
     'room_players',
     'games',
     'game_messages',
+    'game_rewards',
     'profiles',
     'player_stats',
     'player_role_stats',

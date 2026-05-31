@@ -9,6 +9,7 @@ import {
   uploadGameLogMarkdown,
 } from '@/api/chatApi'
 import {
+  awardGameRewards,
   endGame,
   getCurrentGame,
   getGameResult,
@@ -29,17 +30,22 @@ import {
   subscribeToRoom,
 } from '@/api/roomApi'
 import { useAuthStore } from '@/stores/auth'
+import { useProfileStore } from '@/stores/profile'
 import { useToastStore } from '@/stores/toast'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const profileStore = useProfileStore()
 const toastStore = useToastStore()
 
 const roomId = computed(() => route.params.roomId)
 const room = ref(null)
 const game = ref(null)
 const gameResult = ref(null)
+const gameRewards = ref([])
+const loadedRewardGameId = ref('')
+const rewardError = ref('')
 const myRole = ref(null)
 const roleInfo = ref(null)
 const visibleTeamMembers = ref([])
@@ -58,6 +64,7 @@ const isSubmittingAction = ref(false)
 const isSubmittingVote = ref(false)
 const isSubmittingFinalDefenseVote = ref(false)
 const isEnding = ref(false)
+const isLoadingRewards = ref(false)
 const isReturningToLobby = ref(false)
 const isEndConfirmOpen = ref(false)
 const nowTick = ref(Date.now())
@@ -406,6 +413,15 @@ const resultSurvivorCount = computed(() => resultPlayers.value.filter((player) =
 const myResultPlayer = computed(
   () => resultPlayers.value.find((player) => player.user_id === savedUser.value?.id) || null,
 )
+const myGameReward = computed(
+  () => gameRewards.value.find((reward) => reward.user_id === savedUser.value?.id) || null,
+)
+const myRewardReasons = computed(() =>
+  Array.isArray(myGameReward.value?.reasons) ? myGameReward.value.reasons : [],
+)
+const didLevelUp = computed(
+  () => Number(myGameReward.value?.new_level || 0) > Number(myGameReward.value?.old_level || 0),
+)
 const myContributionStats = computed(() => {
   const logs = Array.isArray(myResultPlayer.value?.logs) ? myResultPlayer.value.logs : []
 
@@ -642,14 +658,37 @@ function getResultTeamLabel(role) {
 async function loadGameResult(gameId) {
   if (!gameId) {
     gameResult.value = null
+    gameRewards.value = []
+    loadedRewardGameId.value = ''
+    rewardError.value = ''
     return
   }
 
   try {
     gameResult.value = await getGameResult(gameId)
+    await loadGameRewards(gameId)
   } catch (error) {
     gameResult.value = null
     toastStore.error(error.message)
+  }
+}
+
+async function loadGameRewards(gameId) {
+  if (!gameId || loadedRewardGameId.value === gameId || isLoadingRewards.value) {
+    return
+  }
+
+  isLoadingRewards.value = true
+  rewardError.value = ''
+
+  try {
+    gameRewards.value = await awardGameRewards(gameId)
+    loadedRewardGameId.value = gameId
+    await profileStore.reloadProfile(savedUser.value?.id)
+  } catch (error) {
+    rewardError.value = error.message
+  } finally {
+    isLoadingRewards.value = false
   }
 }
 
@@ -845,6 +884,9 @@ async function loadGame({ silent = false } = {}) {
         }
       } else {
         gameResult.value = null
+        gameRewards.value = []
+        loadedRewardGameId.value = ''
+        rewardError.value = ''
         fallbackReturnToLobbyAt.value = null
       }
 
@@ -1237,6 +1279,18 @@ onBeforeUnmount(() => {
                 </span>
               </div>
               <p>{{ myContributionSummary.description }}</p>
+              <div v-if="myGameReward" class="reward-summary">
+                <div class="reward-total-row">
+                  <strong>+{{ myGameReward.exp_gained }} EXP</strong>
+                  <strong>+{{ myGameReward.coin_gained }} Coin</strong>
+                  <b v-if="didLevelUp">LEVEL UP · Lv.{{ myGameReward.new_level }}</b>
+                </div>
+                <div class="reward-reason-row">
+                  <span v-for="reason in myRewardReasons" :key="reason">{{ reason }}</span>
+                </div>
+              </div>
+              <p v-else-if="isLoadingRewards" class="reward-message">보상을 정산하고 있습니다.</p>
+              <p v-else-if="rewardError" class="reward-message error">{{ rewardError }}</p>
             </template>
             <p v-else>이번 게임의 개인 결과를 불러오지 못했습니다.</p>
           </section>
@@ -2534,6 +2588,51 @@ button:disabled {
     linear-gradient(180deg, rgba(52, 211, 153, 0.1), rgba(255, 255, 255, 0.016)),
     rgba(14, 10, 8, 0.82);
   border-color: rgba(52, 211, 153, 0.28);
+}
+
+.reward-summary {
+  border-top: 1px solid rgba(255, 190, 85, 0.18);
+  display: grid;
+  gap: 0.65rem;
+  padding-top: 0.8rem;
+}
+
+.reward-total-row,
+.reward-reason-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.reward-total-row strong,
+.reward-total-row b,
+.reward-reason-row span {
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 0.25rem 0.55rem;
+}
+
+.reward-total-row strong {
+  background: rgba(255, 190, 85, 0.12);
+  border: 1px solid rgba(255, 190, 85, 0.28);
+  color: #ffd591;
+}
+
+.reward-total-row b {
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.28);
+  color: #bbf7d0;
+}
+
+.reward-reason-row span {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: rgba(255, 245, 224, 0.72);
+}
+
+.my-result-panel .reward-message.error {
+  color: #fecaca;
 }
 
 .result-badge-row {

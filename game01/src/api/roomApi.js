@@ -577,6 +577,18 @@ export async function getGameResult(gameId) {
   return Array.isArray(data) ? data[0] || null : data
 }
 
+export async function awardGameRewards(gameId) {
+  const { data, error } = await supabase.rpc('award_game_rewards', {
+    p_game_id: gameId,
+  })
+
+  if (error) {
+    throw createSupabaseError('awardGameRewards: award_game_rewards rpc failed', error, '게임 보상을 불러오지 못했습니다.')
+  }
+
+  return Array.isArray(data) ? data : []
+}
+
 export async function returnRoomToLobby(roomId) {
   const { data, error } = await supabase.rpc('return_room_to_lobby', {
     p_room_id: roomId,

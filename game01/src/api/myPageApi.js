@@ -159,10 +159,6 @@ function normalizeProfileUpdatePayload(payload) {
     profilePayload.avatar = payload.avatar.trim()
   }
 
-  if (Object.prototype.hasOwnProperty.call(payload, 'experiencePercent')) {
-    profilePayload.experience_percent = Number(payload.experiencePercent)
-  }
-
   return profilePayload
 }
 
