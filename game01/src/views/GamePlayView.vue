@@ -192,21 +192,23 @@ const finalDefenseTargetId = computed(() => game.value?.final_defense_target_use
 const isFinalDefenseTarget = computed(
   () => phaseKey.value === 'final_defense' && savedUser.value?.id === finalDefenseTargetId.value,
 )
-const visibleMafiaNicknames = computed(() =>
+const visibleTeamNicknames = computed(() =>
   new Set(
-    roleKey.value === 'mafia'
+    ['mafia', 'police'].includes(roleKey.value)
       ? (roleInfo.value?.items || [])
-          .filter((item) => item.type === 'mafia_team')
+          .filter((item) => item.type === `${roleKey.value}_team`)
           .map((item) => item.label)
       : [],
   ),
 )
 const playersWithStatus = computed(() =>
   (room.value?.players || []).map((player) => {
-    const visibleTeamMember = visibleTeamMembers.value.find((member) => member.user_id === player.userId)
+    const visibleTeamMember = visibleTeamMembers.value.find(
+      (member) => (member.user_id || member.userId) === player.userId,
+    )
     const fallbackTeamRole =
-      roleKey.value === 'mafia' && visibleMafiaNicknames.value.has(player.nickname)
-        ? 'mafia'
+      ['mafia', 'police'].includes(roleKey.value) && visibleTeamNicknames.value.has(player.nickname)
+        ? roleKey.value
         : player.userId === savedUser.value?.id && ['mafia', 'police'].includes(roleKey.value)
           ? roleKey.value
           : ''
@@ -216,7 +218,7 @@ const playersWithStatus = computed(() =>
       isMe: player.userId === savedUser.value?.id,
       isMyVoteTarget: myVoteTargetId.value === player.userId,
       isFinalDefenseTarget: finalDefenseTargetId.value === player.userId,
-      visibleTeamRole: visibleTeamMember?.team_role || fallbackTeamRole,
+      visibleTeamRole: visibleTeamMember?.team_role || visibleTeamMember?.teamRole || fallbackTeamRole,
     }
   }),
 )
@@ -636,21 +638,16 @@ function pushMessage(message) {
 }
 
 async function loadRoleSideData() {
-  try {
-    const [nextRoleInfo, nextVoteStatus, nextVisibleTeamMembers] = await Promise.all([
-      getMyRoleInfo(roomId.value),
-      getVoteStatus(roomId.value),
-      getVisibleTeamMembers(roomId.value).catch(() => []),
-    ])
+  const [roleInfoResult, voteStatusResult, visibleTeamMembersResult] = await Promise.allSettled([
+    getMyRoleInfo(roomId.value),
+    getVoteStatus(roomId.value),
+    getVisibleTeamMembers(roomId.value),
+  ])
 
-    roleInfo.value = nextRoleInfo
-    voteStatus.value = nextVoteStatus
-    visibleTeamMembers.value = nextVisibleTeamMembers
-  } catch (error) {
-    roleInfo.value = null
-    voteStatus.value = []
-    visibleTeamMembers.value = []
-  }
+  roleInfo.value = roleInfoResult.status === 'fulfilled' ? roleInfoResult.value : null
+  voteStatus.value = voteStatusResult.status === 'fulfilled' ? voteStatusResult.value : []
+  visibleTeamMembers.value =
+    visibleTeamMembersResult.status === 'fulfilled' ? visibleTeamMembersResult.value : []
 }
 
 function isMissingRoomError(error) {
