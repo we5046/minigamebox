@@ -3,6 +3,9 @@
 
 begin;
 
+alter table public.rooms
+  add column if not exists game_type text not null default 'mafia';
+
 alter table public.room_players
   add column if not exists connection_status text not null default 'active',
   add column if not exists last_seen_at timestamptz not null default now(),
@@ -20,10 +23,12 @@ drop function if exists public.create_room(text, text, integer, integer, integer
 drop function if exists public.create_room(text, text, integer, integer, integer, text, text, text, jsonb);
 drop function if exists public.create_room(text, text, integer, integer, integer, integer, integer, text, boolean, boolean, boolean, boolean, boolean, text, text, text, jsonb);
 drop function if exists public.create_room(text, text, integer, integer, integer, integer, integer, text, boolean, boolean, text, text, text, jsonb);
+drop function if exists public.create_room(text, text, text, integer, integer, integer, integer, integer, text, boolean, boolean, text, text, text, jsonb);
 
 create function public.create_room(
   p_title text,
   p_description text,
+  p_game_type text,
   p_max_players integer,
   p_night_time_seconds integer,
   p_vote_time_seconds integer,
@@ -54,6 +59,10 @@ begin
 
   if nullif(trim(p_title), '') is null then
     raise exception 'Room title is required';
+  end if;
+
+  if nullif(trim(p_game_type), '') is null then
+    raise exception 'Game type is required';
   end if;
 
   if p_max_players is null or p_max_players < 2 or p_max_players > 12 then
@@ -96,6 +105,7 @@ begin
       insert into public.rooms (
         title,
         description,
+        game_type,
         code,
         host_user_id,
         status,
@@ -115,6 +125,7 @@ begin
       ) values (
         trim(p_title),
         coalesce(trim(p_description), ''),
+        trim(p_game_type),
         v_code,
         v_user_id,
         'waiting',
@@ -165,8 +176,8 @@ begin
 end;
 $$;
 
-revoke all on function public.create_room(text, text, integer, integer, integer, integer, integer, text, boolean, boolean, text, text, text, jsonb) from public;
-grant execute on function public.create_room(text, text, integer, integer, integer, integer, integer, text, boolean, boolean, text, text, text, jsonb) to authenticated;
+revoke all on function public.create_room(text, text, text, integer, integer, integer, integer, integer, text, boolean, boolean, text, text, text, jsonb) from public;
+grant execute on function public.create_room(text, text, text, integer, integer, integer, integer, integer, text, boolean, boolean, text, text, text, jsonb) to authenticated;
 
 -- DROP is required here because PostgreSQL cannot change an existing
 -- function's return type with CREATE OR REPLACE FUNCTION.

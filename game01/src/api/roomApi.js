@@ -63,6 +63,7 @@ export function normalizeRoom(room) {
     id: room.id,
     title: room.title,
     description: room.description || '',
+    gameType: room.game_type || 'mafia',
     code: room.code,
     hostUserId: room.host_user_id,
     hostNickname: hostPlayer?.nickname || room.host_nickname || '알 수 없음',
@@ -99,6 +100,7 @@ const roomSelect = `
   id,
   title,
   description,
+  game_type,
   code,
   host_user_id,
   status,
@@ -166,6 +168,7 @@ export async function getRoom(roomId) {
 export async function createRoom({
   title,
   description,
+  gameType = 'mafia',
   maxPlayers,
   nightTimeSeconds = DEFAULT_ROOM_DETAIL_SETTINGS.nightTimeSeconds,
   voteTimeSeconds = DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds,
@@ -183,6 +186,7 @@ export async function createRoom({
   const { data: room, error } = await supabase.rpc('create_room', {
     p_title: title.trim(),
     p_description: description.trim(),
+    p_game_type: gameType,
     p_max_players: maxPlayers,
     p_night_time_seconds: nightTimeSeconds,
     p_vote_time_seconds: voteTimeSeconds,
@@ -312,6 +316,7 @@ export async function updateRoom(roomId, payload) {
 
   if (payload.title) roomPayload.title = payload.title.trim()
   if (typeof payload.description === 'string') roomPayload.description = payload.description.trim()
+  if (payload.gameType) roomPayload.game_type = payload.gameType
   if (payload.hostUserId) roomPayload.host_user_id = payload.hostUserId
   if (payload.status) roomPayload.status = payload.status
   if (payload.phase) roomPayload.phase = payload.phase

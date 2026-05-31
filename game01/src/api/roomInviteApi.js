@@ -9,6 +9,7 @@ const inviteSelect = `
     status,
     max_players,
     description,
+    game_type,
     entry_mode,
     room_players (
       user_id,
@@ -58,6 +59,7 @@ export function normalizeRoomInvite(row) {
       status: row.room?.status || 'waiting',
       maxPlayers: row.room?.max_players || 8,
       description: row.room?.description || '',
+      gameType: row.room?.game_type || 'mafia',
       hostNickname: hostPlayer?.profiles?.nickname || '알 수 없음',
       entryMode: row.room?.entry_mode || 'public',
       currentPlayers: roomPlayers.length,

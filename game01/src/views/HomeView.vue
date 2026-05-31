@@ -97,6 +97,7 @@ const roomFilter = ref('all');
 const presenceUsers = ref([]);
 const friendships = ref([]);
 const roomInvites = ref([]);
+const selectedGameType = ref('mafia');
 const friendNickname = ref('');
 const isLoadingFriends = ref(false);
 const isSendingFriendRequest = ref(false);
@@ -139,6 +140,57 @@ const lobbySettingsSections = [
     items: ['공개 채팅 표시', '시스템 메시지 강조', '채팅 시간 표시'],
   },
 ];
+
+const GAME_THEMES = {
+  mafia: {
+    type: 'mafia',
+    icon: '🎭',
+    name: '마피아 게임',
+    lobbyTitle: '마피아 게임 로비',
+    description: '밤의 역할과 추리를 중심으로 진행되는 심리 게임입니다.',
+    roomPlaceholder: '마피아의 밤에 오신 것을 환영합니다',
+    accent: '#ff9f43',
+    accentSoft: 'rgba(255, 132, 38, 0.16)',
+    accentBorder: 'rgba(255, 190, 85, 0.34)',
+    isAvailable: true,
+  },
+  rainbowTail: {
+    type: 'rainbowTail',
+    icon: '🌈',
+    name: '무지개 꼬리잡기',
+    lobbyTitle: '무지개 꼬리잡기 로비',
+    description: '색을 연결하고 순서를 읽는 가벼운 파티 게임입니다.',
+    roomPlaceholder: '무지개 꼬리잡기 방 제목을 입력하세요',
+    accent: '#22c55e',
+    accentSoft: 'rgba(34, 197, 94, 0.14)',
+    accentBorder: 'rgba(74, 222, 128, 0.34)',
+    isAvailable: false,
+  },
+  detective: {
+    type: 'detective',
+    icon: '🔎',
+    name: '추리 게임',
+    lobbyTitle: '추리 게임 로비',
+    description: '단서와 대화를 조합해 사건의 진실을 찾아가는 게임입니다.',
+    roomPlaceholder: '추리 게임 방 제목을 입력하세요',
+    accent: '#60a5fa',
+    accentSoft: 'rgba(96, 165, 250, 0.14)',
+    accentBorder: 'rgba(147, 197, 253, 0.34)',
+    isAvailable: false,
+  },
+};
+const gameThemes = Object.values(GAME_THEMES);
+const selectedGameTheme = computed(
+  () => GAME_THEMES[selectedGameType.value] || GAME_THEMES.mafia,
+);
+const selectedGameThemeStyle = computed(() => ({
+  '--hub-accent': selectedGameTheme.value.accent,
+  '--hub-accent-soft': selectedGameTheme.value.accentSoft,
+  '--hub-accent-border': selectedGameTheme.value.accentBorder,
+}));
+const selectedGameRooms = computed(() =>
+  rooms.value.filter((room) => room.gameType === selectedGameType.value),
+);
 
 const character = computed(() => profileStore.profile);
 
@@ -203,15 +255,17 @@ const notificationCount = computed(
 );
 
 const waitingRoomCount = computed(() => {
-  return rooms.value.filter((room) => room.status === 'waiting').length;
+  return selectedGameRooms.value.filter((room) => room.status === 'waiting')
+    .length;
 });
 
 const playingRoomCount = computed(() => {
-  return rooms.value.filter((room) => room.status !== 'waiting').length;
+  return selectedGameRooms.value.filter((room) => room.status !== 'waiting')
+    .length;
 });
 
 const roomFilterOptions = computed(() => [
-  { value: 'all', label: '전체', count: rooms.value.length },
+  { value: 'all', label: '전체', count: selectedGameRooms.value.length },
   { value: 'waiting', label: '대기', count: waitingRoomCount.value },
   { value: 'playing', label: '게임중', count: playingRoomCount.value },
 ]);
@@ -220,14 +274,14 @@ const roomMessage = computed(() => '');
 
 const filteredRooms = computed(() => {
   if (roomFilter.value === 'waiting') {
-    return rooms.value.filter((room) => room.status === 'waiting');
+    return selectedGameRooms.value.filter((room) => room.status === 'waiting');
   }
 
   if (roomFilter.value === 'playing') {
-    return rooms.value.filter((room) => room.status !== 'waiting');
+    return selectedGameRooms.value.filter((room) => room.status !== 'waiting');
   }
 
-  return rooms.value;
+  return selectedGameRooms.value;
 });
 
 const roomPageCount = computed(() => {
@@ -240,7 +294,7 @@ const paginatedRooms = computed(() => {
 });
 
 const quickJoinPath = computed(() => {
-  const joinableRoom = rooms.value.find((room) => {
+  const joinableRoom = selectedGameRooms.value.find((room) => {
     const currentPlayers = room.players?.length || room.currentPlayers || 0;
     return room.status === 'waiting' && currentPlayers < room.maxPlayers;
   });
@@ -429,7 +483,7 @@ watch(savedUser, async (nextUser, previousUser) => {
   }
 });
 
-watch([rooms, roomFilter], () => {
+watch([rooms, roomFilter, selectedGameType], () => {
   clampRoomPage();
   clampSelectedRoom();
 });
@@ -507,6 +561,11 @@ async function createRoom() {
     return;
   }
 
+  if (!selectedGameTheme.value.isAvailable) {
+    toastStore.error(`${selectedGameTheme.value.name}은 아직 준비 중입니다.`);
+    return;
+  }
+
   if (!newRoomTitle.value.trim()) {
     toastStore.error('방 제목을 입력하세요.');
     return;
@@ -552,6 +611,7 @@ async function createRoom() {
       hostUser: savedUser.value,
       title: newRoomTitle.value,
       description: newRoomDescription.value,
+      gameType: selectedGameType.value,
       maxPlayers: Number(newRoomMaxPlayers.value),
       nightTimeSeconds: Number(newRoomNightTimeSeconds.value),
       voteTimeSeconds: Number(newRoomVoteTimeSeconds.value),
@@ -612,6 +672,11 @@ function toggleNewRoomAdvancedSettings() {
 }
 
 function openCreateRoomForm() {
+  if (!selectedGameTheme.value.isAvailable) {
+    toastStore.error(`${selectedGameTheme.value.name}은 아직 준비 중입니다.`);
+    return;
+  }
+
   isCreateFormOpen.value = true;
   isNewRoomAdvancedOpen.value = false;
 }
@@ -653,6 +718,17 @@ function setRoomFilter(nextFilter) {
   roomFilter.value = nextFilter;
   currentRoomPage.value = 1;
   selectedRoomId.value = null;
+}
+
+function selectGameType(gameType) {
+  selectedGameType.value = gameType;
+  currentRoomPage.value = 1;
+  selectedRoomId.value = null;
+  closeCreateRoomForm();
+}
+
+function getGameTypeLabel(gameType) {
+  return (GAME_THEMES[gameType] || GAME_THEMES.mafia).name;
 }
 
 async function loadFriendships() {
@@ -1347,12 +1423,16 @@ async function logout() {
 </script>
 
 <template>
-  <section class="lobby-layout">
+  <section
+    class="lobby-layout"
+    :class="`theme-${selectedGameType}`"
+    :style="selectedGameThemeStyle"
+  >
     <header class="page-card lobby-hero">
       <div>
-        <p class="eyebrow">Main Lobby</p>
-        <h1>마피아 게임 로비</h1>
-        <p>방을 찾고, 플레이어와 대화하고, 새 게임을 여는 중심 화면입니다.</p>
+        <p class="eyebrow">Game Hub Lobby</p>
+        <h1>{{ selectedGameTheme.lobbyTitle }}</h1>
+        <p>{{ selectedGameTheme.description }}</p>
       </div>
       <div class="lobby-toolbar">
         <button
@@ -1394,6 +1474,7 @@ async function logout() {
                 >
                 <span>
                   방장 {{ invite.room.hostNickname }} ·
+                  {{ getGameTypeLabel(invite.room.gameType) }} ·
                   {{ getModeDisplayLabel(invite.room.description) }} ·
                   {{ invite.room.currentPlayers }} /
                   {{ invite.room.maxPlayers }}
@@ -1449,6 +1530,24 @@ async function logout() {
       </div>
     </header>
 
+    <nav class="game-selector" aria-label="게임 선택">
+      <button
+        v-for="game in gameThemes"
+        :key="game.type"
+        type="button"
+        class="game-selector-button"
+        :class="{
+          active: selectedGameType === game.type,
+          pending: !game.isAvailable,
+        }"
+        @click="selectGameType(game.type)"
+      >
+        <span aria-hidden="true">{{ game.icon }}</span>
+        <strong>{{ game.name }}</strong>
+        <small>{{ game.isAvailable ? '플레이 가능' : '준비 중' }}</small>
+      </button>
+    </nav>
+
     <div class="lobby-content">
       <main class="main-panel">
         <section
@@ -1461,7 +1560,9 @@ async function logout() {
           <div class="section-heading">
             <div>
               <p class="eyebrow">Create</p>
-              <h2 id="create-room-title">새 게임방</h2>
+              <h2 id="create-room-title">
+                {{ selectedGameTheme.name }} 새 게임방
+              </h2>
             </div>
             <button type="button" @click="closeCreateRoomForm">닫기</button>
           </div>
@@ -1475,7 +1576,7 @@ async function logout() {
               <input
                 v-model="newRoomTitle"
                 type="text"
-                placeholder="마피아의 밤에 오신 것을 환영합니다"
+                :placeholder="selectedGameTheme.roomPlaceholder"
               />
             </div>
 
@@ -1998,9 +2099,11 @@ async function logout() {
           <div class="section-heading">
             <div>
               <p class="eyebrow">Rooms</p>
-              <h2 id="room-board-title">게임 방 목록</h2>
+              <h2 id="room-board-title">
+                {{ selectedGameTheme.name }} 방 목록
+              </h2>
               <div class="room-summary">
-                <span>전체 {{ rooms.length }}</span>
+                <span>전체 {{ selectedGameRooms.length }}</span>
                 <span>대기 {{ waitingRoomCount }}</span>
                 <span>게임중 {{ playingRoomCount }}</span>
               </div>
@@ -2018,11 +2121,22 @@ async function logout() {
             </div>
             <div class="room-tools">
               <div class="room-actions">
-                <RouterLink class="primary" :to="quickJoinPath"
+                <RouterLink
+                  class="primary"
+                  :class="{ disabled: !selectedGameTheme.isAvailable }"
+                  :aria-disabled="!selectedGameTheme.isAvailable"
+                  :to="quickJoinPath"
+                  @click="
+                    !selectedGameTheme.isAvailable && $event.preventDefault()
+                  "
                   >빠른 입장</RouterLink
                 >
-                <button type="button" @click="openCreateRoomForm">
-                  방 만들기
+                <button
+                  type="button"
+                  :disabled="!selectedGameTheme.isAvailable"
+                  @click="openCreateRoomForm"
+                >
+                  {{ selectedGameTheme.isAvailable ? '방 만들기' : '준비 중' }}
                 </button>
               </div>
             </div>
@@ -2165,6 +2279,10 @@ async function logout() {
                     <div>
                       <dt>참가 인원</dt>
                       <dd>{{ room.maxPlayers }}명</dd>
+                    </div>
+                    <div>
+                      <dt>게임</dt>
+                      <dd>{{ getGameTypeLabel(room.gameType) }}</dd>
                     </div>
                     <div>
                       <dt>게임 모드</dt>
@@ -2616,8 +2734,22 @@ async function logout() {
   --pc-panel-shadow: 0 18px 46px rgba(0, 0, 0, 0.34);
   display: grid;
   gap: var(--lobby-gap);
+  isolation: isolate;
   min-width: 0;
   position: relative;
+}
+
+.lobby-layout::before {
+  background: linear-gradient(
+    135deg,
+    var(--hub-accent-soft),
+    transparent 42%
+  );
+  content: '';
+  inset: -1rem;
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
 }
 
 .lobby-layout :deep(.page-card),
@@ -2645,7 +2777,7 @@ async function logout() {
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(255, 132, 38, 0.12),
+    var(--hub-accent-soft),
     transparent
   );
   content: '';
@@ -2960,6 +3092,61 @@ h2 {
   display: grid;
   gap: 0.85rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.game-selector {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.game-selector-button {
+  align-items: center;
+  background: rgba(20, 17, 15, 0.86);
+  border: 1px solid rgba(255, 190, 85, 0.14);
+  border-radius: 0.8rem;
+  color: rgba(255, 245, 224, 0.72);
+  cursor: pointer;
+  display: grid;
+  gap: 0.28rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 3.7rem;
+  padding: 0.7rem 0.9rem;
+  text-align: left;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+.game-selector-button span {
+  font-size: 1.35rem;
+}
+
+.game-selector-button strong {
+  color: #fff5e0;
+}
+
+.game-selector-button small {
+  color: rgba(255, 245, 224, 0.52);
+  white-space: nowrap;
+}
+
+.game-selector-button:hover,
+.game-selector-button.active {
+  background: var(--hub-accent-soft);
+  border-color: var(--hub-accent-border);
+  box-shadow: 0 0 18px var(--hub-accent-soft);
+  transform: translateY(-1px);
+}
+
+.game-selector-button.active small {
+  color: var(--hub-accent);
+}
+
+.game-selector-button.pending:not(.active) {
+  opacity: 0.7;
 }
 
 .mode-description,
@@ -4893,6 +5080,10 @@ dd {
     gap: 0.75rem;
   }
 
+  .game-selector {
+    grid-template-columns: 1fr;
+  }
+
   .create-room-form,
   .chat-line,
   .chat-form,
@@ -4911,7 +5102,7 @@ dd {
   }
 
   .room-actions,
-  .room-actions a,
+.room-actions a,
   .room-actions button,
   .chat-form button,
   .room-pagination,
@@ -4939,6 +5130,13 @@ dd {
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+.room-actions a.disabled,
+.room-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  pointer-events: none;
 }
 
 @media (max-width: 420px) {
