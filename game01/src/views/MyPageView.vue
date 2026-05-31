@@ -10,7 +10,6 @@ const profileStore = useProfileStore()
 const toastStore = useToastStore()
 const savedUser = computed(() => authStore.user)
 const profile = computed(() => profileStore.profile)
-const rank = computed(() => profileStore.rank)
 const stats = computed(() => profileStore.stats)
 const roleRecords = computed(() => profileStore.roleRecords)
 const recentMatches = computed(() => profileStore.recentMatches)
@@ -162,13 +161,6 @@ watch(savedUser, (nextUser, previousUser) => {
           </div>
         </div>
 
-        <aside class="rank-card">
-          <div class="rank-emblem">{{ rank.emblem }}</div>
-          <p class="eyebrow">Season Rank</p>
-          <strong>{{ rank.tier }}</strong>
-          <span>RP {{ rank.rp }}</span>
-          <small>상위 {{ rank.topPercent }}%</small>
-        </aside>
       </section>
 
       <section class="stats-grid">
@@ -348,7 +340,7 @@ h1 {
   align-items: center;
   display: grid;
   gap: 1.25rem;
-  grid-template-columns: auto minmax(0, 1fr) minmax(14rem, 0.42fr);
+  grid-template-columns: auto minmax(0, 1fr);
   overflow: hidden;
   position: relative;
 }
@@ -402,8 +394,7 @@ h1 {
 }
 
 .avatar-wrap,
-.profile-info,
-.rank-card {
+.profile-info {
   position: relative;
   z-index: 1;
 }
@@ -481,36 +472,6 @@ blockquote {
   height: 100%;
 }
 
-.rank-card {
-  background: linear-gradient(145deg, rgba(83, 31, 18, 0.62), rgba(76, 29, 149, 0.38));
-  border: 1px solid rgba(248, 113, 113, 0.34);
-  border-radius: 1.2rem;
-  box-shadow: 0 0 34px rgba(168, 85, 247, 0.18);
-  display: grid;
-  gap: 0.35rem;
-  justify-items: start;
-  padding: 1rem;
-}
-
-.rank-emblem {
-  align-items: center;
-  background: conic-gradient(from 140deg, #f97316, #7c2d12, #c084fc, #f97316);
-  border-radius: 1rem;
-  box-shadow: 0 0 24px rgba(249, 115, 22, 0.36);
-  color: #fff7ed;
-  display: flex;
-  font-size: 2rem;
-  font-weight: 900;
-  height: 4rem;
-  justify-content: center;
-  width: 4rem;
-}
-
-.rank-card strong {
-  color: #fff7ed;
-  font-size: 1.55rem;
-}
-
 .stats-grid {
   display: grid;
   gap: 1rem;
@@ -536,9 +497,7 @@ blockquote {
 .stat-card span,
 .role-row p,
 .match-row p,
-.cosmetic-card li span,
-.rank-card small,
-.rank-card span {
+.cosmetic-card li span {
   color: rgba(255, 245, 224, 0.62);
 }
 

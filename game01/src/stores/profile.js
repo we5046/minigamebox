@@ -21,22 +21,11 @@ function createDefaultProfile() {
     coin: 0,
     exp: 0,
     expPercent: 0,
-    rank: 'Unranked',
-    rankTier: 'Unranked',
     winRate: '0%',
     winRateValue: 0,
     winStreak: 0,
     quote: '오늘 밤 누가 거짓말을 하고 있을까?',
     representativeTitle: '',
-  }
-}
-
-function createDefaultRank() {
-  return {
-    tier: 'Unranked',
-    rp: 0,
-    topPercent: '-',
-    emblem: '-',
   }
 }
 
@@ -54,7 +43,6 @@ function createDefaultStats() {
 function normalizeProfileDisplay(bundle, authProfile = null) {
   const profile = bundle?.profile || {}
   const stats = bundle?.stats || {}
-  const rank = bundle?.rank || {}
 
   const winRateValue = Number(stats.overall_win_rate || 0)
   const winRate = `${Math.round(winRateValue)}%`
@@ -77,8 +65,6 @@ function normalizeProfileDisplay(bundle, authProfile = null) {
     coin: profile.coin ?? authProfile?.coin ?? 0,
     exp: profile.experience_percent ?? authProfile?.experience_percent ?? 0,
     expPercent: profile.experience_percent ?? authProfile?.experience_percent ?? 0,
-    rank: rank.tier || authProfile?.rank?.tier || 'Unranked',
-    rankTier: rank.tier || authProfile?.rank?.tier || 'Unranked',
     winRate,
     winRateValue,
     winStreak: bundle?.winStreak || 0,
@@ -92,7 +78,6 @@ function normalizeProfileDisplay(bundle, authProfile = null) {
 function createDefaultBundle() {
   return {
     profile: createDefaultProfile(),
-    rank: createDefaultRank(),
     stats: createDefaultStats(),
     roleRecords: [],
     recentMatches: [],
@@ -101,10 +86,9 @@ function createDefaultBundle() {
   }
 }
 
-function buildAuthSyncProfile(rawProfile, rawRank, rawStats) {
+function buildAuthSyncProfile(rawProfile, rawStats) {
   return toCurrentUser({
     ...rawProfile,
-    rank: rawRank || null,
     stats: rawStats || null,
   })
 }
@@ -115,7 +99,6 @@ let refreshTimer = null
 
 export const useProfileStore = defineStore('profile', () => {
   const profile = ref(createDefaultProfile())
-  const rank = ref(createDefaultRank())
   const stats = ref(createDefaultStats())
   const roleRecords = ref([])
   const recentMatches = ref([])
@@ -145,7 +128,6 @@ export const useProfileStore = defineStore('profile', () => {
     const nextProfile = normalizeProfileDisplay(displayData, authProfile)
 
     profile.value = nextProfile
-    rank.value = displayData?.rank || createDefaultRank()
     stats.value = displayData?.stats || createDefaultStats()
     roleRecords.value = displayData?.roleRecords || []
     recentMatches.value = displayData?.recentMatches || []
@@ -154,7 +136,7 @@ export const useProfileStore = defineStore('profile', () => {
 
     const authStore = useAuthStore()
     if (authProfile) {
-      authStore.setUser(buildAuthSyncProfile(authProfile, authProfile.rank, authProfile.stats))
+      authStore.setUser(buildAuthSyncProfile(authProfile, authProfile.stats))
     } else if (nextProfile.id) {
       authStore.setUser({
         id: nextProfile.id,
@@ -163,12 +145,6 @@ export const useProfileStore = defineStore('profile', () => {
         representativeTitle: nextProfile.representativeTitle,
         quote: nextProfile.quote,
         experiencePercent: nextProfile.exp,
-        rank: {
-          tier: nextProfile.rankTier,
-          rp: 0,
-          topPercent: '-',
-          emblem: '-',
-        },
         stats: {
           totalGames: 0,
           winRate: nextProfile.winRateValue,
@@ -198,7 +174,6 @@ export const useProfileStore = defineStore('profile', () => {
       .channel(`profile-${userId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` }, queueRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'player_stats', filter: `user_id=eq.${userId}` }, queueRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'player_ranks', filter: `user_id=eq.${userId}` }, queueRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'player_role_stats', filter: `user_id=eq.${userId}` }, queueRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'player_recent_matches', filter: `user_id=eq.${userId}` }, queueRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'player_achievements', filter: `user_id=eq.${userId}` }, queueRefresh)
@@ -247,7 +222,6 @@ export const useProfileStore = defineStore('profile', () => {
     unsubscribeFromProfileChanges()
     currentUserId = null
     profile.value = createDefaultProfile()
-    rank.value = createDefaultRank()
     stats.value = createDefaultStats()
     roleRecords.value = []
     recentMatches.value = []
@@ -282,7 +256,6 @@ export const useProfileStore = defineStore('profile', () => {
 
   return {
     profile,
-    rank,
     stats,
     roleRecords,
     recentMatches,

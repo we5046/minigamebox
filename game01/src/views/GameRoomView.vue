@@ -319,10 +319,6 @@ const isEditRoleConfigValid = computed(
   () => editRoleConfigTotal.value === Number(editRoomMaxPlayers.value),
 );
 const editRoleConfigStatusText = computed(() => {
-  if (editRoomDescription.value === '랭크전') {
-    return '랭크전 규칙 고정';
-  }
-
   if (editRoomDescription.value === '클래식') {
     return '기본 밸런스 고정';
   }
@@ -1659,9 +1655,7 @@ async function leaveRoom() {
             </span>
             <span class="badge mode-badge">
               {{
-                room.description === '랭크전'
-                  ? '⚔️ 랭크전'
-                  : room.description === '친선전'
+                room.description === '친선전'
                     ? '🤝 커스텀'
                     : '🎭 클래식'
               }}
@@ -1834,14 +1828,6 @@ async function leaveRoom() {
               @click="selectEditRoomMode('클래식')"
             >
               🎭 클래식
-            </button>
-            <button
-              type="button"
-              class="option-btn"
-              :class="{ active: editRoomDescription === '랭크전' }"
-              @click="selectEditRoomMode('랭크전')"
-            >
-              ⚔️ 랭크전
             </button>
             <button
               type="button"

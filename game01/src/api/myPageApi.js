@@ -15,12 +15,6 @@ function getEmptyMyPage(user) {
       status: user ? 'Online' : 'Guest',
       quote: DEFAULT_QUOTE,
     },
-    rank: {
-      tier: 'Unranked',
-      rp: 0,
-      topPercent: '-',
-      emblem: '-',
-    },
     stats: [
       { label: '총 플레이', value: '0' },
       { label: '전체 승률', value: '0%' },
@@ -62,7 +56,6 @@ function normalizeMyPageData(user, rows) {
   const empty = getEmptyMyPage(user)
   const profileRow = rows.profile
   const statsRow = rows.stats
-  const rankRow = rows.rank
 
   return {
     profile: {
@@ -75,12 +68,6 @@ function normalizeMyPageData(user, rows) {
       coin: profileRow?.coin ?? empty.profile.coin,
       exp: profileRow?.experience_percent ?? empty.profile.exp,
       quote: profileRow?.profile_quote || empty.profile.quote,
-    },
-    rank: {
-      tier: rankRow?.tier || empty.rank.tier,
-      rp: rankRow?.rp ?? empty.rank.rp,
-      topPercent: rankRow?.top_percent ?? empty.rank.topPercent,
-      emblem: rankRow?.emblem || empty.rank.emblem,
     },
     stats: [
       { label: '총 플레이', value: String(statsRow?.total_games ?? 0) },
@@ -214,7 +201,7 @@ export async function getMyPageData(user) {
   }
 
   try {
-    const [profile, stats, rank, roles, matches, achievements, cosmetics] = await Promise.all([
+    const [profile, stats, roles, matches, achievements, cosmetics] = await Promise.all([
       selectMaybe(
         supabase
           .from('profiles')
@@ -226,13 +213,6 @@ export async function getMyPageData(user) {
         supabase
           .from('player_stats')
           .select('user_id, total_games, overall_win_rate, citizen_win_rate, mafia_win_rate, survival_rate, average_survival_turn')
-          .eq('user_id', user.id)
-          .maybeSingle(),
-      ),
-      selectMaybe(
-        supabase
-          .from('player_ranks')
-          .select('user_id, tier, rp, top_percent, emblem')
           .eq('user_id', user.id)
           .maybeSingle(),
       ),
@@ -270,7 +250,6 @@ export async function getMyPageData(user) {
     return normalizeMyPageData(user, {
       profile,
       stats,
-      rank,
       roles,
       matches,
       achievements,

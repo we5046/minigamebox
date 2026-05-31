@@ -282,10 +282,6 @@ const isRoleConfigValid = computed(
   () => roleConfigTotal.value === Number(newRoomMaxPlayers.value),
 );
 const roleConfigStatusText = computed(() => {
-  if (newRoomDescription.value === '랭크전') {
-    return '랭크전 규칙 고정';
-  }
-
   if (newRoomDescription.value === '클래식') {
     return '기본 밸런스 고정';
   }
@@ -1188,13 +1184,11 @@ function getRoomStatusClass(room) {
 }
 
 function getModeClass(description) {
-  if (description === '랭크전') return 'mode-ranked';
   if (description === '친선전') return 'mode-friendly';
   return 'mode-classic';
 }
 
 function getModeDisplayLabel(description) {
-  if (description === '랭크전') return '랭크전';
   if (description === '친선전') return '커스텀';
   return '클래식';
 }
@@ -1530,14 +1524,6 @@ async function logout() {
                   @click="selectNewRoomMode('클래식')"
                 >
                   🎭 클래식
-                </button>
-                <button
-                  type="button"
-                  class="option-btn"
-                  :class="{ active: newRoomDescription === '랭크전' }"
-                  @click="selectNewRoomMode('랭크전')"
-                >
-                  ⚔️ 랭크전
                 </button>
                 <button
                   type="button"
@@ -2363,7 +2349,6 @@ async function logout() {
           </div>
 
           <div class="profile-tags">
-            <span>{{ character.rank }}</span>
             <span>{{ character.characterName }}</span>
           </div>
 
@@ -3423,12 +3408,6 @@ h2 {
   background: rgba(239, 68, 68, 0.16);
   border-color: rgba(239, 68, 68, 0.38);
   color: #fca5a5;
-}
-
-.status-badge.rank {
-  background: rgba(255, 190, 85, 0.12);
-  border-color: rgba(255, 190, 85, 0.3);
-  color: #ffd28a;
 }
 
 .status-badge.public,

@@ -7,7 +7,6 @@ function toAuthEmail(loginId) {
 
 export function toCurrentUser(profile) {
   const stats = profile.stats || {}
-  const rank = profile.rank || {}
 
   return {
     id: profile.id,
@@ -16,12 +15,6 @@ export function toCurrentUser(profile) {
     representativeTitle: profile.representative_title,
     quote: profile.profile_quote,
     experiencePercent: profile.experience_percent,
-    rank: {
-      tier: rank.tier,
-      rp: rank.rp,
-      topPercent: rank.top_percent,
-      emblem: rank.emblem,
-    },
     stats: {
       totalGames: stats.total_games,
       winRate: stats.overall_win_rate,
@@ -40,13 +33,12 @@ export function toCurrentUser(profile) {
 }
 
 export async function getProfile(userId) {
-  const [profileResult, rankResult, statsResult] = await Promise.all([
+  const [profileResult, statsResult] = await Promise.all([
     supabase
       .from('profiles')
       .select('id, login_id, nickname, character_name, level, coin, avatar, representative_title, profile_quote, experience_percent')
       .eq('id', userId)
       .single(),
-    supabase.from('player_ranks').select('user_id, tier, rp, top_percent, emblem').eq('user_id', userId).maybeSingle(),
     supabase
       .from('player_stats')
       .select('user_id, total_games, overall_win_rate, citizen_win_rate, mafia_win_rate, survival_rate, average_survival_turn')
@@ -60,7 +52,6 @@ export async function getProfile(userId) {
 
   return {
     ...profileResult.data,
-    rank: rankResult.data,
     stats: statsResult.data,
   }
 }
