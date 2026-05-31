@@ -201,16 +201,31 @@ const finalDefenseTargetId = computed(() => game.value?.final_defense_target_use
 const isFinalDefenseTarget = computed(
   () => phaseKey.value === 'final_defense' && savedUser.value?.id === finalDefenseTargetId.value,
 )
+const visibleMafiaNicknames = computed(() =>
+  new Set(
+    roleKey.value === 'mafia'
+      ? (roleInfo.value?.items || [])
+          .filter((item) => item.type === 'mafia_team')
+          .map((item) => item.label)
+      : [],
+  ),
+)
 const playersWithStatus = computed(() =>
   (room.value?.players || []).map((player) => {
     const visibleTeamMember = visibleTeamMembers.value.find((member) => member.user_id === player.userId)
+    const fallbackTeamRole =
+      roleKey.value === 'mafia' && visibleMafiaNicknames.value.has(player.nickname)
+        ? 'mafia'
+        : player.userId === savedUser.value?.id && ['mafia', 'police'].includes(roleKey.value)
+          ? roleKey.value
+          : ''
 
     return {
       ...player,
       isMe: player.userId === savedUser.value?.id,
       isMyVoteTarget: myVoteTargetId.value === player.userId,
       isFinalDefenseTarget: finalDefenseTargetId.value === player.userId,
-      visibleTeamRole: visibleTeamMember?.team_role || '',
+      visibleTeamRole: visibleTeamMember?.team_role || fallbackTeamRole,
     }
   }),
 )
@@ -1268,6 +1283,8 @@ onBeforeUnmount(() => {
               @click="selectParticipant(player.userId)"
             >
               <strong>{{ player.nickname }}</strong>
+              <span v-if="player.visibleTeamRole === 'mafia'" class="team-identity-label mafia">마피아 팀</span>
+              <span v-if="player.visibleTeamRole === 'police'" class="team-identity-label police">경찰 팀</span>
               <span v-if="player.isMe">나</span>
               <span v-if="player.isHost">방장</span>
               <span>{{ player.isAlive ? '생존' : '사망' }}</span>
@@ -1333,6 +1350,8 @@ onBeforeUnmount(() => {
                 }"
               >
                 <strong>{{ player.nickname }}</strong>
+                <span v-if="player.visibleTeamRole === 'mafia'" class="team-identity-label mafia">마피아 팀</span>
+                <span v-if="player.visibleTeamRole === 'police'" class="team-identity-label police">경찰 팀</span>
                 <span v-if="player.isMe">나</span>
                 <span v-if="player.isHost">방장</span>
                 <span>{{ player.isAlive ? '생존' : '사망' }}</span>
@@ -1901,21 +1920,40 @@ button:disabled {
 }
 
 .survivor-chip.team-mafia {
-  background: rgba(127, 29, 29, 0.16);
-  border-color: rgba(248, 113, 113, 0.38);
+  background: rgba(127, 29, 29, 0.34);
+  border-color: rgba(248, 113, 113, 0.72);
+  box-shadow: inset 0 0 18px rgba(248, 113, 113, 0.08);
 }
 
 .survivor-chip.team-mafia strong {
-  color: #fca5a5;
+  color: #fecaca;
 }
 
 .survivor-chip.team-police {
-  background: rgba(30, 64, 175, 0.14);
-  border-color: rgba(96, 165, 250, 0.36);
+  background: rgba(30, 64, 175, 0.3);
+  border-color: rgba(96, 165, 250, 0.68);
+  box-shadow: inset 0 0 18px rgba(96, 165, 250, 0.08);
 }
 
 .survivor-chip.team-police strong {
-  color: #93c5fd;
+  color: #bfdbfe;
+}
+
+.survivor-chip .team-identity-label {
+  border-width: 1px;
+  color: #fff;
+}
+
+.survivor-chip .team-identity-label.mafia {
+  background: rgba(153, 27, 27, 0.72);
+  border-color: rgba(252, 165, 165, 0.54);
+  color: #fee2e2;
+}
+
+.survivor-chip .team-identity-label.police {
+  background: rgba(30, 64, 175, 0.7);
+  border-color: rgba(147, 197, 253, 0.5);
+  color: #dbeafe;
 }
 
 .survivor-chip.dead {
