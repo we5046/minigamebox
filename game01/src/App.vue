@@ -44,7 +44,7 @@ async function logout() {
 <template>
   <ToastNotification />
   <header class="app-header">
-    <RouterLink class="brand" :to="brandTarget">Game Hub</RouterLink>
+    <RouterLink class="brand" :to="brandTarget">Minigamebox</RouterLink>
 
     <nav v-if="showAppNav" class="app-nav" aria-label="Main navigation">
       <RouterLink to="/home">Home</RouterLink>

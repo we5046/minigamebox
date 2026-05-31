@@ -1430,7 +1430,7 @@ async function logout() {
   >
     <header class="page-card lobby-hero">
       <div>
-        <p class="eyebrow">Game Hub Lobby</p>
+        <p class="eyebrow">Minigamebox Lobby</p>
         <h1>{{ selectedGameTheme.lobbyTitle }}</h1>
         <p>{{ selectedGameTheme.description }}</p>
       </div>
@@ -2742,11 +2742,9 @@ async function logout() {
 }
 
 .lobby-layout::before {
-  background: linear-gradient(
-    135deg,
-    var(--hub-accent-soft),
-    transparent 42%
-  );
+  background:
+    linear-gradient(135deg, rgba(68, 85, 98, 0.12), transparent 44%),
+    linear-gradient(180deg, rgba(16, 22, 28, 0.5), rgba(9, 13, 17, 0.24));
   content: '';
   inset: -1rem;
   pointer-events: none;
@@ -2757,9 +2755,9 @@ async function logout() {
 .lobby-layout :deep(.page-card),
 .lobby-layout .page-card {
   background:
-    linear-gradient(180deg, rgba(80, 46, 30, 0.44), rgba(20, 14, 11, 0.78)),
-    rgba(20, 17, 15, 0.86);
-  border: 1px solid rgba(255, 190, 85, 0.16);
+    linear-gradient(180deg, rgba(48, 62, 72, 0.3), rgba(15, 21, 26, 0.76)),
+    rgba(17, 23, 28, 0.9);
+  border: 1px solid rgba(166, 185, 196, 0.14);
   border-radius: clamp(0.85rem, 1.5vw, 1.35rem);
   box-shadow: var(--pc-panel-shadow);
   padding: clamp(1rem, 2.2vw, 1.75rem);
@@ -2805,10 +2803,10 @@ async function logout() {
   align-items: center;
   background: linear-gradient(
     180deg,
-    rgba(255, 190, 85, 0.12),
-    rgba(48, 20, 16, 0.72)
+    rgba(166, 185, 196, 0.12),
+    rgba(20, 28, 34, 0.76)
   );
-  border: 1px solid rgba(255, 190, 85, 0.28);
+  border: 1px solid rgba(166, 185, 196, 0.24);
   border-radius: 0.7rem;
   color: #ffd49a;
   cursor: pointer;
@@ -2857,10 +2855,10 @@ async function logout() {
 .notification-popover {
   background: linear-gradient(
     180deg,
-    rgba(73, 34, 22, 0.96),
-    rgba(13, 9, 7, 0.98)
+    rgba(30, 40, 48, 0.98),
+    rgba(12, 17, 21, 0.98)
   );
-  border: 1px solid rgba(255, 190, 85, 0.24);
+  border: 1px solid rgba(166, 185, 196, 0.22);
   border-radius: 0.95rem;
   box-shadow:
     0 22px 55px rgba(0, 0, 0, 0.42),
@@ -2917,8 +2915,8 @@ async function logout() {
 }
 
 .notification-row {
-  background: rgba(14, 9, 7, 0.54);
-  border: 1px solid rgba(255, 190, 85, 0.12);
+  background: rgba(16, 23, 28, 0.74);
+  border: 1px solid rgba(166, 185, 196, 0.14);
   border-radius: 0.7rem;
   gap: 0.75rem;
   justify-content: space-between;
@@ -3011,11 +3009,11 @@ h2 {
 
 h1 {
   font-size: clamp(2.2rem, 5.2vw, 4.8rem);
-  letter-spacing: -0.05em;
+  letter-spacing: 0;
   line-height: 0.95;
   margin-top: 0.5rem;
   overflow-wrap: anywhere;
-  text-shadow: 0 0 26px rgba(255, 120, 52, 0.2);
+  text-shadow: 0 0 26px var(--hub-accent-soft);
 }
 
 h2 {
@@ -3104,8 +3102,8 @@ h2 {
 
 .game-selector-button {
   align-items: center;
-  background: rgba(20, 17, 15, 0.86);
-  border: 1px solid rgba(255, 190, 85, 0.14);
+  background: rgba(17, 23, 28, 0.9);
+  border: 1px solid rgba(166, 185, 196, 0.16);
   border-radius: 0.8rem;
   color: rgba(255, 245, 224, 0.72);
   cursor: pointer;
@@ -3514,11 +3512,11 @@ h2 {
 .room-row:focus-within {
   background: linear-gradient(
     180deg,
-    rgba(255, 190, 85, 0.13),
-    rgba(90, 28, 18, 0.18)
+    var(--hub-accent-soft),
+    rgba(24, 33, 40, 0.28)
   );
-  border-color: rgba(255, 190, 85, 0.38);
-  box-shadow: 0 0 22px rgba(255, 132, 38, 0.12);
+  border-color: var(--hub-accent-border);
+  box-shadow: 0 0 22px var(--hub-accent-soft);
 }
 
 .room-row:focus-within {
@@ -3678,9 +3676,9 @@ h2 {
 
 .room-details {
   background:
-    linear-gradient(180deg, rgba(255, 190, 85, 0.075), rgba(20, 12, 8, 0.42)),
-    rgba(20, 17, 15, 0.62);
-  border: 1px solid rgba(255, 190, 85, 0.22);
+    linear-gradient(180deg, rgba(166, 185, 196, 0.07), rgba(12, 17, 21, 0.42)),
+    rgba(17, 23, 28, 0.72);
+  border: 1px solid rgba(166, 185, 196, 0.18);
   border-radius: 0.85rem;
   display: grid;
   gap: 0.85rem;
@@ -4534,9 +4532,9 @@ h2 {
 
 .avatar {
   align-items: center;
-  background: linear-gradient(135deg, #ffbe55, #8f2115);
+  background: linear-gradient(135deg, #78909c, #26343d);
   border-radius: 1rem;
-  color: #14110f;
+  color: #f7fbff;
   display: flex;
   flex: 0 0 auto;
   font-size: 2rem;
@@ -4571,7 +4569,7 @@ h2 {
 }
 
 .exp-track i {
-  background: linear-gradient(90deg, #ffbe55, #8f2115);
+  background: linear-gradient(90deg, var(--hub-accent), #647c89);
   display: block;
   height: 100%;
 }

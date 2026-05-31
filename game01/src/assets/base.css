@@ -1,6 +1,6 @@
 :root {
-  --color-background: #14110f;
-  --color-background-soft: #211c18;
+  --color-background: #101419;
+  --color-background-soft: #182027;
   --color-border: rgba(255, 245, 224, 0.18);
   --color-border-hover: rgba(255, 245, 224, 0.34);
   --color-heading: #fff5e0;
@@ -20,9 +20,8 @@ body {
   min-height: 100vh;
   color: var(--color-text);
   background:
-    radial-gradient(circle at top left, rgba(149, 34, 20, 0.45), transparent 34rem),
-    radial-gradient(circle at 80% 12%, rgba(255, 190, 85, 0.2), transparent 28rem),
-    linear-gradient(135deg, #14110f, #241915 54%, #0d0b0a);
+    linear-gradient(135deg, rgba(68, 85, 98, 0.2), transparent 42%),
+    linear-gradient(145deg, #101419, #171d23 54%, #0c1014);
   transition:
     color 0.5s,
     background-color 0.5s;
