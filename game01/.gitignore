@@ -45,3 +45,4 @@ __screenshots__/
 *.sql
 !room-admin.sql
 !stalker-role-fix.sql
+!password-room-fix.sql

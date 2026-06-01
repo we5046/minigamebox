@@ -87,7 +87,6 @@ export function normalizeRoom(room) {
       room.final_defense_enabled ?? DEFAULT_ROOM_DETAIL_SETTINGS.finalDefenseEnabled,
     roleRevealMode: room.role_reveal_mode || 'private',
     entryMode: room.entry_mode || 'public',
-    entryPassword: room.entry_password || '',
     roleConfig: room.role_config || null,
     currentPlayers: players.length,
     phase: room.phase,
@@ -116,7 +115,6 @@ const roomSelect = `
   final_defense_enabled,
   role_reveal_mode,
   entry_mode,
-  entry_password,
   role_config,
   updated_at,
   created_at,
@@ -226,6 +224,11 @@ export async function createRoom({
 
 function getCreateRoomErrorMessage(error) {
   const message = error?.message || ''
+  const passwordSetupError = getRoomPasswordSetupErrorMessage(error)
+
+  if (passwordSetupError) {
+    return passwordSetupError
+  }
 
   if (error?.code === 'PGRST203') {
     return '방 생성 DB 함수가 중복 배포되었습니다. Supabase에 room-admin.sql을 다시 적용해야 합니다.'
@@ -240,6 +243,16 @@ function getCreateRoomErrorMessage(error) {
   }
 
   return message || '방 생성에 실패했습니다.'
+}
+
+function getRoomPasswordSetupErrorMessage(error) {
+  const message = error?.message || ''
+
+  if (message.includes('gen_salt') || message.includes('function crypt(')) {
+    return '비밀번호 암호화 DB 함수가 올바르게 배포되지 않았습니다. Supabase에 password-room-fix.sql을 적용해야 합니다.'
+  }
+
+  return ''
 }
 
 export async function joinRoom(roomId, entryPassword = '') {
@@ -258,6 +271,11 @@ export async function joinRoom(roomId, entryPassword = '') {
 
 function getJoinRoomErrorMessage(error) {
   const message = error?.message || ''
+  const passwordSetupError = getRoomPasswordSetupErrorMessage(error)
+
+  if (passwordSetupError) {
+    return passwordSetupError
+  }
 
   if (error?.code === 'PGRST202' || message.includes('Could not find the function public.join_room')) {
     return '방 입장 DB 함수가 배포되지 않았습니다. Supabase에 join_room SQL을 적용해야 합니다.'
@@ -362,7 +380,11 @@ export async function updateRoom(roomId, payload) {
       .single()
 
     if (error) {
-      throw createSupabaseError('updateRoom: rooms update failed', error, '방 정보를 업데이트하지 못했습니다.')
+      throw createSupabaseError(
+        'updateRoom: rooms update failed',
+        error,
+        getRoomPasswordSetupErrorMessage(error) || '방 정보를 업데이트하지 못했습니다.',
+      )
     }
 
     if (!data?.id) {

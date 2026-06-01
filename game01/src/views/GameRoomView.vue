@@ -309,7 +309,6 @@ const editSpectatorAllowed = ref(false);
 const editFirstNightAbilityAllowed = ref(true);
 const editFinalDefenseEnabled = ref(false);
 const editEntryPassword = ref('');
-const editRoomStoredEntryPassword = ref('');
 const isEditEntryPasswordVisible = ref(false);
 const editRoleConfigTotal = computed(() => {
   return Object.values(editRoomRoleConfig.value).reduce(
@@ -1279,7 +1278,6 @@ function mergeRoomPayload(nextRoom) {
     finalDefenseEnabled: nextRoom.final_defense_enabled ?? room.value.finalDefenseEnabled,
     roleRevealMode: nextRoom.role_reveal_mode ?? room.value.roleRevealMode,
     entryMode: nextRoom.entry_mode ?? room.value.entryMode,
-    entryPassword: nextRoom.entry_password ?? room.value.entryPassword,
     roleConfig: nextRoom.role_config ?? room.value.roleConfig,
     updatedAt: nextRoom.updated_at ?? room.value.updatedAt,
   };
@@ -1405,8 +1403,7 @@ function openEditRoomForm() {
   editFinalDefenseEnabled.value = room.value?.finalDefenseEnabled ?? false;
   editRoleRevealMode.value = room.value?.roleRevealMode || 'private';
   editEntryMode.value = room.value?.entryMode || 'public';
-  editEntryPassword.value = room.value?.entryPassword || '';
-  editRoomStoredEntryPassword.value = room.value?.entryPassword || '';
+  editEntryPassword.value = '';
   isEditEntryPasswordVisible.value = false;
   isEditAdvancedOpen.value = true;
   isEditingRoom.value = true;
@@ -1433,7 +1430,6 @@ function closeEditRoomForm() {
   editRoleRevealMode.value = 'private';
   editEntryMode.value = 'public';
   editEntryPassword.value = '';
-  editRoomStoredEntryPassword.value = '';
   isEditEntryPasswordVisible.value = false;
   isRecommendedEditRolesEnabled.value = false;
   isEditAdvancedOpen.value = true;
@@ -1552,13 +1548,10 @@ async function saveRoomInfo() {
   }
 
   const nextEntryPassword = editEntryPassword.value.trim();
-  const currentEntryPassword = editRoomStoredEntryPassword.value || '';
+  const isSwitchingToPrivate =
+    editEntryMode.value === 'private' && room.value?.entryMode !== 'private';
 
-  if (
-    editEntryMode.value === 'private' &&
-    !nextEntryPassword &&
-    !currentEntryPassword
-  ) {
+  if (isSwitchingToPrivate && !nextEntryPassword) {
     toastStore.error('비공개방은 비밀번호를 입력해야 합니다.');
     return;
   }
@@ -1581,9 +1574,9 @@ async function saveRoomInfo() {
       finalDefenseEnabled: editFinalDefenseEnabled.value,
       roleRevealMode: editRoleRevealMode.value,
       entryMode: editEntryMode.value,
-      ...(editEntryMode.value === 'private'
+      ...(editEntryMode.value === 'private' && nextEntryPassword
         ? {
-            entryPassword: nextEntryPassword || currentEntryPassword,
+            entryPassword: nextEntryPassword,
           }
         : {}),
     });
@@ -1929,7 +1922,7 @@ async function leaveRoom() {
                 v-model="editEntryPassword"
                 :type="isEditEntryPasswordVisible ? 'text' : 'password'"
                 class="text-input"
-                placeholder="비공개방 비밀번호를 입력하세요"
+                placeholder="변경할 경우에만 새 비밀번호를 입력하세요"
                 autocomplete="new-password"
               />
               <button
