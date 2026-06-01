@@ -2,12 +2,27 @@ import { createSupabaseError, logSupabaseError, supabase } from './supabaseClien
 
 const DEFAULT_QUOTE = '오늘은 어떤 게임을 즐겨볼까요?'
 const DEFAULT_PLAYER_TITLE = 'Rookie Player'
-const MAFIA_GAME = {
-  type: 'mafia',
-  icon: '🎭',
-  name: '마피아 게임',
-  description: '역할 추리 게임에서 쌓은 기록입니다.',
+const GAME_CATALOG = {
+  mafia: {
+    type: 'mafia',
+    icon: '🎭',
+    name: '마피아 게임',
+    description: '역할 추리 게임에서 쌓은 기록입니다.',
+  },
+  rainbowTail: {
+    type: 'rainbowTail',
+    icon: '🌈',
+    name: '무지개 꼬리잡기',
+    description: '색을 연결하며 쌓은 기록입니다.',
+  },
+  liar: {
+    type: 'liar',
+    icon: '🤥',
+    name: '라이어 게임',
+    description: '라이어 게임에서 쌓은 기록입니다.',
+  },
 }
+const DEFAULT_GAME_TYPE = 'mafia'
 
 function normalizeDefaultPlayerTitle(value) {
   return value && value !== 'Rookie Mafia' ? value : DEFAULT_PLAYER_TITLE
@@ -20,13 +35,15 @@ function createOverviewStats(stats = {}) {
   ]
 }
 
-function createMafiaStats(stats = {}) {
-  return [
-    { label: '시민 승률', value: toPercent(stats.citizen_win_rate) },
-    { label: '마피아 승률', value: toPercent(stats.mafia_win_rate) },
-    { label: '생존률', value: toPercent(stats.survival_rate) },
-    { label: '평균 생존 턴', value: String(stats.average_survival_turn ?? 0) },
-  ]
+function getGameDefinition(gameType) {
+  return (
+    GAME_CATALOG[gameType] || {
+      type: gameType,
+      icon: '🎮',
+      name: gameType,
+      description: '이 게임에서 쌓은 기록입니다.',
+    }
+  )
 }
 
 function createDefaultMafiaRoleRecords() {
@@ -39,10 +56,41 @@ function createDefaultMafiaRoleRecords() {
   ]
 }
 
-function createMafiaGameRecord(stats, roleRecords) {
+function createGameStats(gameType, stats = {}) {
+  const result = [
+    { label: '플레이', value: String(stats.total_games ?? 0) },
+    { label: '승률', value: toPercent(stats.win_rate ?? stats.overall_win_rate) },
+  ]
+
+  if (gameType === 'mafia') {
+    result.push(
+      { label: '시민 승률', value: toPercent(stats.citizen_win_rate) },
+      { label: '마피아 승률', value: toPercent(stats.mafia_win_rate) },
+      { label: '생존률', value: toPercent(stats.survival_rate) },
+      {
+        label: '평균 플레이 라운드',
+        value: String(stats.average_played_rounds ?? stats.average_survival_turn ?? 0),
+      },
+    )
+  }
+
+  return result
+}
+
+function normalizeRoleRecords(roles = []) {
+  return roles.map((role) => ({
+    role: role.role_name,
+    games: role.games_played ?? 0,
+    winRate: role.win_rate ?? 0,
+    icon: role.icon || role.role_name?.slice(0, 1) || '?',
+    featured: role.is_most_played,
+  }))
+}
+
+function createGameRecord(gameType, stats, roleRecords) {
   return {
-    ...MAFIA_GAME,
-    stats: createMafiaStats(stats),
+    ...getGameDefinition(gameType),
+    stats: createGameStats(gameType, stats),
     roleRecords,
   }
 }
@@ -65,7 +113,7 @@ function getEmptyMyPage(user) {
       quote: DEFAULT_QUOTE,
     },
     stats: createOverviewStats(),
-    gameRecords: [createMafiaGameRecord({}, roleRecords)],
+    gameRecords: [createGameRecord(DEFAULT_GAME_TYPE, {}, roleRecords)],
     recentMatches: [],
     achievements: [],
     cosmetics: [
@@ -93,16 +141,33 @@ function normalizeMyPageData(user, rows) {
   const empty = getEmptyMyPage(user)
   const profileRow = rows.profile
   const statsRow = rows.stats
-  const roleRecords =
+  const fallbackRoleRecords =
     rows.roles?.length > 0
-      ? rows.roles.map((role) => ({
-          role: role.role_name,
-          games: role.games_played ?? 0,
-          winRate: role.win_rate ?? 0,
-          icon: role.icon || role.role_name?.slice(0, 1) || '?',
-          featured: role.is_most_played,
-        }))
+      ? normalizeRoleRecords(rows.roles)
       : empty.gameRecords[0].roleRecords
+  const gameStats = rows.gameStats || []
+  const gameRoles = rows.gameRoles || []
+  const gameTypes = new Set([
+    DEFAULT_GAME_TYPE,
+    ...gameStats.map((stats) => stats.game_type),
+    ...gameRoles.map((role) => role.game_type),
+  ])
+  const gameRecords = [...gameTypes].map((gameType) => {
+    const scopedStats =
+      gameStats.find((stats) => stats.game_type === gameType) ||
+      (gameType === DEFAULT_GAME_TYPE ? statsRow : {})
+    const scopedRoles = normalizeRoleRecords(
+      gameRoles.filter((role) => role.game_type === gameType),
+    )
+
+    return createGameRecord(
+      gameType,
+      scopedStats,
+      scopedRoles.length > 0 || gameType !== DEFAULT_GAME_TYPE
+        ? scopedRoles
+        : fallbackRoleRecords,
+    )
+  })
 
   return {
     profile: {
@@ -122,15 +187,15 @@ function normalizeMyPageData(user, rows) {
       quote: profileRow?.profile_quote || empty.profile.quote,
     },
     stats: createOverviewStats(statsRow),
-    gameRecords: [createMafiaGameRecord(statsRow, roleRecords)],
+    gameRecords,
     recentMatches:
       rows.matches?.length > 0
         ? rows.matches.map((match) => ({
             id: match.id,
             result: match.won ? '승리' : '패배',
-            gameType: MAFIA_GAME.type,
-            gameName: MAFIA_GAME.name,
-            gameIcon: MAFIA_GAME.icon,
+            gameType: match.game_type || DEFAULT_GAME_TYPE,
+            gameName: getGameDefinition(match.game_type || DEFAULT_GAME_TYPE).name,
+            gameIcon: getGameDefinition(match.game_type || DEFAULT_GAME_TYPE).icon,
             role: match.role_name,
             icon: match.role_icon || match.role_name?.slice(0, 1) || '?',
             summary: match.summary,
@@ -168,6 +233,30 @@ async function selectMaybe(query) {
   }
 
   return data
+}
+
+async function selectRecentMatches(userId) {
+  const extendedMatches = await selectMaybe(
+    supabase
+      .from('player_recent_matches')
+      .select('id, user_id, game_id, game_type, role_name, role_icon, won, summary, detail, played_at')
+      .eq('user_id', userId)
+      .order('played_at', { ascending: false })
+      .limit(5),
+  )
+
+  if (extendedMatches !== null) {
+    return extendedMatches
+  }
+
+  return selectMaybe(
+    supabase
+      .from('player_recent_matches')
+      .select('id, user_id, role_name, role_icon, won, summary, detail, played_at')
+      .eq('user_id', userId)
+      .order('played_at', { ascending: false })
+      .limit(5),
+  )
 }
 
 function normalizeProfileUpdatePayload(payload) {
@@ -236,7 +325,16 @@ export async function getMyPageData(user) {
   }
 
   try {
-    const [profile, stats, roles, matches, achievements, cosmetics] = await Promise.all([
+    const [
+      profile,
+      stats,
+      gameStats,
+      roles,
+      gameRoles,
+      matches,
+      achievements,
+      cosmetics,
+    ] = await Promise.all([
       selectMaybe(
         supabase
           .from('profiles')
@@ -253,6 +351,13 @@ export async function getMyPageData(user) {
       ),
       selectMaybe(
         supabase
+          .from('player_game_stats')
+          .select('user_id, game_type, total_games, win_rate, citizen_win_rate, mafia_win_rate, survival_rate, average_played_rounds')
+          .eq('user_id', user.id)
+          .order('game_type', { ascending: true }),
+      ),
+      selectMaybe(
+        supabase
           .from('player_role_stats')
           .select('user_id, role_name, icon, games_played, win_rate, is_most_played')
           .eq('user_id', user.id)
@@ -260,12 +365,12 @@ export async function getMyPageData(user) {
       ),
       selectMaybe(
         supabase
-          .from('player_recent_matches')
-          .select('id, user_id, role_name, role_icon, won, summary, detail, played_at')
+          .from('player_game_role_stats')
+          .select('user_id, game_type, role_key, role_name, icon, games_played, win_rate, is_most_played')
           .eq('user_id', user.id)
-          .order('played_at', { ascending: false })
-          .limit(5),
+          .order('games_played', { ascending: false }),
       ),
+      selectRecentMatches(user.id),
       selectMaybe(
         supabase
           .from('player_achievements')
@@ -285,7 +390,9 @@ export async function getMyPageData(user) {
     return normalizeMyPageData(user, {
       profile,
       stats,
+      gameStats,
       roles,
+      gameRoles,
       matches,
       achievements,
       cosmetics,

@@ -180,6 +180,7 @@ export async function createRoom({
   entryMode = 'public',
   entryPassword = '',
   roleConfig = null,
+  liarSettings = null,
 }) {
   const { data: room, error } = await supabase.rpc('create_room', {
     p_title: title.trim(),
@@ -216,6 +217,25 @@ export async function createRoom({
 
     if (updateError) {
       throw createSupabaseError('createRoom: rooms final defense update failed', updateError, '최후의 변론 설정을 저장하지 못했습니다.')
+    }
+  }
+
+  if (gameType === 'liar') {
+    const { error: liarSettingsError } = await supabase.rpc('configure_liar_room', {
+      p_room_id: room.id,
+      p_setting_mode: liarSettings?.settingMode || 'classic',
+      p_category_id: liarSettings?.categoryId || null,
+      p_target_score: Number(liarSettings?.targetScore || 5),
+      p_citizen_win_score: Number(liarSettings?.citizenWinScore || 1),
+      p_liar_win_score: Number(liarSettings?.liarWinScore || 2),
+    })
+
+    if (liarSettingsError) {
+      throw createSupabaseError(
+        'createRoom: configure_liar_room rpc failed',
+        liarSettingsError,
+        '라이어 게임 설정 DB 함수가 배포되지 않았습니다. Supabase에 liar-game.sql을 적용해야 합니다.',
+      )
     }
   }
 

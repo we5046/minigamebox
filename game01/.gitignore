@@ -46,3 +46,5 @@ __screenshots__/
 !room-admin.sql
 !stalker-role-fix.sql
 !password-room-fix.sql
+!mypage-game-records-fix.sql
+!liar-game.sql

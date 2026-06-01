@@ -30,6 +30,7 @@ import {
   createRoom as createRoomRequest,
   joinRoom as joinRoomRequest,
 } from '@/api/roomApi';
+import { getLiarCategories } from '@/api/liarGameApi';
 import {
   getFriendships,
   removeFriend,
@@ -98,6 +99,11 @@ const presenceUsers = ref([]);
 const friendships = ref([]);
 const roomInvites = ref([]);
 const selectedGameType = ref('mafia');
+const liarCategories = ref([]);
+const newLiarCategoryId = ref(null);
+const newLiarTargetScore = ref(5);
+const newLiarCitizenWinScore = ref(1);
+const newLiarWinScore = ref(2);
 const friendNickname = ref('');
 const isLoadingFriends = ref(false);
 const isSendingFriendRequest = ref(false);
@@ -166,17 +172,17 @@ const GAME_THEMES = {
     accentBorder: 'rgba(74, 222, 128, 0.34)',
     isAvailable: false,
   },
-  detective: {
-    type: 'detective',
-    icon: '🔎',
-    name: '추리 게임',
-    lobbyTitle: '추리 게임 로비',
-    description: '단서와 대화를 조합해 사건의 진실을 찾아가는 게임입니다.',
-    roomPlaceholder: '추리 게임 방 제목을 입력하세요',
-    accent: '#60a5fa',
-    accentSoft: 'rgba(96, 165, 250, 0.14)',
-    accentBorder: 'rgba(147, 197, 253, 0.34)',
-    isAvailable: false,
+  liar: {
+    type: 'liar',
+    icon: '🤥',
+    name: '라이어 게임',
+    lobbyTitle: '라이어 게임 로비',
+    description: '제시어를 모르는 라이어를 대화와 투표로 찾아내는 게임입니다.',
+    roomPlaceholder: '라이어 게임 방 제목을 입력하세요',
+    accent: '#a78bfa',
+    accentSoft: 'rgba(167, 139, 250, 0.14)',
+    accentBorder: 'rgba(196, 181, 253, 0.34)',
+    isAvailable: true,
   },
 };
 const gameThemes = Object.values(GAME_THEMES);
@@ -190,6 +196,10 @@ const selectedGameThemeStyle = computed(() => ({
 }));
 const selectedGameRooms = computed(() =>
   rooms.value.filter((room) => room.gameType === selectedGameType.value),
+);
+const isLiarGameSelected = computed(() => selectedGameType.value === 'liar');
+const canCreateSelectedRoom = computed(
+  () => isLiarGameSelected.value || isRoleConfigValid.value,
 );
 
 const character = computed(() => profileStore.profile);
@@ -310,6 +320,7 @@ const roleOptions = [
   { key: 'stalker', label: '스토커' },
 ];
 const fixedPlayerCounts = [4, 6, 8, 12];
+const liarPlayerCountOptions = [3, 4, 5, 6, 8, 10, 12];
 const nightTimeOptions = [20, 30, 45, 60];
 const discussionTimeOptions = [30, 45, 60, 90, 120];
 const voteTimeOptions = [15, 30, 45, 60];
@@ -490,7 +501,27 @@ watch([rooms, roomFilter, selectedGameType], () => {
   clampSelectedRoom();
 });
 
+watch(selectedGameType, (gameType) => {
+  if (gameType === 'liar') {
+    newRoomMaxPlayers.value = 6;
+    newRoomMinStartPlayers.value = 3;
+    newRoomTieVoteRule.value = 'revote';
+    loadLiarCategories();
+    return;
+  }
+
+  newRoomDescription.value = '클래식';
+  newRoomMaxPlayers.value = 8;
+  applyClassicNewRoomSettings();
+});
+
 watch([newRoomMaxPlayers, newRoomDescription], () => {
+  if (isLiarGameSelected.value) {
+    newRoomMinStartPlayers.value = 3;
+    newRoomTieVoteRule.value = 'revote';
+    return;
+  }
+
   if (isFriendlyRoomMode.value) {
     if (isRecommendedRolesEnabled.value) {
       newRoomRoleConfig.value = getRecommendedRoleConfig(
@@ -505,8 +536,10 @@ watch([newRoomMaxPlayers, newRoomDescription], () => {
 });
 
 watch([newRoomMaxPlayers, newRoomMinStartPlayers], () => {
-  if (newRoomMinStartPlayers.value < 2) {
-    newRoomMinStartPlayers.value = 2;
+  const minimumPlayers = isLiarGameSelected.value ? 3 : 2;
+
+  if (newRoomMinStartPlayers.value < minimumPlayers) {
+    newRoomMinStartPlayers.value = minimumPlayers;
   }
 
   if (newRoomMinStartPlayers.value > newRoomMaxPlayers.value) {
@@ -573,18 +606,20 @@ async function createRoom() {
     return;
   }
 
-  if (newRoomMaxPlayers.value < 2 || newRoomMaxPlayers.value > 12) {
-    toastStore.error('참가 인원은 2명 이상 12명 이하로 설정하세요.');
+  const minimumPlayers = isLiarGameSelected.value ? 3 : 2;
+
+  if (newRoomMaxPlayers.value < minimumPlayers || newRoomMaxPlayers.value > 12) {
+    toastStore.error(`참가 인원은 ${minimumPlayers}명 이상 12명 이하로 설정하세요.`);
     return;
   }
 
-  if (!isRoleConfigValid.value) {
+  if (!isLiarGameSelected.value && !isRoleConfigValid.value) {
     toastStore.error('역할 인원수 합계가 참가 인원과 같아야 합니다.');
     return;
   }
 
-  if (newRoomMinStartPlayers.value < 2) {
-    toastStore.error('최소 시작 인원은 2명 이상이어야 합니다.');
+  if (newRoomMinStartPlayers.value < minimumPlayers) {
+    toastStore.error(`최소 시작 인원은 ${minimumPlayers}명 이상이어야 합니다.`);
     return;
   }
 
@@ -622,7 +657,17 @@ async function createRoom() {
       roleRevealMode: newRoomRoleRevealMode.value,
       entryMode: newRoomEntryMode.value,
       entryPassword: newRoomEntryPassword.value.trim(),
-      roleConfig: newRoomRoleConfig.value,
+      roleConfig: isLiarGameSelected.value ? {} : newRoomRoleConfig.value,
+      liarSettings: isLiarGameSelected.value
+        ? {
+            settingMode:
+              newRoomDescription.value === '친선전' ? 'custom' : 'classic',
+            categoryId: newLiarCategoryId.value || null,
+            targetScore: Number(newLiarTargetScore.value),
+            citizenWinScore: Number(newLiarCitizenWinScore.value),
+            liarWinScore: Number(newLiarWinScore.value),
+          }
+        : null,
     });
     newRoomTitle.value = '';
     newRoomDescription.value = '클래식';
@@ -632,8 +677,12 @@ async function createRoom() {
     newRoomVoteTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds;
     newRoomDiscussionTimeSeconds.value =
       DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds;
-    newRoomMinStartPlayers.value = DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers;
-    newRoomTieVoteRule.value = DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule;
+    newRoomMinStartPlayers.value = isLiarGameSelected.value
+      ? 3
+      : DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers;
+    newRoomTieVoteRule.value = isLiarGameSelected.value
+      ? 'revote'
+      : DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule;
     newRoomSpectatorAllowed.value =
       DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed;
     newRoomFirstNightAbilityAllowed.value =
@@ -645,6 +694,10 @@ async function createRoom() {
     newRoomEntryPassword.value = '';
     newRoomRoleConfig.value = getDefaultRoleConfig(8);
     isRecommendedRolesEnabled.value = false;
+    newLiarCategoryId.value = null;
+    newLiarTargetScore.value = 5;
+    newLiarCitizenWinScore.value = 1;
+    newLiarWinScore.value = 2;
     isNewRoomAdvancedOpen.value = false;
     isCreateFormOpen.value = false;
     await roomStore.fetchRooms();
@@ -673,6 +726,10 @@ function openCreateRoomForm() {
   if (!selectedGameTheme.value.isAvailable) {
     toastStore.error(`${selectedGameTheme.value.name}은 아직 준비 중입니다.`);
     return;
+  }
+
+  if (isLiarGameSelected.value && liarCategories.value.length === 0) {
+    loadLiarCategories();
   }
 
   isCreateFormOpen.value = true;
@@ -723,6 +780,15 @@ function selectGameType(gameType) {
   currentRoomPage.value = 1;
   selectedRoomId.value = null;
   closeCreateRoomForm();
+}
+
+async function loadLiarCategories() {
+  try {
+    liarCategories.value = await getLiarCategories();
+  } catch (error) {
+    liarCategories.value = [];
+    toastStore.error(error.message);
+  }
 }
 
 function getGameTypeLabel(gameType) {
@@ -965,11 +1031,18 @@ function clearWhisperTarget() {
 }
 
 function setNewRoomMaxPlayers(count) {
-  newRoomMaxPlayers.value = Math.min(12, Math.max(4, Number(count)));
+  const minimumPlayers = isLiarGameSelected.value ? 3 : 4;
+  newRoomMaxPlayers.value = Math.min(12, Math.max(minimumPlayers, Number(count)));
 }
 
 function selectNewRoomMode(mode) {
   newRoomDescription.value = mode;
+
+  if (isLiarGameSelected.value) {
+    newRoomMinStartPlayers.value = 3;
+    newRoomTieVoteRule.value = 'revote';
+    return;
+  }
 
   if (mode === '친선전') {
     isRecommendedRolesEnabled.value = true;
@@ -1582,9 +1655,9 @@ async function logout() {
 
             <div class="form-group">
               <label>참가 인원</label>
-              <div v-if="!isFriendlyRoomMode" class="option-group">
+              <div v-if="!isFriendlyRoomMode || isLiarGameSelected" class="option-group">
                 <button
-                  v-for="count in fixedPlayerCounts"
+                  v-for="count in isLiarGameSelected ? liarPlayerCountOptions : fixedPlayerCounts"
                   :key="count"
                   type="button"
                   class="option-btn"
@@ -1603,7 +1676,7 @@ async function logout() {
                   <button
                     type="button"
                     class="stepper-btn"
-                    :disabled="newRoomMaxPlayers <= 4"
+                    :disabled="newRoomMaxPlayers <= (isLiarGameSelected ? 3 : 4)"
                     @click="adjustNewRoomMaxPlayers(-1)"
                   >
                     -
@@ -1613,7 +1686,7 @@ async function logout() {
                     v-model.number="newRoomMaxPlayers"
                     class="player-range"
                     type="range"
-                    min="4"
+                    :min="isLiarGameSelected ? 3 : 4"
                     max="12"
                     step="1"
                   />
@@ -1629,7 +1702,7 @@ async function logout() {
                 </div>
 
                 <div class="range-labels">
-                  <span>4명</span>
+                  <span>{{ isLiarGameSelected ? 3 : 4 }}명</span>
                   <span>12명</span>
                 </div>
               </div>
@@ -1657,15 +1730,19 @@ async function logout() {
               </div>
               <p class="mode-description">
                 {{
-                  isFriendlyRoomMode
-                    ? '역할 구성과 세부 규칙을 직접 조정할 수 있습니다.'
-                    : '공식 역할 구성과 표준 규칙으로 빠르게 시작합니다.'
+                  isLiarGameSelected
+                    ? isFriendlyRoomMode
+                      ? '테마와 목표 점수, 진영별 승리 점수를 조정합니다.'
+                      : '테마를 선택하고 표준 라이어 게임 규칙으로 빠르게 시작합니다.'
+                    : isFriendlyRoomMode
+                      ? '역할 구성과 세부 규칙을 직접 조정할 수 있습니다.'
+                      : '공식 역할 구성과 표준 규칙으로 빠르게 시작합니다.'
                 }}
               </p>
             </div>
 
             <div class="room-custom-grid">
-              <div class="form-group">
+              <div v-if="!isLiarGameSelected" class="form-group">
                 <label>역할 공개</label>
                 <div class="option-group">
                   <button
@@ -1724,7 +1801,62 @@ async function logout() {
               </div>
             </div>
 
-            <section v-if="isFriendlyRoomMode" class="advanced-settings-panel">
+            <section v-if="isLiarGameSelected" class="advanced-settings-panel">
+              <div class="advanced-settings-grid">
+                <div class="form-group">
+                  <label>테마</label>
+                  <select v-model="newLiarCategoryId">
+                    <option :value="null">랜덤</option>
+                    <option
+                      v-for="category in liarCategories"
+                      :key="category.id"
+                      :value="category.id"
+                    >
+                      {{ category.label }}
+                    </option>
+                  </select>
+                </div>
+
+                <template v-if="isFriendlyRoomMode">
+                  <div class="form-group">
+                    <label>목표 점수</label>
+                    <select v-model.number="newLiarTargetScore">
+                      <option v-for="score in [3, 5, 7, 10]" :key="`liar-target-${score}`" :value="score">
+                        {{ score }}점
+                      </option>
+                    </select>
+                  </div>
+
+                  <div class="form-group">
+                    <label>시민 승리 점수</label>
+                    <select v-model.number="newLiarCitizenWinScore">
+                      <option v-for="score in [1, 2]" :key="`citizen-score-${score}`" :value="score">
+                        +{{ score }}점
+                      </option>
+                    </select>
+                  </div>
+
+                  <div class="form-group">
+                    <label>라이어 승리 점수</label>
+                    <select v-model.number="newLiarWinScore">
+                      <option v-for="score in [2, 3, 5]" :key="`liar-score-${score}`" :value="score">
+                        +{{ score }}점
+                      </option>
+                    </select>
+                  </div>
+                </template>
+              </div>
+
+              <p class="classic-rules-note">
+                {{
+                  isFriendlyRoomMode
+                    ? '라이어 1명, 자기 투표 불가, 동률 시 재투표 규칙은 고정됩니다.'
+                    : '클래식은 목표 5점, 시민 +1점, 라이어 +2점, 동률 시 재투표로 진행합니다.'
+                }}
+              </p>
+            </section>
+
+            <section v-else-if="isFriendlyRoomMode" class="advanced-settings-panel">
               <button
                 type="button"
                 class="advanced-settings-toggle"
@@ -1868,12 +2000,13 @@ async function logout() {
                 </div>
               </div>
             </section>
-            <p v-else class="classic-rules-note">
+            <p v-else-if="!isLiarGameSelected" class="classic-rules-note">
               클래식은 비공개 역할, 표준 진행 시간, 기본 투표 규칙으로
               고정됩니다. 세부 규칙을 바꾸려면 커스텀을 선택하세요.
             </p>
 
             <section
+              v-if="!isLiarGameSelected"
               class="role-config-section"
               :class="{
                 invalid: !isRoleConfigValid,
@@ -1958,7 +2091,7 @@ async function logout() {
             <button
               type="submit"
               class="submit-btn"
-              :disabled="isCreatingRoom || !isRoleConfigValid"
+              :disabled="isCreatingRoom || !canCreateSelectedRoom"
             >
               {{ isCreatingRoom ? '생성 중...' : '방 생성' }}
             </button>
