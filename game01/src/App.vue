@@ -12,7 +12,7 @@ const authStore = useAuthStore()
 
 const isAuthenticated = computed(() => !!authStore.user)
 const showAppNav = computed(
-  () => isAuthenticated.value && route.name === 'home',
+  () => isAuthenticated.value && ['home', 'shop', 'mypage'].includes(route.name),
 )
 const isAuthPage = computed(() =>
   ['login', 'signup', 'forgot-password'].includes(route.name),

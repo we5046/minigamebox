@@ -1,6 +1,10 @@
 import { createSupabaseError, supabase } from './supabaseClient'
 import { clearCurrentUser, setCurrentUser } from './session'
 
+function normalizeDefaultPlayerTitle(value) {
+  return value && value !== 'Rookie Mafia' ? value : 'Rookie Player'
+}
+
 function toAuthEmail(loginId) {
   return `${loginId.trim().toLowerCase()}@mafia.local`
 }
@@ -24,7 +28,7 @@ export function toCurrentUser(profile) {
       averageSurvivalTurn: stats.average_survival_turn,
     },
     character: {
-      name: profile.character_name,
+      name: normalizeDefaultPlayerTitle(profile.character_name),
       level: profile.level,
       coin: profile.coin,
       avatar: profile.avatar,
@@ -114,7 +118,7 @@ export async function signupUser({ loginId, nickname, password }) {
     id: authData.user.id,
     login_id: trimmedLoginId,
     nickname: trimmedNickname,
-    character_name: 'Rookie Mafia',
+    character_name: 'Rookie Player',
     level: 1,
     coin: 0,
     avatar: 'default-mafia',

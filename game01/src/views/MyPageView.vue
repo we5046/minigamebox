@@ -11,7 +11,7 @@ const toastStore = useToastStore()
 const savedUser = computed(() => authStore.user)
 const profile = computed(() => profileStore.profile)
 const stats = computed(() => profileStore.stats)
-const roleRecords = computed(() => profileStore.roleRecords)
+const gameRecords = computed(() => profileStore.gameRecords)
 const recentMatches = computed(() => profileStore.recentMatches)
 const achievements = computed(() => profileStore.achievements)
 const cosmetics = computed(() => profileStore.cosmetics)
@@ -120,7 +120,7 @@ watch(savedUser, (nextUser, previousUser) => {
   <section class="mypage">
     <header class="mypage-top">
       <div>
-        <p class="eyebrow">Personal Dossier</p>
+        <p class="eyebrow">Player Hub</p>
         <h1>마이페이지</h1>
       </div>
     </header>
@@ -148,7 +148,7 @@ watch(savedUser, (nextUser, previousUser) => {
         </div>
 
         <div class="profile-info">
-          <p class="eyebrow">Current Identity</p>
+          <p class="eyebrow">Player Profile</p>
           <h2>{{ profile.nickname }}</h2>
           <p class="title-badge">{{ profile.title }}</p>
           <blockquote>{{ profile.quote }}</blockquote>
@@ -167,31 +167,57 @@ watch(savedUser, (nextUser, previousUser) => {
 
       </section>
 
-      <section class="stats-grid">
-        <article v-for="stat in stats" :key="stat.label" class="stat-card page-card">
-          <span>{{ stat.label }}</span>
-          <strong>{{ stat.value }}</strong>
-        </article>
+      <section class="overview-block">
+        <div class="section-title">
+          <p class="eyebrow">Overview</p>
+          <h2>전체 게임 요약</h2>
+          <p class="section-note">모든 게임에서 쌓은 계정 기록입니다.</p>
+        </div>
+        <div class="stats-grid">
+          <article v-for="stat in stats" :key="stat.label" class="stat-card page-card">
+            <span>{{ stat.label }}</span>
+            <strong>{{ stat.value }}</strong>
+          </article>
+        </div>
       </section>
 
       <section class="content-grid">
-        <article class="page-card role-card">
+        <article class="page-card game-record-card">
           <div class="section-title">
-            <p class="eyebrow">Roles</p>
-            <h2>역할별 기록</h2>
+            <p class="eyebrow">Games</p>
+            <h2>게임별 기록</h2>
+            <p class="section-note">게임마다 사용하는 규칙과 통계를 나누어 보여줍니다.</p>
           </div>
-          <div class="role-list">
-            <div v-for="role in roleRecords" :key="role.role" class="role-row" :class="{ featured: role.featured }">
-              <span class="role-icon">{{ role.icon }}</span>
-              <div class="role-copy">
-                <strong>{{ role.role }}</strong>
-                <p>{{ role.games }}회 플레이</p>
-                <div class="role-progress">
-                  <span :style="{ width: `${role.winRate}%` }"></span>
+          <div class="game-record-list">
+            <section v-for="game in gameRecords" :key="game.type" class="game-record">
+              <header class="game-record-header">
+                <span class="game-record-icon">{{ game.icon }}</span>
+                <div>
+                  <h3>{{ game.name }}</h3>
+                  <p>{{ game.description }}</p>
+                </div>
+              </header>
+              <div class="game-record-stats">
+                <div v-for="stat in game.stats" :key="stat.label" class="game-stat">
+                  <span>{{ stat.label }}</span>
+                  <strong>{{ stat.value }}</strong>
                 </div>
               </div>
-              <span class="role-rate">{{ role.winRate }}%</span>
-            </div>
+              <h3 class="game-role-title">역할별 기록</h3>
+              <div class="role-list">
+                <div v-for="role in game.roleRecords" :key="role.role" class="role-row" :class="{ featured: role.featured }">
+                  <span class="role-icon">{{ role.icon }}</span>
+                  <div class="role-copy">
+                    <strong>{{ role.role }}</strong>
+                    <p>{{ role.games }}회 플레이</p>
+                    <div class="role-progress">
+                      <span :style="{ width: `${role.winRate}%` }"></span>
+                    </div>
+                  </div>
+                  <span class="role-rate">{{ role.winRate }}%</span>
+                </div>
+              </div>
+            </section>
           </div>
         </article>
 
@@ -205,7 +231,10 @@ watch(savedUser, (nextUser, previousUser) => {
           <div v-for="match in recentMatches" :key="match.id" class="match-row" :class="{ won: match.won }">
               <span class="result">{{ match.result }}</span>
               <span class="role-icon small">{{ match.icon }}</span>
-              <strong>{{ match.role }}</strong>
+              <div class="match-role">
+                <strong>{{ match.role }}</strong>
+                <span class="match-game">{{ match.gameIcon }} {{ match.gameName }}</span>
+              </div>
               <p>{{ match.summary }}</p>
               <small>{{ match.detail }}</small>
             </div>
@@ -242,7 +271,7 @@ watch(savedUser, (nextUser, previousUser) => {
             <div class="mini-profile">{{ profile.nickname.slice(0, 1).toUpperCase() }}</div>
             <div>
               <strong class="preview-name">{{ profile.nickname }}</strong>
-              <p>오늘 밤, 누가 거짓말을 하고 있을까?</p>
+              <p>여러 게임에서 나만의 스타일을 보여주세요.</p>
             </div>
           </div>
           <ul>
@@ -290,6 +319,22 @@ watch(savedUser, (nextUser, previousUser) => {
 .empty-state {
   color: rgba(255, 245, 224, 0.6);
   margin: 0;
+}
+
+.section-note,
+.game-record-header p,
+.game-stat span,
+.match-game {
+  color: rgba(255, 245, 224, 0.62);
+}
+
+.section-note {
+  margin: 0;
+}
+
+.overview-block {
+  display: grid;
+  gap: 1rem;
 }
 
 .eyebrow {
@@ -503,7 +548,7 @@ blockquote {
 .stats-grid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
 }
 
 .stat-card {
@@ -541,12 +586,76 @@ blockquote {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.role-card,
+.game-record-card,
 .recent-card,
 .achievement-card,
 .cosmetic-card {
   display: grid;
   gap: 1rem;
+}
+
+.game-record-card {
+  grid-column: 1 / -1;
+}
+
+.game-record-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.game-record {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.game-record-header {
+  align-items: center;
+  display: flex;
+  gap: 0.85rem;
+}
+
+.game-record-header p {
+  margin: 0.25rem 0 0;
+}
+
+.game-record-icon {
+  align-items: center;
+  background: rgba(255, 190, 85, 0.12);
+  border: 1px solid rgba(255, 190, 85, 0.32);
+  border-radius: 1rem;
+  display: flex;
+  font-size: 1.5rem;
+  height: 3.25rem;
+  justify-content: center;
+  width: 3.25rem;
+}
+
+.game-record-stats {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+}
+
+.game-stat {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--color-border);
+  border-radius: 0.8rem;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem;
+}
+
+.game-stat strong {
+  color: var(--color-heading);
+  font-size: 1.2rem;
+}
+
+.game-role-title {
+  font-size: 1rem;
 }
 
 .role-list,
@@ -616,6 +725,15 @@ blockquote {
 
 .match-row.won .result {
   color: #86efac;
+}
+
+.match-role {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.match-game {
+  font-size: 0.72rem;
 }
 
 .match-row small {

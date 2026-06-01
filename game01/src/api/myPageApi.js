@@ -1,15 +1,62 @@
 import { createSupabaseError, logSupabaseError, supabase } from './supabaseClient'
 
-const DEFAULT_QUOTE = '오늘 밤, 진실은 침묵하는 사람의 눈빛에 숨어 있다.'
+const DEFAULT_QUOTE = '오늘은 어떤 게임을 즐겨볼까요?'
+const DEFAULT_PLAYER_TITLE = 'Rookie Player'
+const MAFIA_GAME = {
+  type: 'mafia',
+  icon: '🎭',
+  name: '마피아 게임',
+  description: '역할 추리 게임에서 쌓은 기록입니다.',
+}
+
+function normalizeDefaultPlayerTitle(value) {
+  return value && value !== 'Rookie Mafia' ? value : DEFAULT_PLAYER_TITLE
+}
+
+function createOverviewStats(stats = {}) {
+  return [
+    { label: '총 플레이', value: String(stats.total_games ?? 0) },
+    { label: '전체 승률', value: toPercent(stats.overall_win_rate) },
+  ]
+}
+
+function createMafiaStats(stats = {}) {
+  return [
+    { label: '시민 승률', value: toPercent(stats.citizen_win_rate) },
+    { label: '마피아 승률', value: toPercent(stats.mafia_win_rate) },
+    { label: '생존률', value: toPercent(stats.survival_rate) },
+    { label: '평균 생존 턴', value: String(stats.average_survival_turn ?? 0) },
+  ]
+}
+
+function createDefaultMafiaRoleRecords() {
+  return [
+    { role: '시민', games: 0, winRate: 0, icon: 'C', featured: false },
+    { role: '마피아', games: 0, winRate: 0, icon: 'M', featured: false },
+    { role: '경찰', games: 0, winRate: 0, icon: 'P', featured: false },
+    { role: '의사', games: 0, winRate: 0, icon: 'D', featured: false },
+    { role: '스토커', games: 0, winRate: 0, icon: 'S', featured: false },
+  ]
+}
+
+function createMafiaGameRecord(stats, roleRecords) {
+  return {
+    ...MAFIA_GAME,
+    stats: createMafiaStats(stats),
+    roleRecords,
+  }
+}
 
 function getEmptyMyPage(user) {
+  const roleRecords = createDefaultMafiaRoleRecords()
+
   return {
     profile: {
       nickname: user?.nickname || 'GuestPlayer',
       loginId: user?.loginId || 'guest',
       level: user?.character?.level || 1,
-      title: user?.character?.name || 'Rookie Mafia',
-      characterName: user?.character?.name || 'Rookie Mafia',
+      title: normalizeDefaultPlayerTitle(user?.character?.name),
+      characterName: normalizeDefaultPlayerTitle(user?.character?.name),
       representativeTitle: user?.representativeTitle || '',
       avatar: user?.character?.avatar || 'default-mafia',
       coin: user?.character?.coin || 0,
@@ -17,21 +64,8 @@ function getEmptyMyPage(user) {
       status: user ? 'Online' : 'Guest',
       quote: DEFAULT_QUOTE,
     },
-    stats: [
-      { label: '총 플레이', value: '0' },
-      { label: '전체 승률', value: '0%' },
-      { label: '시민 승률', value: '0%' },
-      { label: '마피아 승률', value: '0%' },
-      { label: '생존률', value: '0%' },
-      { label: '평균 생존 턴', value: '0' },
-    ],
-    roleRecords: [
-      { role: '시민', games: 0, winRate: 0, icon: 'C', featured: false },
-      { role: '마피아', games: 0, winRate: 0, icon: 'M', featured: false },
-      { role: '경찰', games: 0, winRate: 0, icon: 'P', featured: false },
-      { role: '의사', games: 0, winRate: 0, icon: 'D', featured: false },
-      { role: '스토커', games: 0, winRate: 0, icon: 'S', featured: false },
-    ],
+    stats: createOverviewStats(),
+    gameRecords: [createMafiaGameRecord({}, roleRecords)],
     recentMatches: [],
     achievements: [],
     cosmetics: [
@@ -59,6 +93,16 @@ function normalizeMyPageData(user, rows) {
   const empty = getEmptyMyPage(user)
   const profileRow = rows.profile
   const statsRow = rows.stats
+  const roleRecords =
+    rows.roles?.length > 0
+      ? rows.roles.map((role) => ({
+          role: role.role_name,
+          games: role.games_played ?? 0,
+          winRate: role.win_rate ?? 0,
+          icon: role.icon || role.role_name?.slice(0, 1) || '?',
+          featured: role.is_most_played,
+        }))
+      : empty.gameRecords[0].roleRecords
 
   return {
     profile: {
@@ -66,8 +110,10 @@ function normalizeMyPageData(user, rows) {
       nickname: profileRow?.nickname || empty.profile.nickname,
       loginId: profileRow?.login_id || empty.profile.loginId,
       level: profileRow?.level ?? empty.profile.level,
-      title: profileRow?.representative_title || profileRow?.character_name || empty.profile.title,
-      characterName: profileRow?.character_name || empty.profile.characterName,
+      title:
+        profileRow?.representative_title ||
+        normalizeDefaultPlayerTitle(profileRow?.character_name),
+      characterName: normalizeDefaultPlayerTitle(profileRow?.character_name),
       representativeTitle:
         profileRow?.representative_title || empty.profile.representativeTitle,
       avatar: profileRow?.avatar || empty.profile.avatar,
@@ -75,29 +121,16 @@ function normalizeMyPageData(user, rows) {
       exp: profileRow?.experience_percent ?? empty.profile.exp,
       quote: profileRow?.profile_quote || empty.profile.quote,
     },
-    stats: [
-      { label: '총 플레이', value: String(statsRow?.total_games ?? 0) },
-      { label: '전체 승률', value: toPercent(statsRow?.overall_win_rate) },
-      { label: '시민 승률', value: toPercent(statsRow?.citizen_win_rate) },
-      { label: '마피아 승률', value: toPercent(statsRow?.mafia_win_rate) },
-      { label: '생존률', value: toPercent(statsRow?.survival_rate) },
-      { label: '평균 생존 턴', value: String(statsRow?.average_survival_turn ?? 0) },
-    ],
-    roleRecords:
-      rows.roles?.length > 0
-        ? rows.roles.map((role) => ({
-            role: role.role_name,
-            games: role.games_played ?? 0,
-            winRate: role.win_rate ?? 0,
-            icon: role.icon || role.role_name?.slice(0, 1) || '?',
-            featured: role.is_most_played,
-          }))
-        : empty.roleRecords,
+    stats: createOverviewStats(statsRow),
+    gameRecords: [createMafiaGameRecord(statsRow, roleRecords)],
     recentMatches:
       rows.matches?.length > 0
         ? rows.matches.map((match) => ({
             id: match.id,
             result: match.won ? '승리' : '패배',
+            gameType: MAFIA_GAME.type,
+            gameName: MAFIA_GAME.name,
+            gameIcon: MAFIA_GAME.icon,
             role: match.role_name,
             icon: match.role_icon || match.role_name?.slice(0, 1) || '?',
             summary: match.summary,

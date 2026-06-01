@@ -14,8 +14,8 @@ function createDefaultProfile() {
     id: null,
     loginId: 'guest',
     nickname: 'GuestPlayer',
-    characterName: 'Rookie Mafia',
-    title: 'Rookie Mafia',
+    characterName: 'Rookie Player',
+    title: 'Rookie Player',
     avatar: 'default-mafia',
     level: 1,
     coin: 0,
@@ -24,7 +24,7 @@ function createDefaultProfile() {
     winRate: '0%',
     winRateValue: 0,
     winStreak: 0,
-    quote: '오늘 밤 누가 거짓말을 하고 있을까?',
+    quote: '오늘은 어떤 게임을 즐겨볼까요?',
     representativeTitle: '',
   }
 }
@@ -33,10 +33,6 @@ function createDefaultStats() {
   return [
     { label: '총 플레이', value: '0' },
     { label: '전체 승률', value: '0%' },
-    { label: '시민 승률', value: '0%' },
-    { label: '마피아 승률', value: '0%' },
-    { label: '생존율', value: '0%' },
-    { label: '평균 생존 턴', value: '0' },
   ]
 }
 
@@ -55,7 +51,7 @@ function normalizeProfileDisplay(bundle, authProfile = null) {
       profile.characterName ||
       profile.character_name ||
       authProfile?.character_name ||
-      'Rookie Mafia',
+      'Rookie Player',
     title:
       profile.title ||
       profile.representativeTitle ||
@@ -63,7 +59,7 @@ function normalizeProfileDisplay(bundle, authProfile = null) {
       profile.character_name ||
       authProfile?.representative_title ||
       authProfile?.character_name ||
-      'Rookie Mafia',
+      'Rookie Player',
     representativeTitle:
       profile.representativeTitle ||
       profile.representative_title ||
@@ -85,7 +81,7 @@ function normalizeProfileDisplay(bundle, authProfile = null) {
       profile.quote ||
       profile.profile_quote ||
       authProfile?.profile_quote ||
-      '오늘 밤 누가 거짓말을 하고 있을까?',
+      '오늘은 어떤 게임을 즐겨볼까요?',
   }
 }
 
@@ -93,7 +89,7 @@ function createDefaultBundle() {
   return {
     profile: createDefaultProfile(),
     stats: createDefaultStats(),
-    roleRecords: [],
+    gameRecords: [],
     recentMatches: [],
     achievements: [],
     cosmetics: [],
@@ -115,7 +111,7 @@ let refreshTimer = null
 export const useProfileStore = defineStore('profile', () => {
   const profile = ref(createDefaultProfile())
   const stats = ref(createDefaultStats())
-  const roleRecords = ref([])
+  const gameRecords = ref([])
   const recentMatches = ref([])
   const achievements = ref([])
   const cosmetics = ref([])
@@ -146,7 +142,7 @@ export const useProfileStore = defineStore('profile', () => {
 
     profile.value = nextProfile
     stats.value = displayData?.stats || createDefaultStats()
-    roleRecords.value = displayData?.roleRecords || []
+    gameRecords.value = displayData?.gameRecords || []
     recentMatches.value = displayData?.recentMatches || []
     achievements.value = displayData?.achievements || []
     cosmetics.value = displayData?.cosmetics || []
@@ -245,7 +241,7 @@ export const useProfileStore = defineStore('profile', () => {
     currentUserId = null
     profile.value = createDefaultProfile()
     stats.value = createDefaultStats()
-    roleRecords.value = []
+    gameRecords.value = []
     recentMatches.value = []
     achievements.value = []
     cosmetics.value = []
@@ -279,7 +275,7 @@ export const useProfileStore = defineStore('profile', () => {
   return {
     profile,
     stats,
-    roleRecords,
+    gameRecords,
     recentMatches,
     achievements,
     cosmetics,
