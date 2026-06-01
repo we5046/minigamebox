@@ -1649,13 +1649,14 @@ async function logout() {
               <input
                 v-model="newRoomTitle"
                 type="text"
+                class="room-title-input"
                 :placeholder="selectedGameTheme.roomPlaceholder"
               />
             </div>
 
             <div class="form-group">
               <label>참가 인원</label>
-              <div v-if="!isFriendlyRoomMode || isLiarGameSelected" class="option-group">
+              <div v-if="!isFriendlyRoomMode && !isLiarGameSelected" class="option-group">
                 <button
                   v-for="count in isLiarGameSelected ? liarPlayerCountOptions : fixedPlayerCounts"
                   :key="count"
@@ -4158,6 +4159,11 @@ h2 {
   min-width: 0;
   padding: 0.75rem 0.9rem;
   resize: vertical;
+  width: 100%;
+}
+
+.create-room-form .room-title-input {
+  box-sizing: border-box;
   width: 100%;
 }
 

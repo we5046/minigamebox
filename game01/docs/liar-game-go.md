@@ -15,8 +15,8 @@
 | 라이어 DB와 RPC 초안 | 완료 | `liar-game.sql` |
 | 로비 라이어 방 생성 | 완료 | `src/views/HomeView.vue`, `src/api/roomApi.js` |
 | 라이어 전용 API | 완료 | `src/api/liarGameApi.js` |
-| 게임 타입별 라우팅 | 완료 | `src/views/GameRoomRouteView.vue`, `src/views/GamePlayRouteView.vue` |
-| 라이어 대기방 | 완료 | `src/views/LiarGameRoomView.vue` |
+| 게임 타입별 플레이 라우팅 | 완료 | `src/views/GamePlayRouteView.vue` |
+| 공통 대기방의 라이어 대응 | 완료 | `src/views/GameRoomView.vue` |
 | 라이어 플레이 화면 | 완료 | `src/views/LiarGamePlayView.vue` |
 | 프론트 프로덕션 빌드 | 완료 | `npm run build` 통과 |
 | 라이브 Supabase SQL 적용 | 미실행 | Supabase SQL Editor 또는 배포 파이프라인에서 적용 필요 |
@@ -104,6 +104,8 @@ order by category_key;
 4. 커스텀 방을 생성한다.
 5. 목표 점수와 진영별 점수가 저장되는지 확인한다.
 6. 공개방과 비공개방 입장을 각각 확인한다.
+7. 마피아 방과 같은 대기방 화면에서 채팅, 귓속말, 친구 초대, 강퇴 명령을 사용할 수 있는지 확인한다.
+8. 라이어 방 설정에서는 마피아 역할 구성 대신 테마와 점수 설정이 표시되는지 확인한다.
 
 ### 4.2 매치 시작
 

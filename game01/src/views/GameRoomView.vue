@@ -494,6 +494,9 @@ function applyClassicEditLiarSettings() {
   editLiarCitizenWinScore.value =
     DEFAULT_LIAR_ROOM_SETTINGS.citizenWinScore;
   editLiarWinScore.value = DEFAULT_LIAR_ROOM_SETTINGS.liarWinScore;
+  editRoomDiscussionTimeSeconds.value =
+    DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds;
+  editVoteTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds;
   editRoomMinStartPlayers.value = 3;
   editRoomTieVoteRule.value = 'revote';
   editSpectatorAllowed.value = false;
@@ -1581,6 +1584,22 @@ function openEditRoomForm() {
   isEditAdvancedOpen.value = true;
   isEditingRoom.value = true;
 
+  if (isLiarRoom.value) {
+    copyLiarSettingsToEdit();
+    editRoomMinStartPlayers.value = 3;
+    editRoomTieVoteRule.value = 'revote';
+    editSpectatorAllowed.value = false;
+    editFirstNightAbilityAllowed.value = false;
+    editFinalDefenseEnabled.value = false;
+    editRoleRevealMode.value = 'private';
+
+    if (!isFriendlyEditMode.value) {
+      applyClassicEditLiarSettings();
+    }
+
+    return;
+  }
+
   if (!isFriendlyEditMode.value) {
     applyClassicEditRoomSettings();
   }
@@ -1606,6 +1625,7 @@ function closeEditRoomForm() {
   isEditEntryPasswordVisible.value = false;
   isRecommendedEditRolesEnabled.value = false;
   isEditAdvancedOpen.value = true;
+  copyLiarSettingsToEdit(DEFAULT_LIAR_ROOM_SETTINGS);
 }
 
 function setEditRoomMaxPlayers(count) {
@@ -1617,6 +1637,14 @@ function setEditRoomMaxPlayers(count) {
 
 function selectEditRoomMode(mode) {
   editRoomDescription.value = mode;
+
+  if (isLiarRoom.value) {
+    if (mode === '클래식') {
+      applyClassicEditLiarSettings();
+    }
+
+    return;
+  }
 
   if (mode === '친선전') {
     isRecommendedEditRolesEnabled.value = true;
@@ -1715,7 +1743,7 @@ async function saveRoomInfo() {
     return;
   }
 
-  if (!isEditRoleConfigValid.value) {
+  if (!isLiarRoom.value && !isEditRoleConfigValid.value) {
     toastStore.error('역할 인원수 합계가 참가 인원과 같아야 합니다.');
     return;
   }
@@ -1736,16 +1764,24 @@ async function saveRoomInfo() {
       title: editRoomTitle.value,
       description: editRoomDescription.value,
       maxPlayers: Number(editRoomMaxPlayers.value),
-      roleConfig: editRoomRoleConfig.value,
+      roleConfig: isLiarRoom.value ? {} : editRoomRoleConfig.value,
       nightTimeSeconds: Number(editNightTimeSeconds.value),
       voteTimeSeconds: Number(editVoteTimeSeconds.value),
       discussionTimeSeconds: Number(editRoomDiscussionTimeSeconds.value),
-      minStartPlayers: Number(editRoomMinStartPlayers.value),
-      tieVoteRule: editRoomTieVoteRule.value,
-      spectatorAllowed: editSpectatorAllowed.value,
-      firstNightAbilityAllowed: editFirstNightAbilityAllowed.value,
-      finalDefenseEnabled: editFinalDefenseEnabled.value,
-      roleRevealMode: editRoleRevealMode.value,
+      minStartPlayers: isLiarRoom.value
+        ? 3
+        : Number(editRoomMinStartPlayers.value),
+      tieVoteRule: isLiarRoom.value ? 'revote' : editRoomTieVoteRule.value,
+      spectatorAllowed: isLiarRoom.value
+        ? false
+        : editSpectatorAllowed.value,
+      firstNightAbilityAllowed: isLiarRoom.value
+        ? false
+        : editFirstNightAbilityAllowed.value,
+      finalDefenseEnabled: isLiarRoom.value
+        ? false
+        : editFinalDefenseEnabled.value,
+      roleRevealMode: isLiarRoom.value ? 'private' : editRoleRevealMode.value,
       entryMode: editEntryMode.value,
       ...(editEntryMode.value === 'private' && nextEntryPassword
         ? {
@@ -1753,6 +1789,17 @@ async function saveRoomInfo() {
           }
         : {}),
     });
+
+    if (isLiarRoom.value) {
+      liarSettings.value = await configureLiarRoom(props.roomId, {
+        settingMode: isFriendlyEditMode.value ? 'custom' : 'classic',
+        categoryId: editLiarCategoryId.value || null,
+        targetScore: Number(editLiarTargetScore.value),
+        citizenWinScore: Number(editLiarCitizenWinScore.value),
+        liarWinScore: Number(editLiarWinScore.value),
+      });
+    }
+
     lastSyncedAt.value = new Date();
     await roomStore.fetchRooms();
     closeEditRoomForm();
@@ -1775,7 +1822,12 @@ async function startGame() {
   isUpdating.value = true;
 
   try {
-    await startGameRequest(props.roomId);
+    if (isLiarRoom.value) {
+      await startLiarMatch(props.roomId);
+    } else {
+      await startGameRequest(props.roomId);
+    }
+
     await syncRoom();
     if (chatChannel.value) {
       await sendRoomChatMessage(chatChannel.value, {
@@ -1865,7 +1917,11 @@ async function leaveRoom() {
             방장: <strong class="host-name">{{ room.hostNickname }}</strong>
           </p>
           <p class="atmosphere-quote">
-            "거짓말을 하는 자는 누구인가? 밤이 깊어갑니다..."
+            {{
+              isLiarRoom
+                ? '"제시어를 모르는 라이어는 누구인가?"'
+                : '"거짓말을 하는 자는 누구인가? 밤이 깊어갑니다..."'
+            }}
           </p>
         </div>
 
@@ -1959,14 +2015,19 @@ async function leaveRoom() {
 
         <div class="form-group">
           <label>방 제목</label>
-          <input v-model="editRoomTitle" type="text" placeholder="방 제목" />
+          <input
+            v-model="editRoomTitle"
+            type="text"
+            class="room-title-input"
+            placeholder="방 제목"
+          />
         </div>
 
         <div class="form-group">
           <label>참가 인원</label>
-          <div v-if="!isFriendlyEditMode" class="option-group">
+          <div v-if="!isFriendlyEditMode && !isLiarRoom" class="option-group">
             <button
-              v-for="count in fixedPlayerCounts"
+              v-for="count in isLiarRoom ? liarPlayerCountOptions : fixedPlayerCounts"
               :key="count"
               type="button"
               class="option-btn"
@@ -2033,15 +2094,19 @@ async function leaveRoom() {
           </div>
           <p class="mode-description">
             {{
-              isFriendlyEditMode
-                ? '역할 구성과 세부 규칙을 직접 조정할 수 있습니다.'
-                : '공식 역할 구성과 표준 규칙으로 빠르게 시작합니다.'
+              isLiarRoom
+                ? isFriendlyEditMode
+                  ? '테마와 목표 점수, 진영별 승리 점수를 직접 조정할 수 있습니다.'
+                  : '표준 라이어 게임 점수 규칙으로 빠르게 시작합니다.'
+                : isFriendlyEditMode
+                  ? '역할 구성과 세부 규칙을 직접 조정할 수 있습니다.'
+                  : '공식 역할 구성과 표준 규칙으로 빠르게 시작합니다.'
             }}
           </p>
         </div>
 
         <div class="room-custom-grid">
-          <div class="form-group">
+          <div v-if="!isLiarRoom" class="form-group">
             <label>역할 공개</label>
             <div class="option-group">
               <button
@@ -2165,7 +2230,88 @@ async function leaveRoom() {
           </div>
         </div>
 
-        <section v-if="isFriendlyEditMode" class="advanced-settings-panel">
+        <section v-if="isLiarRoom" class="advanced-settings-panel">
+          <div class="advanced-settings-grid">
+            <div class="form-group">
+              <label>테마</label>
+              <select v-model="editLiarCategoryId">
+                <option :value="null">랜덤</option>
+                <option
+                  v-for="category in liarCategories"
+                  :key="category.id"
+                  :value="category.id"
+                >
+                  {{ category.label }}
+                </option>
+              </select>
+            </div>
+
+            <template v-if="isFriendlyEditMode">
+              <div class="form-group">
+                <label>목표 점수</label>
+                <select v-model.number="editLiarTargetScore">
+                  <option v-for="score in [3, 5, 7, 10]" :key="`edit-liar-target-${score}`" :value="score">
+                    {{ score }}점
+                  </option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>일반 유저 승리 점수</label>
+                <select v-model.number="editLiarCitizenWinScore">
+                  <option v-for="score in [1, 2]" :key="`edit-citizen-score-${score}`" :value="score">
+                    +{{ score }}점
+                  </option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>라이어 승리 점수</label>
+                <select v-model.number="editLiarWinScore">
+                  <option v-for="score in [2, 3, 5]" :key="`edit-liar-score-${score}`" :value="score">
+                    +{{ score }}점
+                  </option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>토론 시간</label>
+                <select v-model.number="editRoomDiscussionTimeSeconds">
+                  <option
+                    v-for="seconds in discussionTimeOptions"
+                    :key="`edit-liar-discussion-${seconds}`"
+                    :value="seconds"
+                  >
+                    {{ seconds }}초
+                  </option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>투표 시간</label>
+                <select v-model.number="editVoteTimeSeconds">
+                  <option
+                    v-for="seconds in voteTimeOptions"
+                    :key="`edit-liar-vote-${seconds}`"
+                    :value="seconds"
+                  >
+                    {{ seconds }}초
+                  </option>
+                </select>
+              </div>
+            </template>
+          </div>
+
+          <p class="classic-rules-note">
+            {{
+              isFriendlyEditMode
+                ? '라이어 1명, 자기 투표 불가, 동률 시 재투표 규칙은 고정됩니다.'
+                : '클래식은 목표 5점, 일반 유저 +1점, 라이어 +2점, 동률 시 재투표로 진행합니다.'
+            }}
+          </p>
+        </section>
+
+        <section v-else-if="isFriendlyEditMode" class="advanced-settings-panel">
           <button
             type="button"
             class="advanced-settings-toggle"
@@ -2315,6 +2461,7 @@ async function leaveRoom() {
         </p>
 
         <section
+          v-if="!isLiarRoom"
           class="role-config-section"
           :class="{
             invalid: !isEditRoleConfigValid,
@@ -2400,7 +2547,7 @@ async function leaveRoom() {
           <button
             type="submit"
             class="submit-btn"
-            :disabled="isUpdating || !isEditRoleConfigValid"
+            :disabled="isUpdating || (!isLiarRoom && !isEditRoleConfigValid)"
           >
             {{ isUpdating ? '저장 중...' : '저장' }}
           </button>
@@ -2504,7 +2651,11 @@ async function leaveRoom() {
           </ol>
 
           <p class="flow-summary">
-            총 {{ gameFlowTotalSeconds }}초 · 밤 능력 사용 후 토론과 투표 진행
+            {{
+              isLiarRoom
+                ? `기본 ${gameFlowTotalSeconds}초 · 제시어 확인 후 토론과 투표 진행`
+                : `총 ${gameFlowTotalSeconds}초 · 밤 능력 사용 후 토론과 투표 진행`
+            }}
           </p>
         </section>
       </div>
@@ -4395,6 +4546,11 @@ async function leaveRoom() {
     border-color 0.18s ease,
     box-shadow 0.18s ease,
     background 0.18s ease;
+}
+
+.edit-room-form .room-title-input {
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .edit-room-form input:focus,
