@@ -326,10 +326,12 @@ const canFinalDefenseVote = computed(
     remainingSeconds.value > 0,
 )
 const isSkipCommand = computed(() => ['/스킵', '/skip'].includes(chatDraft.value.trim().toLowerCase()))
+const isDeadChatSkipCommand = computed(() =>
+  ['/스킵', '/skip'].includes(deadChatDraft.value.trim().toLowerCase()),
+)
 const canSkipPhaseCommand = computed(
   () =>
     isHost.value &&
-    isAlive.value &&
     room.value?.status === 'playing' &&
     Boolean(game.value?.id) &&
     !isGameEnded.value,
@@ -1012,6 +1014,11 @@ async function handleSendMessage() {
 async function handleSendDeadMessage() {
   if (isSending.value || !deadChatDraft.value.trim() || !canSendDeadChat.value) return
 
+  if (isDeadChatSkipCommand.value) {
+    await handleSkipPhaseCommand()
+    return
+  }
+
   isSending.value = true
 
   try {
@@ -1044,6 +1051,7 @@ async function handleSkipPhaseCommand() {
   try {
     await skipCurrentPhase(roomId.value)
     chatDraft.value = ''
+    deadChatDraft.value = ''
     toastStore.success('현재 단계를 스킵했습니다.')
     await loadGame({ silent: true })
     await loadMessages()
@@ -1464,7 +1472,7 @@ onBeforeUnmount(() => {
           </header>
 
           <div class="chat-phase-banner dead">
-            사망한 플레이어끼리만 대화할 수 있습니다.
+            사망한 플레이어끼리만 대화할 수 있습니다. 사망한 방장도 /스킵을 사용할 수 있습니다.
           </div>
 
           <div class="chat-messages">
@@ -1495,7 +1503,7 @@ onBeforeUnmount(() => {
             <input
               v-model="deadChatDraft"
               :disabled="!canSendDeadChat || isSending"
-              placeholder="사망한 플레이어끼리 대화할 수 있습니다"
+              :placeholder="isHost ? '사후 채팅 또는 /스킵을 입력하세요' : '사망한 플레이어끼리 대화할 수 있습니다'"
               maxlength="240"
             />
             <button type="submit" :disabled="!canSendDeadChat || isSending || !deadChatDraft.trim()">
