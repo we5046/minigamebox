@@ -228,7 +228,7 @@ const playersWithStatus = computed(() =>
     const fallbackTeamRole =
       ['mafia', 'police'].includes(roleKey.value) && visibleTeamNicknames.value.has(player.nickname)
         ? roleKey.value
-        : player.userId === savedUser.value?.id && ['mafia', 'police'].includes(roleKey.value)
+        : player.userId === savedUser.value?.id && ['mafia', 'police', 'stalker'].includes(roleKey.value)
           ? roleKey.value
           : ''
 
@@ -1578,6 +1578,7 @@ onBeforeUnmount(() => {
                 'memo-editing': player.userId === selectedMemoPlayerId,
                 'team-mafia': player.visibleTeamRole === 'mafia',
                 'team-police': player.visibleTeamRole === 'police',
+                'team-stalker': player.visibleTeamRole === 'stalker',
                 [`memo-${player.memoRole}`]: player.memoRole,
               }"
               @click="selectParticipant(player.userId)"
@@ -1585,6 +1586,7 @@ onBeforeUnmount(() => {
               <strong>{{ player.nickname }}</strong>
               <span v-if="player.visibleTeamRole === 'mafia'" class="team-identity-label mafia">마피아 팀</span>
               <span v-if="player.visibleTeamRole === 'police'" class="team-identity-label police">경찰 팀</span>
+              <span v-if="player.visibleTeamRole === 'stalker'" class="team-identity-label stalker">스토커</span>
               <span v-if="player.memoRole" class="player-memo-label" :class="player.memoRole">
                 메모 {{ roleLabels[player.memoRole] }}
               </span>
@@ -1691,12 +1693,14 @@ onBeforeUnmount(() => {
                   me: player.isMe,
                   'team-mafia': player.visibleTeamRole === 'mafia',
                   'team-police': player.visibleTeamRole === 'police',
+                  'team-stalker': player.visibleTeamRole === 'stalker',
                   [`memo-${player.memoRole}`]: player.memoRole,
                 }"
               >
                 <strong>{{ player.nickname }}</strong>
                 <span v-if="player.visibleTeamRole === 'mafia'" class="team-identity-label mafia">마피아 팀</span>
                 <span v-if="player.visibleTeamRole === 'police'" class="team-identity-label police">경찰 팀</span>
+                <span v-if="player.visibleTeamRole === 'stalker'" class="team-identity-label stalker">스토커</span>
                 <span v-if="player.memoRole" class="player-memo-label" :class="player.memoRole">
                   메모 {{ roleLabels[player.memoRole] }}
                 </span>
@@ -2300,6 +2304,16 @@ button:disabled {
   color: #bfdbfe;
 }
 
+.survivor-chip.team-stalker {
+  background: rgba(91, 33, 182, 0.3);
+  border-color: rgba(167, 139, 250, 0.68);
+  box-shadow: inset 0 0 18px rgba(167, 139, 250, 0.08);
+}
+
+.survivor-chip.team-stalker strong {
+  color: #ddd6fe;
+}
+
 .survivor-chip .team-identity-label {
   border-width: 1px;
   color: #fff;
@@ -2315,6 +2329,12 @@ button:disabled {
   background: rgba(30, 64, 175, 0.7);
   border-color: rgba(147, 197, 253, 0.5);
   color: #dbeafe;
+}
+
+.survivor-chip .team-identity-label.stalker {
+  background: rgba(109, 40, 217, 0.68);
+  border-color: rgba(196, 181, 253, 0.48);
+  color: #ede9fe;
 }
 
 .survivor-chip.dead {

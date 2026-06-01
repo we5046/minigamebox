@@ -44,3 +44,4 @@ __screenshots__/
 # SQL
 *.sql
 !room-admin.sql
+!stalker-role-fix.sql
