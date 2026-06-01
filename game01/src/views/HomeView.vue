@@ -1743,6 +1743,20 @@ async function logout() {
             </div>
 
             <div class="room-custom-grid">
+              <div v-if="isLiarGameSelected" class="form-group">
+                <label>테마</label>
+                <select v-model="newLiarCategoryId">
+                  <option :value="null">랜덤</option>
+                  <option
+                    v-for="category in liarCategories"
+                    :key="category.id"
+                    :value="category.id"
+                  >
+                    {{ category.label }}
+                  </option>
+                </select>
+              </div>
+
               <div v-if="!isLiarGameSelected" class="form-group">
                 <label>역할 공개</label>
                 <div class="option-group">
@@ -1802,58 +1816,85 @@ async function logout() {
               </div>
             </div>
 
-            <section v-if="isLiarGameSelected" class="advanced-settings-panel">
-              <div class="advanced-settings-grid">
+            <p
+              v-if="isLiarGameSelected && !isFriendlyRoomMode"
+              class="classic-rules-note"
+            >
+              클래식은 목표 5점, 시민 +1점, 라이어 +2점, 동률 시 재투표로
+              진행합니다.
+            </p>
+
+            <section
+              v-if="isLiarGameSelected && isFriendlyRoomMode"
+              class="advanced-settings-panel"
+            >
+              <button
+                type="button"
+                class="advanced-settings-toggle"
+                :class="{ active: isNewRoomAdvancedOpen }"
+                @click="toggleNewRoomAdvancedSettings"
+              >
+                <span>세부 설정</span>
+                <strong>{{ isNewRoomAdvancedOpen ? '접기' : '펼치기' }}</strong>
+              </button>
+
+              <div v-if="isNewRoomAdvancedOpen" class="advanced-settings-grid">
                 <div class="form-group">
-                  <label>테마</label>
-                  <select v-model="newLiarCategoryId">
-                    <option :value="null">랜덤</option>
-                    <option
-                      v-for="category in liarCategories"
-                      :key="category.id"
-                      :value="category.id"
-                    >
-                      {{ category.label }}
+                  <label>목표 점수</label>
+                  <select v-model.number="newLiarTargetScore">
+                    <option v-for="score in [3, 5, 7, 10]" :key="`liar-target-${score}`" :value="score">
+                      {{ score }}점
                     </option>
                   </select>
                 </div>
 
-                <template v-if="isFriendlyRoomMode">
-                  <div class="form-group">
-                    <label>목표 점수</label>
-                    <select v-model.number="newLiarTargetScore">
-                      <option v-for="score in [3, 5, 7, 10]" :key="`liar-target-${score}`" :value="score">
-                        {{ score }}점
-                      </option>
-                    </select>
-                  </div>
+                <div class="form-group">
+                  <label>시민 승리 점수</label>
+                  <select v-model.number="newLiarCitizenWinScore">
+                    <option v-for="score in [1, 2]" :key="`citizen-score-${score}`" :value="score">
+                      +{{ score }}점
+                    </option>
+                  </select>
+                </div>
 
-                  <div class="form-group">
-                    <label>시민 승리 점수</label>
-                    <select v-model.number="newLiarCitizenWinScore">
-                      <option v-for="score in [1, 2]" :key="`citizen-score-${score}`" :value="score">
-                        +{{ score }}점
-                      </option>
-                    </select>
-                  </div>
+                <div class="form-group">
+                  <label>라이어 승리 점수</label>
+                  <select v-model.number="newLiarWinScore">
+                    <option v-for="score in [2, 3, 5]" :key="`liar-score-${score}`" :value="score">
+                      +{{ score }}점
+                    </option>
+                  </select>
+                </div>
 
-                  <div class="form-group">
-                    <label>라이어 승리 점수</label>
-                    <select v-model.number="newLiarWinScore">
-                      <option v-for="score in [2, 3, 5]" :key="`liar-score-${score}`" :value="score">
-                        +{{ score }}점
-                      </option>
-                    </select>
-                  </div>
-                </template>
+                <div class="form-group">
+                  <label>토론 시간</label>
+                  <select v-model.number="newRoomDiscussionTimeSeconds">
+                    <option
+                      v-for="seconds in discussionTimeOptions"
+                      :key="`liar-discussion-${seconds}`"
+                      :value="seconds"
+                    >
+                      {{ seconds }}초
+                    </option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>투표 시간</label>
+                  <select v-model.number="newRoomVoteTimeSeconds">
+                    <option
+                      v-for="seconds in voteTimeOptions"
+                      :key="`liar-vote-${seconds}`"
+                      :value="seconds"
+                    >
+                      {{ seconds }}초
+                    </option>
+                  </select>
+                </div>
               </div>
 
               <p class="classic-rules-note">
-                {{
-                  isFriendlyRoomMode
-                    ? '라이어 1명, 자기 투표 불가, 동률 시 재투표 규칙은 고정됩니다.'
-                    : '클래식은 목표 5점, 시민 +1점, 라이어 +2점, 동률 시 재투표로 진행합니다.'
-                }}
+                라이어 1명, 자기 투표 불가, 동률 시 재투표 규칙은 고정됩니다.
               </p>
             </section>
 

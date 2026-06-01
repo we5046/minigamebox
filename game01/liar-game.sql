@@ -717,7 +717,8 @@ begin
     phase = 'discussion',
     round_no = v_round_no,
     phase_started_at = now(),
-    phase_ends_at = null
+    -- Liar phases advance through liar RPCs, not the mafia expiry worker.
+    phase_ends_at = now() + interval '100 years'
   where id = p_game_id;
 
   update public.rooms
@@ -1339,7 +1340,8 @@ begin
     'discussion',
     0,
     now(),
-    null
+    -- Keep the shared mafia timer dormant until the liar round RPCs advance it.
+    now() + interval '100 years'
   )
   returning * into v_game;
 
