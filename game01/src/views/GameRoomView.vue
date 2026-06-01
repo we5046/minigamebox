@@ -37,6 +37,13 @@ import {
 } from '@/api/presenceApi';
 import { getFriendships } from '@/api/friendApi';
 import { getRoomInvites, sendRoomInvite } from '@/api/roomInviteApi';
+import {
+  DEFAULT_LIAR_ROOM_SETTINGS,
+  configureLiarRoom,
+  getLiarCategories,
+  getLiarRoomSettings,
+  startLiarMatch,
+} from '@/api/liarGameApi';
 
 const props = defineProps({
   roomId: {
@@ -75,6 +82,14 @@ const presenceUsers = ref([]);
 const isInviteModalOpen = ref(false);
 const inviteSearchQuery = ref('');
 const isRoomBriefingOpen = ref(false);
+const liarSettings = ref({ ...DEFAULT_LIAR_ROOM_SETTINGS });
+const liarCategories = ref([]);
+const editLiarCategoryId = ref(null);
+const editLiarTargetScore = ref(DEFAULT_LIAR_ROOM_SETTINGS.targetScore);
+const editLiarCitizenWinScore = ref(
+  DEFAULT_LIAR_ROOM_SETTINGS.citizenWinScore,
+);
+const editLiarWinScore = ref(DEFAULT_LIAR_ROOM_SETTINGS.liarWinScore);
 
 let unsubscribeRoom = null;
 let roomChatSubscription = null;
@@ -116,8 +131,12 @@ const currentPlayer = computed(() => {
   return players.value.find((player) => player.userId === savedUser.value?.id);
 });
 const isHost = computed(() => currentPlayer.value?.isHost === true);
+const isLiarRoom = computed(() => room.value?.gameType === 'liar');
 const isGameStarted = computed(
-  () => room.value?.status === 'playing' || room.value?.status === 'finished',
+  () =>
+    room.value?.status === 'playing' ||
+    room.value?.status === 'finished' ||
+    room.value?.status === 'game_over',
 );
 const canStartGame = computed(() => {
   if (!room.value || isGameStarted.value) {
@@ -192,9 +211,70 @@ const tieVoteOptions = [
   { value: 'no_execution', label: '처형 없음' },
   { value: 'revote', label: '재투표' },
 ];
+const liarPlayerCountOptions = [3, 4, 5, 6, 8, 10, 12];
+const selectedLiarCategoryLabel = computed(() => {
+  if (!liarSettings.value.categoryId) {
+    return '랜덤';
+  }
+
+  return (
+    liarCategories.value.find(
+      (category) => category.id === liarSettings.value.categoryId,
+    )?.label || '랜덤'
+  );
+});
 const roomBriefing = computed(() => {
   if (!room.value) {
     return null;
+  }
+
+  if (isLiarRoom.value) {
+    return {
+      players: `${players.value.length} / ${room.value.maxPlayers}`,
+      minStartPlayers: room.value.minStartPlayers,
+      roleTotal: players.value.length,
+      roles: [
+        { key: 'liar', label: '라이어', tone: 'mafia', count: 1 },
+        {
+          key: 'citizen',
+          label: '일반 유저',
+          tone: 'citizen',
+          count: Math.max(0, players.value.length - 1),
+        },
+      ],
+      settings: [
+        {
+          label: '입장 방식',
+          value: getEntryModeLabel(room.value.entryMode),
+          tone: room.value.entryMode === 'private' ? 'private' : 'public',
+        },
+        {
+          label: '테마',
+          value: selectedLiarCategoryLabel.value,
+          tone: 'public',
+        },
+        {
+          label: '목표 점수',
+          value: `${liarSettings.value.targetScore}점`,
+          tone: 'allowed',
+        },
+        {
+          label: '승리 점수',
+          value: `일반 +${liarSettings.value.citizenWinScore} / 라이어 +${liarSettings.value.liarWinScore}`,
+          tone: 'allowed',
+        },
+        {
+          label: '동점 투표',
+          value: '재투표',
+          tone: 'allowed',
+        },
+        {
+          label: '방 상태',
+          value: room.value.status === 'waiting' ? '대기중' : '게임중',
+          tone: room.value.status === 'waiting' ? 'public' : 'disabled',
+        },
+      ],
+    };
   }
 
   return {
@@ -246,6 +326,13 @@ const gameFlowTotalSeconds = computed(() => {
     return 0;
   }
 
+  if (isLiarRoom.value) {
+    return (
+      Number(room.value.discussionTimeSeconds || 0) +
+      Number(room.value.voteTimeSeconds || 0)
+    );
+  }
+
   return (
     Number(room.value.nightTimeSeconds || 0) +
     Number(room.value.discussionTimeSeconds || 0) +
@@ -256,6 +343,35 @@ const gameFlowTotalSeconds = computed(() => {
 const gameFlowItems = computed(() => {
   if (!room.value) {
     return [];
+  }
+
+  if (isLiarRoom.value) {
+    return [
+      {
+        icon: '🔎',
+        label: '제시어 확인',
+        description: '역할과 제시어 확인',
+        duration: '수동',
+      },
+      {
+        icon: '💬',
+        label: '토론',
+        description: '설명과 추리',
+        duration: `${room.value.discussionTimeSeconds}s`,
+      },
+      {
+        icon: '🗳️',
+        label: '투표',
+        description: '라이어 지목',
+        duration: `${room.value.voteTimeSeconds}s`,
+      },
+      {
+        icon: '🎯',
+        label: '최종 추측',
+        description: '지목된 라이어만 진행',
+        duration: '1회',
+      },
+    ];
   }
 
   const items = [
@@ -293,7 +409,9 @@ const gameFlowItems = computed(() => {
 const isFriendlyEditMode = computed(
   () => editRoomDescription.value === '친선전',
 );
-const minEditableMaxPlayers = computed(() => Math.max(4, players.value.length));
+const minEditableMaxPlayers = computed(() =>
+  Math.max(isLiarRoom.value ? 3 : 4, players.value.length),
+);
 const editMinStartPlayerOptions = computed(() =>
   Array.from(
     { length: Math.max(1, Number(editRoomMaxPlayers.value) - 1) },
@@ -369,6 +487,44 @@ function applyClassicEditRoomSettings() {
   editFinalDefenseEnabled.value =
     DEFAULT_ROOM_DETAIL_SETTINGS.finalDefenseEnabled;
   editRoleRevealMode.value = 'private';
+}
+
+function applyClassicEditLiarSettings() {
+  editLiarTargetScore.value = DEFAULT_LIAR_ROOM_SETTINGS.targetScore;
+  editLiarCitizenWinScore.value =
+    DEFAULT_LIAR_ROOM_SETTINGS.citizenWinScore;
+  editLiarWinScore.value = DEFAULT_LIAR_ROOM_SETTINGS.liarWinScore;
+  editRoomMinStartPlayers.value = 3;
+  editRoomTieVoteRule.value = 'revote';
+  editSpectatorAllowed.value = false;
+  editFirstNightAbilityAllowed.value = false;
+  editFinalDefenseEnabled.value = false;
+  editRoleRevealMode.value = 'private';
+}
+
+function copyLiarSettingsToEdit(nextSettings = liarSettings.value) {
+  editLiarCategoryId.value = nextSettings.categoryId || null;
+  editLiarTargetScore.value = Number(nextSettings.targetScore);
+  editLiarCitizenWinScore.value = Number(nextSettings.citizenWinScore);
+  editLiarWinScore.value = Number(nextSettings.liarWinScore);
+}
+
+async function syncLiarRoomSettings() {
+  if (!isLiarRoom.value) {
+    liarSettings.value = { ...DEFAULT_LIAR_ROOM_SETTINGS };
+    liarCategories.value = [];
+    return;
+  }
+
+  const [nextSettings, nextCategories] = await Promise.all([
+    getLiarRoomSettings(props.roomId),
+    liarCategories.value.length > 0
+      ? Promise.resolve(liarCategories.value)
+      : getLiarCategories(),
+  ]);
+
+  liarSettings.value = nextSettings;
+  liarCategories.value = nextCategories;
 }
 
 function getEffectiveRoleConfig(roleConfig, maxPlayers) {
@@ -584,6 +740,21 @@ onBeforeUnmount(() => {
 
 watch([editRoomMaxPlayers, editRoomDescription], () => {
   if (!isEditingRoom.value) {
+    return;
+  }
+
+  if (isLiarRoom.value) {
+    editRoomMinStartPlayers.value = 3;
+    editRoomTieVoteRule.value = 'revote';
+    editSpectatorAllowed.value = false;
+    editFirstNightAbilityAllowed.value = false;
+    editFinalDefenseEnabled.value = false;
+    editRoleRevealMode.value = 'private';
+
+    if (!isFriendlyEditMode.value) {
+      applyClassicEditLiarSettings();
+    }
+
     return;
   }
 
@@ -935,6 +1106,7 @@ async function fetchRoom() {
     }
 
     hasLoadedRoomOnce.value = true;
+    await syncLiarRoomSettings();
     await syncRoomPresence();
     await sendRoomHeartbeat({ force: true });
     startRoomHeartbeat();
@@ -1083,6 +1255,7 @@ async function syncRoom() {
       try {
         room.value = await getRoom(props.roomId);
         lastSyncedAt.value = new Date();
+        await syncLiarRoomSettings();
         await syncRoomPresence();
         redirectToGameIfStarted();
       } catch (error) {
