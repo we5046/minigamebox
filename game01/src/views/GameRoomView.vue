@@ -182,6 +182,7 @@ const roleOptions = [
   { key: 'mafia', label: '마피아', tone: 'mafia' },
   { key: 'police', label: '경찰', tone: 'police' },
   { key: 'doctor', label: '의사', tone: 'doctor' },
+  { key: 'stalker', label: '스토커', tone: 'stalker' },
 ];
 const fixedPlayerCounts = [4, 6, 8, 12];
 const nightTimeOptions = [20, 30, 45, 60];
@@ -329,10 +330,10 @@ const editRoleConfigStatusText = computed(() => {
 
 function getDefaultRoleConfig(maxPlayers) {
   const defaults = {
-    4: { citizen: 2, mafia: 1, police: 1, doctor: 0 },
-    6: { citizen: 3, mafia: 1, police: 1, doctor: 1 },
-    8: { citizen: 4, mafia: 2, police: 1, doctor: 1 },
-    12: { citizen: 7, mafia: 3, police: 1, doctor: 1 },
+    4: { citizen: 2, mafia: 1, police: 1, doctor: 0, stalker: 0 },
+    6: { citizen: 2, mafia: 1, police: 1, doctor: 1, stalker: 1 },
+    8: { citizen: 3, mafia: 2, police: 1, doctor: 1, stalker: 1 },
+    12: { citizen: 6, mafia: 3, police: 1, doctor: 1, stalker: 1 },
   };
 
   return { ...(defaults[Number(maxPlayers)] || defaults[8]) };
@@ -348,9 +349,10 @@ function getRecommendedRoleConfig(maxPlayers) {
   const mafia = Math.max(1, Math.floor(playerCount / 4));
   const police = 1;
   const doctor = playerCount >= 6 ? 1 : 0;
-  const citizen = Math.max(0, playerCount - mafia - police - doctor);
+  const stalker = playerCount >= 8 ? 1 : 0;
+  const citizen = Math.max(0, playerCount - mafia - police - doctor - stalker);
 
-  return { citizen, mafia, police, doctor };
+  return { citizen, mafia, police, doctor, stalker };
 }
 
 function applyClassicEditRoomSettings() {
@@ -391,7 +393,7 @@ function getRoleConfigItems(roleConfig, maxPlayers) {
 }
 
 function isSameRoleConfig(a, b) {
-  return ['citizen', 'mafia', 'police', 'doctor'].every(
+  return ['citizen', 'mafia', 'police', 'doctor', 'stalker'].every(
     (key) => Number(a?.[key] || 0) === Number(b?.[key] || 0),
   );
 }
@@ -1382,6 +1384,7 @@ function openEditRoomForm() {
   editRoomRoleConfig.value = room.value?.roleConfig
     ? {
         ...getDefaultRoleConfig(room.value?.maxPlayers || 8),
+        stalker: 0,
         ...room.value.roleConfig,
       }
     : getDefaultRoleConfig(room.value?.maxPlayers || 8);
@@ -1495,6 +1498,7 @@ function resetEditRoomRoles() {
     mafia: 0,
     police: 0,
     doctor: 0,
+    stalker: 0,
   };
 }
 
@@ -3276,6 +3280,11 @@ async function leaveRoom() {
 .role-rule-chip.doctor {
   border-color: rgba(74, 222, 128, 0.32);
   box-shadow: 0 0 16px rgba(74, 222, 128, 0.1);
+}
+
+.role-rule-chip.stalker {
+  border-color: rgba(167, 139, 250, 0.36);
+  box-shadow: 0 0 16px rgba(167, 139, 250, 0.12);
 }
 
 .role-rule-chip b {

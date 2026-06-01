@@ -93,6 +93,7 @@ const roleLabels = {
   mafia: '마피아',
   police: '경찰',
   doctor: '의사',
+  stalker: '스토커',
 }
 
 const playerMemoOptions = [
@@ -100,6 +101,7 @@ const playerMemoOptions = [
   { key: 'mafia', label: '마피아', description: '의심', tone: 'mafia' },
   { key: 'police', label: '경찰', description: '신뢰', tone: 'police' },
   { key: 'doctor', label: '의사', description: '보호', tone: 'doctor' },
+  { key: 'stalker', label: '스토커', description: '추적', tone: 'stalker' },
 ]
 
 const phaseLabels = {
@@ -166,6 +168,7 @@ const nightActionLabels = {
   mafia_kill: '습격 대상 선택',
   police_check: '조사 대상 선택',
   doctor_save: '보호 대상 선택',
+  track: '추적 대상 선택',
 }
 
 const chatChannelLabels = {
@@ -240,7 +243,7 @@ const playersWithStatus = computed(() =>
   }),
 )
 const alivePlayers = computed(() => playersWithStatus.value.filter((player) => player.isAlive !== false))
-const targetPlayers = computed(() => alivePlayers.value)
+const targetPlayers = computed(() => (roleKey.value === 'stalker' ? playersWithStatus.value : alivePlayers.value))
 const nightRoleChatChannel = computed(() => {
   if (roleKey.value === 'mafia') return 'mafia'
   if (roleKey.value === 'police') return 'police'
@@ -300,6 +303,7 @@ const nightActionType = computed(() => {
   if (roleKey.value === 'mafia') return 'mafia_kill'
   if (roleKey.value === 'police') return 'police_check'
   if (roleKey.value === 'doctor') return 'doctor_save'
+  if (roleKey.value === 'stalker') return 'track'
   return ''
 })
 const canNightAction = computed(
@@ -338,7 +342,11 @@ const canSkipPhaseCommand = computed(
 )
 const canUseChatInput = computed(() => canChat.value || canSkipPhaseCommand.value)
 const canSubmitChatInput = computed(() => canChat.value || (canSkipPhaseCommand.value && isSkipCommand.value))
-const actionGuide = computed(() => actionGuides[phaseKey.value] || '다음 단계를 기다리세요.')
+const actionGuide = computed(() =>
+  phaseKey.value === 'night' && roleKey.value === 'stalker'
+    ? '오늘 밤 추적할 플레이어를 선택하세요.'
+    : actionGuides[phaseKey.value] || '다음 단계를 기다리세요.',
+)
 const chatPanelTitle = computed(() => (isAlive.value ? '메인 채팅' : '메인 채팅 관전'))
 const chatPhaseBanner = computed(() => {
   if (!isAlive.value) {
@@ -425,7 +433,9 @@ const didLevelUp = computed(
   () => Number(myGameReward.value?.new_level || 0) > Number(myGameReward.value?.old_level || 0),
 )
 const myContributionStats = computed(() => {
-  const logs = Array.isArray(myResultPlayer.value?.logs) ? myResultPlayer.value.logs : []
+  const logs = Array.isArray(myResultPlayer.value?.logs)
+    ? myResultPlayer.value.logs.filter((log) => typeof log === 'string')
+    : []
 
   return {
     nightActions: logs.filter((log) => log.includes(' 밤: ')).length,
@@ -608,7 +618,7 @@ function closePlayerMemoPanel() {
 function selectParticipant(userId) {
   selectedMemoPlayerId.value = userId
 
-  if (canNightAction.value) {
+  if (canNightAction.value && targetPlayers.value.some((player) => player.userId === userId)) {
     selectedNightTarget.value = userId
     return
   }
@@ -1071,7 +1081,7 @@ async function handleNightAction() {
   try {
     await submitNightAction(roomId.value, nightActionType.value, selectedNightTarget.value)
     await loadRoleSideData()
-    toastStore.success('밤 행동을 제출했습니다.')
+    toastStore.success(roleKey.value === 'stalker' ? '추적 대상을 선택했습니다.' : '밤 행동을 제출했습니다.')
   } catch (error) {
     toastStore.error(error.message)
   } finally {
@@ -2093,6 +2103,11 @@ button:disabled {
   border-color: rgba(74, 222, 128, 0.24);
 }
 
+.role-badge.stalker {
+  background: rgba(109, 40, 217, 0.16);
+  border-color: rgba(167, 139, 250, 0.3);
+}
+
 .role-badge span,
 .phase-list dt,
 .action-card label {
@@ -2333,6 +2348,11 @@ button:disabled {
   border-color: rgba(74, 222, 128, 0.58);
 }
 
+.survivor-chip.memo-stalker {
+  background: rgba(91, 33, 182, 0.28);
+  border-color: rgba(167, 139, 250, 0.6);
+}
+
 .survivor-chip .player-memo-label {
   border-width: 1px;
 }
@@ -2353,6 +2373,12 @@ button:disabled {
   background: rgba(21, 128, 61, 0.62);
   border-color: rgba(134, 239, 172, 0.44);
   color: #dcfce7;
+}
+
+.survivor-chip .player-memo-label.stalker {
+  background: rgba(109, 40, 217, 0.68);
+  border-color: rgba(196, 181, 253, 0.48);
+  color: #ede9fe;
 }
 
 .player-memo-panel {
@@ -2467,6 +2493,10 @@ button:disabled {
 
 .player-memo-option.doctor .memo-color-swatch {
   background: #22c55e;
+}
+
+.player-memo-option.stalker .memo-color-swatch {
+  background: #8b5cf6;
 }
 
 .game-info-panel .survivors-card {

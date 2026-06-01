@@ -30,6 +30,7 @@ function getEmptyMyPage(user) {
       { role: '마피아', games: 0, winRate: 0, icon: 'M', featured: false },
       { role: '경찰', games: 0, winRate: 0, icon: 'P', featured: false },
       { role: '의사', games: 0, winRate: 0, icon: 'D', featured: false },
+      { role: '스토커', games: 0, winRate: 0, icon: 'S', featured: false },
     ],
     recentMatches: [],
     achievements: [],

@@ -307,6 +307,7 @@ const roleOptions = [
   { key: 'mafia', label: '마피아' },
   { key: 'police', label: '경찰' },
   { key: 'doctor', label: '의사' },
+  { key: 'stalker', label: '스토커' },
 ];
 const fixedPlayerCounts = [4, 6, 8, 12];
 const nightTimeOptions = [20, 30, 45, 60];
@@ -345,10 +346,10 @@ const roleConfigStatusText = computed(() => {
 
 function getDefaultRoleConfig(maxPlayers) {
   const defaults = {
-    4: { citizen: 2, mafia: 1, police: 1, doctor: 0 },
-    6: { citizen: 3, mafia: 1, police: 1, doctor: 1 },
-    8: { citizen: 4, mafia: 2, police: 1, doctor: 1 },
-    12: { citizen: 7, mafia: 3, police: 1, doctor: 1 },
+    4: { citizen: 2, mafia: 1, police: 1, doctor: 0, stalker: 0 },
+    6: { citizen: 2, mafia: 1, police: 1, doctor: 1, stalker: 1 },
+    8: { citizen: 3, mafia: 2, police: 1, doctor: 1, stalker: 1 },
+    12: { citizen: 6, mafia: 3, police: 1, doctor: 1, stalker: 1 },
   };
 
   return { ...(defaults[Number(maxPlayers)] || defaults[8]) };
@@ -364,9 +365,10 @@ function getRecommendedRoleConfig(maxPlayers) {
   const mafia = Math.max(1, Math.floor(playerCount / 4));
   const police = 1;
   const doctor = playerCount >= 6 ? 1 : 0;
-  const citizen = Math.max(0, playerCount - mafia - police - doctor);
+  const stalker = playerCount >= 8 ? 1 : 0;
+  const citizen = Math.max(0, playerCount - mafia - police - doctor - stalker);
 
-  return { citizen, mafia, police, doctor };
+  return { citizen, mafia, police, doctor, stalker };
 }
 
 function applyClassicNewRoomSettings() {
@@ -566,11 +568,6 @@ async function createRoom() {
     return;
   }
 
-  if (!newRoomTitle.value.trim()) {
-    toastStore.error('방 제목을 입력하세요.');
-    return;
-  }
-
   if (!newRoomDescription.value.trim()) {
     toastStore.error('게임 모드를 선택하세요.');
     return;
@@ -609,7 +606,8 @@ async function createRoom() {
   try {
     const createdRoom = await createRoomRequest({
       hostUser: savedUser.value,
-      title: newRoomTitle.value,
+      title:
+        newRoomTitle.value.trim() || selectedGameTheme.value.roomPlaceholder,
       description: newRoomDescription.value,
       gameType: selectedGameType.value,
       maxPlayers: Number(newRoomMaxPlayers.value),
@@ -1014,6 +1012,7 @@ function resetNewRoomRoles() {
     mafia: 0,
     police: 0,
     doctor: 0,
+    stalker: 0,
   };
 }
 
@@ -1356,6 +1355,7 @@ function getRoomRolePreview(room) {
     { key: 'mafia', label: '마피아', count: roleConfig.mafia || 0 },
     { key: 'police', label: '경찰', count: roleConfig.police || 0 },
     { key: 'doctor', label: '의사', count: roleConfig.doctor || 0 },
+    { key: 'stalker', label: '스토커', count: roleConfig.stalker || 0 },
     { key: 'citizen', label: '시민', count: roleConfig.citizen || 0 },
   ];
 }
