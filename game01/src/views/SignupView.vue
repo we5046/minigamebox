@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { signupUser } from '@/api/authApi'
+import AuthLayout from '@/components/AuthLayout.vue'
 import { useToastStore } from '@/stores/toast'
 
 const router = useRouter()
@@ -42,7 +43,8 @@ async function signup() {
 </script>
 
 <template>
-  <section class="page-card auth-card">
+  <AuthLayout>
+    <section class="page-card auth-card">
     <p class="eyebrow">Sign Up</p>
     <h1>회원가입</h1>
 
@@ -73,7 +75,8 @@ async function signup() {
 
       <RouterLink class="sub-link" to="/login">이미 계정이 있다면 로그인</RouterLink>
     </form>
-  </section>
+    </section>
+  </AuthLayout>
 </template>
 
 <style scoped>

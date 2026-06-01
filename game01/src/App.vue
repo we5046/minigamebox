@@ -14,6 +14,9 @@ const isAuthenticated = computed(() => !!authStore.user)
 const showAppNav = computed(
   () => isAuthenticated.value && route.name === 'home',
 )
+const isAuthPage = computed(() =>
+  ['login', 'signup', 'forgot-password'].includes(route.name),
+)
 const brandTarget = computed(() => (isAuthenticated.value ? '/home' : '/login'))
 
 watch(
@@ -43,7 +46,7 @@ async function logout() {
 
 <template>
   <ToastNotification />
-  <header class="app-header">
+  <header class="app-header" :class="{ 'auth-header': isAuthPage }">
     <RouterLink class="brand" :to="brandTarget">Minigamebox</RouterLink>
 
     <nav v-if="showAppNav" class="app-nav" aria-label="Main navigation">
@@ -55,8 +58,10 @@ async function logout() {
   </header>
 
   <RouterView v-slot="{ Component }">
-    <main class="page-shell">
-      <component :is="Component" />
+    <main class="page-shell" :class="{ 'auth-page-shell': isAuthPage }">
+      <Transition name="auth-switch" mode="out-in">
+        <component :is="Component" :key="route.fullPath" />
+      </Transition>
     </main>
   </RouterView>
 </template>
@@ -108,6 +113,38 @@ async function logout() {
 .page-shell {
   padding: 2rem 0 4rem;
   min-width: 0;
+}
+
+.app-header.auth-header {
+  left: clamp(0.75rem, 2vw, 1.5rem);
+  position: absolute;
+  right: clamp(0.75rem, 2vw, 1.5rem);
+  top: 0;
+  z-index: 2;
+}
+
+.auth-page-shell {
+  padding: 0;
+}
+
+.auth-switch-enter-active,
+.auth-switch-leave-active {
+  transition:
+    opacity 0.24s ease,
+    transform 0.24s ease;
+}
+
+.auth-switch-enter-from,
+.auth-switch-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-switch-enter-active,
+  .auth-switch-leave-active {
+    transition: none;
+  }
 }
 
 @media (max-width: 720px) {

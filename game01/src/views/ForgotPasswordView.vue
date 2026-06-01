@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { resetPassword as resetUserPassword } from '@/api/authApi'
+import AuthLayout from '@/components/AuthLayout.vue'
 
 const router = useRouter()
 const loginId = ref('')
@@ -54,7 +55,8 @@ async function resetPassword() {
 </script>
 
 <template>
-  <section class="page-card auth-card">
+  <AuthLayout>
+    <section class="page-card auth-card">
     <p class="eyebrow">Password Reset</p>
     <h1>비밀번호 찾기</h1>
     <p class="description">
@@ -90,7 +92,8 @@ async function resetPassword() {
 
       <RouterLink class="sub-link" to="/login">로그인으로 돌아가기</RouterLink>
     </form>
-  </section>
+    </section>
+  </AuthLayout>
 </template>
 
 <style scoped>

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { loginUser } from '@/api/authApi'
 import { getLastLoginId } from '@/api/session'
+import AuthLayout from '@/components/AuthLayout.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 
@@ -38,7 +39,8 @@ async function login() {
 </script>
 
 <template>
-  <section class="page-card auth-card">
+  <AuthLayout>
+    <section class="page-card auth-card">
     <p class="eyebrow">Login</p>
     <h1>로그인</h1>
 
@@ -62,7 +64,8 @@ async function login() {
         <RouterLink class="sub-link" to="/forgot-password">비밀번호 찾기</RouterLink>
       </div>
     </form>
-  </section>
+    </section>
+  </AuthLayout>
 </template>
 
 <style scoped>
