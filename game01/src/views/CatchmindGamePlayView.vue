@@ -50,7 +50,6 @@ let timeoutPromise = null
 const phase = computed(() => match.value?.round?.phase || 'WAITING')
 const players = computed(() => match.value?.players || [])
 const correctAnswers = computed(() => match.value?.correctAnswers || [])
-const isHost = computed(() => room.value?.hostUserId === savedUser.value?.id)
 const isDrawer = computed(() => match.value?.round?.drawerUserId === savedUser.value?.id)
 const canAnswer = computed(
   () =>
@@ -63,6 +62,14 @@ const remainingSeconds = computed(() => {
   if (phase.value !== 'ANSWERING' || !endsAt) return 0
   return Math.max(0, Math.ceil((new Date(endsAt).getTime() - nowTick.value) / 1000))
 })
+const resultRemainingSeconds = computed(() => {
+  const endsAt = match.value?.round?.phaseEndsAt
+  if (phase.value !== 'ROUND_RESULT' || !endsAt) return 0
+  return Math.max(0, Math.ceil((new Date(endsAt).getTime() - nowTick.value) / 1000))
+})
+const displayedSeconds = computed(() =>
+  phase.value === 'ROUND_RESULT' ? resultRemainingSeconds.value : remainingSeconds.value,
+)
 const winnerNames = computed(() => {
   const winnerIds = new Set(match.value?.winnerUserIds || [])
   return players.value.filter((player) => winnerIds.has(player.userId)).map((player) => player.nickname)
@@ -194,21 +201,10 @@ async function submitAnswer() {
   }
 }
 
-async function advancePhase() {
-  if (isWorking.value) return
-  isWorking.value = true
-  try {
-    match.value = await advanceCatchmindPhase(roomId.value)
-    await syncState()
-  } catch (error) {
-    toastStore.error(error.message)
-  } finally {
-    isWorking.value = false
-  }
-}
-
 async function processTimeout() {
-  if (phase.value !== 'ANSWERING' || remainingSeconds.value > 0 || timeoutPromise) return
+  const isExpiredAnswering = phase.value === 'ANSWERING' && remainingSeconds.value <= 0
+  const isExpiredResult = phase.value === 'ROUND_RESULT' && resultRemainingSeconds.value <= 0
+  if ((!isExpiredAnswering && !isExpiredResult) || timeoutPromise) return
   timeoutPromise = advanceCatchmindPhase(roomId.value)
   try {
     match.value = await timeoutPromise
@@ -265,8 +261,22 @@ onBeforeUnmount(() => {
           <span>CATCHMIND · ROUND {{ match.currentRoundNo }} / {{ match.totalRounds }}</span>
           <h1>{{ phase === 'GAME_RESULT' ? '게임 결과' : `${match.round?.drawerNickname}님의 그림 차례` }}</h1>
         </div>
-        <strong>{{ remainingSeconds }}초</strong>
+        <strong>{{ displayedSeconds }}초</strong>
       </header>
+
+      <Transition name="result-pop">
+        <section v-if="phase === 'ROUND_RESULT'" class="result-overlay">
+          <div class="result-overlay-card">
+            <span>ROUND {{ match.currentRoundNo }} RESULT</span>
+            <h2 v-if="correctAnswers.length > 0">
+              {{ correctAnswers.map((answer) => answer.nickname).join(', ') }}님 정답!
+            </h2>
+            <h2 v-else>시간 종료</h2>
+            <p>정답은 <strong>{{ match.round?.answerWord }}</strong></p>
+            <small>{{ resultRemainingSeconds }}초 후 다음 라운드로 이동합니다.</small>
+          </div>
+        </section>
+      </Transition>
 
       <main v-if="phase !== 'GAME_RESULT'" class="layout">
         <aside class="panel">
@@ -277,7 +287,6 @@ onBeforeUnmount(() => {
               <strong>{{ player.score }}점</strong>
             </li>
           </ol>
-          <button v-if="isHost && phase === 'ROUND_RESULT'" type="button" @click="advancePhase">다음 라운드</button>
         </aside>
 
         <section class="board-column">
@@ -365,6 +374,17 @@ h2 { color: #d1fae5; font-size: 1rem; margin: 0 0 .75rem; }
 .round-result strong, .round-result b { color: #fbbf24; }
 .round-result p { color: rgba(236,253,245,.76); margin-bottom: 0; }
 .round-result ul { display: grid; gap: .35rem; list-style: none; margin: .65rem 0 0; padding: 0; }
+.result-overlay { align-items: center; background: rgba(0, 0, 0, .68); display: flex; inset: 0; justify-content: center; padding: 1.25rem; position: fixed; z-index: 20; }
+.result-overlay-card { background: linear-gradient(145deg, #12352c, #07110f); border: 1px solid rgba(251, 191, 36, .58); border-radius: 18px; box-shadow: 0 22px 70px rgba(0,0,0,.46); max-width: 30rem; padding: 2rem; text-align: center; width: 100%; }
+.result-overlay-card span { color: #6ee7b7; font-size: .72rem; font-weight: 900; letter-spacing: .12em; }
+.result-overlay-card h2 { color: #fbbf24; font-size: 1.65rem; margin: .7rem 0; }
+.result-overlay-card p { color: #ecfdf5; margin: 0 0 .75rem; }
+.result-overlay-card p strong { color: #fbbf24; font-size: 1.3rem; }
+.result-overlay-card small { color: rgba(209,250,229,.7); }
+.result-pop-enter-active, .result-pop-leave-active { transition: opacity .2s ease; }
+.result-pop-enter-active .result-overlay-card, .result-pop-leave-active .result-overlay-card { transition: transform .2s ease; }
+.result-pop-enter-from, .result-pop-leave-to { opacity: 0; }
+.result-pop-enter-from .result-overlay-card, .result-pop-leave-to .result-overlay-card { transform: scale(.94); }
 .canvas-wrap { background: #fffef8; border: 5px solid rgba(167, 243, 208, .7); border-radius: 14px; overflow: hidden; }
 canvas { display: block; height: auto; touch-action: none; width: 100%; }
 .toolbar { display: flex; flex-wrap: wrap; gap: .55rem; }

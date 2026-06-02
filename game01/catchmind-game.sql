@@ -415,13 +415,21 @@ begin
 
       perform private.insert_catchmind_message(
         p_room_id, v_game_id, v_round.round_no, null, 'System',
-        format('%s님이 정답을 맞혔습니다!', v_nickname), true,
+        format('%s님이 정답을 맞혔습니다! 정답은 "%s"입니다.', v_nickname, v_word.word), true,
         format('catchmind_correct:%s:%s', v_round.round_no, v_user_id)
       );
 
       if v_score >= (select target_score from public.catchmind_matches where game_id = v_game_id) then
         update public.catchmind_matches set status = 'finished', updated_at = now() where game_id = v_game_id;
       end if;
+
+      update public.catchmind_rounds
+      set
+        phase = 'ROUND_RESULT',
+        phase_started_at = now(),
+        phase_ends_at = now() + interval '4 seconds',
+        updated_at = now()
+      where id = v_round.id;
     end if;
   end if;
 
@@ -440,20 +448,18 @@ declare
   v_game_id uuid := private.get_catchmind_game_id(p_room_id);
   v_match public.catchmind_matches;
   v_round public.catchmind_rounds;
-  v_host_user_id uuid;
   v_word text;
   v_winners uuid[];
 begin
   if not private.is_catchmind_player(v_game_id, v_user_id) then raise exception 'Catchmind participant required'; end if;
-  select host_user_id into v_host_user_id from public.rooms where id = p_room_id;
   select * into v_match from public.catchmind_matches where game_id = v_game_id for update;
   select * into v_round from public.catchmind_rounds where game_id = v_game_id order by round_no desc limit 1 for update;
 
   if v_round.phase = 'ANSWERING' then
-    if v_round.phase_ends_at > now() and v_host_user_id <> v_user_id then
+    if v_round.phase_ends_at > now() then
       raise exception 'Catchmind round is still active';
     end if;
-    update public.catchmind_rounds set phase = 'ROUND_RESULT', phase_started_at = now(), phase_ends_at = null, updated_at = now()
+    update public.catchmind_rounds set phase = 'ROUND_RESULT', phase_started_at = now(), phase_ends_at = now() + interval '4 seconds', updated_at = now()
     where id = v_round.id;
     select word.word into v_word from private.catchmind_round_secrets secret
     join private.catchmind_words word on word.id = secret.word_id where secret.round_id = v_round.id;
@@ -463,7 +469,7 @@ begin
       format('catchmind_round_result:%s', v_round.round_no)
     );
   elsif v_round.phase = 'ROUND_RESULT' then
-    if v_host_user_id <> v_user_id then raise exception 'Host only'; end if;
+    if v_round.phase_ends_at > now() then raise exception 'Catchmind result is still active'; end if;
     if v_match.status = 'finished' or v_match.current_round_no >= v_match.total_rounds then
       select coalesce(array_agg(user_id), '{}'::uuid[]) into v_winners
       from public.catchmind_players
