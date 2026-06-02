@@ -56,6 +56,11 @@ function getLiarErrorMessage(error, fallback) {
   if (message.includes('Liar guess already submitted')) return '최종 추측은 한 번만 제출할 수 있습니다.'
   if (message.includes('Current liar only')) return '현재 라이어만 제시어를 추측할 수 있습니다.'
   if (message.includes('All liar match players must vote')) return '모든 참가자의 투표가 필요합니다.'
+  if (message.includes('Liar statement text required')) return '한마디 설명을 입력하세요.'
+  if (message.includes('Liar statement too long')) return '한마디 설명은 100자 이하로 입력하세요.'
+  if (message.includes('Liar statement phase required')) return '현재는 한마디 설명 단계가 아닙니다.'
+  if (message.includes('Current liar statement player only')) return '현재 발언자만 한마디 설명을 제출할 수 있습니다.'
+  if (message.includes('Liar statement already submitted')) return '이미 한마디 설명을 제출했습니다.'
 
   return message || fallback
 }
@@ -187,6 +192,25 @@ export function submitLiarGuess(roomId, guess) {
   )
 }
 
+export function submitLiarStatement(roomId, statementText) {
+  return callLiarRpc(
+    'submit_liar_statement',
+    {
+      p_room_id: roomId,
+      p_statement_text: statementText,
+    },
+    '한마디 설명을 제출하지 못했습니다.',
+  )
+}
+
+export function timeoutLiarStatement(roomId) {
+  return callLiarRpc(
+    'timeout_liar_statement',
+    { p_room_id: roomId },
+    '한마디 설명 시간 초과를 처리하지 못했습니다.',
+  )
+}
+
 export function advanceLiarPhase(roomId) {
   return callLiarRpc(
     'advance_liar_phase',
@@ -228,6 +252,11 @@ export function subscribeToLiarMatch(gameId, callback) {
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'liar_votes', filter: `game_id=eq.${gameId}` },
+      callback,
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'liar_statements', filter: `game_id=eq.${gameId}` },
       callback,
     )
     .subscribe((status) => {

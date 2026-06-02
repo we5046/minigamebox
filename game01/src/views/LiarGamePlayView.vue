@@ -22,8 +22,10 @@ import {
   resolveLiarVote,
   returnLiarRoomToLobby,
   submitLiarGuess,
+  submitLiarStatement,
   submitLiarVote,
   subscribeToLiarMatch,
+  timeoutLiarStatement,
 } from '@/api/liarGameApi'
 
 const route = useRoute()
@@ -39,8 +41,10 @@ const myState = ref(null)
 const messages = ref([])
 const chatDraft = ref('')
 const guessDraft = ref('')
+const statementDraft = ref('')
 const isLoading = ref(true)
 const isWorking = ref(false)
+const nowTick = ref(Date.now())
 
 let unsubscribeRoom = null
 let unsubscribeMatch = null
@@ -48,10 +52,13 @@ let unsubscribeMessages = null
 let pollTimer = null
 let heartbeatTimer = null
 let syncTimer = null
+let countdownTimer = null
 let subscribedGameId = null
+let statementTimeoutPromise = null
 
 const phase = computed(() => match.value?.round?.phase || '')
 const scoreboard = computed(() => match.value?.scoreboard || [])
+const statements = computed(() => match.value?.statements || [])
 const voteStatus = computed(() => match.value?.voteStatus || { votes: [], candidateUserIds: [] })
 const currentVotes = computed(() => voteStatus.value.votes || [])
 const currentPlayer = computed(() =>
@@ -72,6 +79,16 @@ const voteCandidates = computed(() =>
 const canChat = computed(() => phase.value === 'discussion')
 const isVoting = computed(() => ['voting', 'revote'].includes(phase.value))
 const isCurrentLiar = computed(() => myState.value?.role === 'liar')
+const isMyStatementTurn = computed(
+  () =>
+    phase.value === 'statement' &&
+    match.value?.round?.currentStatementUserId === savedUser.value?.id,
+)
+const statementRemainingSeconds = computed(() => {
+  const endsAt = match.value?.round?.phaseEndsAt
+  if (phase.value !== 'statement' || !endsAt) return 0
+  return Math.max(0, Math.ceil((new Date(endsAt).getTime() - nowTick.value) / 1000))
+})
 const roundResult = computed(() => match.value?.roundResult || null)
 const winnerNames = computed(() => {
   const winnerIds = new Set(match.value?.winnerUserIds || [])
@@ -80,6 +97,7 @@ const winnerNames = computed(() => {
 const phaseLabel = computed(() => {
   const labels = {
     word_reveal: '역할 및 제시어 확인',
+    statement: '순서별 한마디 설명',
     discussion: '설명과 토론',
     voting: '라이어 투표',
     revote: '동률 재투표',
@@ -90,7 +108,7 @@ const phaseLabel = computed(() => {
   return labels[phase.value] || '라이어 게임'
 })
 const hostAdvanceLabel = computed(() => {
-  if (phase.value === 'word_reveal') return '토론 시작'
+  if (phase.value === 'word_reveal') return '한마디 설명 시작'
   if (phase.value === 'discussion') return '투표 시작'
   if (phase.value === 'voting' || phase.value === 'revote') return '투표 결과 확정'
   if (phase.value === 'round_result') {
@@ -251,6 +269,42 @@ async function submitGuess() {
   }
 }
 
+async function submitStatement() {
+  if (!isMyStatementTurn.value || !statementDraft.value.trim() || isWorking.value) return
+  isWorking.value = true
+
+  try {
+    match.value = await submitLiarStatement(roomId.value, statementDraft.value)
+    statementDraft.value = ''
+    await syncState()
+  } catch (error) {
+    toastStore.error(error.message)
+  } finally {
+    isWorking.value = false
+  }
+}
+
+async function processStatementTimeout() {
+  if (
+    phase.value !== 'statement' ||
+    statementRemainingSeconds.value > 0 ||
+    statementTimeoutPromise
+  ) {
+    return
+  }
+
+  statementTimeoutPromise = timeoutLiarStatement(roomId.value)
+
+  try {
+    match.value = await statementTimeoutPromise
+    await syncState()
+  } catch (error) {
+    console.warn('[LiarGame] statement timeout failed', error)
+  } finally {
+    statementTimeoutPromise = null
+  }
+}
+
 async function advancePhase() {
   if (!isHost.value || isWorking.value) return
   isWorking.value = true
@@ -287,6 +341,10 @@ onMounted(async () => {
   unsubscribeRoom = subscribeToRoom(roomId.value, scheduleSync)
   pollTimer = setInterval(syncState, 2500)
   heartbeatTimer = setInterval(sendHeartbeat, ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs)
+  countdownTimer = setInterval(() => {
+    nowTick.value = Date.now()
+    processStatementTimeout()
+  }, 500)
   await syncState()
   await sendHeartbeat()
 })
@@ -297,20 +355,21 @@ onBeforeUnmount(() => {
   unsubscribeMessages?.()
   if (pollTimer) clearInterval(pollTimer)
   if (heartbeatTimer) clearInterval(heartbeatTimer)
+  if (countdownTimer) clearInterval(countdownTimer)
   if (syncTimer) clearTimeout(syncTimer)
 })
 </script>
 
 <template>
   <section class="liar-game page-card">
-    <p class="eyebrow">Liar Match</p>
+    <div class="game-veil" aria-hidden="true"></div>
     <p v-if="isLoading" class="empty-state">라이어 게임 상태를 불러오는 중입니다.</p>
 
     <template v-else-if="match">
       <header class="match-header">
         <div>
-          <h1>ROUND {{ match.currentRoundNo }}</h1>
-          <p>{{ phaseLabel }}</p>
+          <p class="eyebrow">LIAR GAME · ROUND {{ match.currentRoundNo }}</p>
+          <h1>{{ phaseLabel }}</h1>
         </div>
         <div class="score-goal">목표 {{ match.targetScore }}점</div>
       </header>
@@ -318,7 +377,7 @@ onBeforeUnmount(() => {
       <div class="game-layout">
         <aside class="side-column">
           <section class="panel role-card">
-            <span>내 역할</span>
+            <span class="section-kicker">내 역할</span>
             <strong :class="myState?.role">{{ myState?.role === 'liar' ? '라이어' : '일반 유저' }}</strong>
             <p>테마: {{ myState?.categoryLabel || match.round?.categoryLabel }}</p>
             <p v-if="myState?.word">제시어: <b>{{ myState.word }}</b></p>
@@ -326,7 +385,7 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="panel">
-            <h2>점수판</h2>
+            <span class="section-kicker">점수판</span>
             <ol class="score-list">
               <li v-for="player in scoreboard" :key="player.userId">
                 <span>{{ player.nickname }}</span>
@@ -339,7 +398,35 @@ onBeforeUnmount(() => {
         <main class="main-column">
           <section v-if="phase === 'word_reveal'" class="panel hero-panel">
             <h2>역할과 제시어를 확인하세요</h2>
-            <p>모든 참가자가 확인하면 방장이 토론을 시작합니다.</p>
+            <p>모든 참가자가 확인하면 방장이 순서별 한마디 설명을 시작합니다.</p>
+          </section>
+
+          <section v-else-if="phase === 'statement'" class="panel hero-panel statement-panel">
+            <div class="statement-turn-heading">
+              <div>
+                <span class="section-kicker">현재 설명 차례</span>
+                <h2>{{ match.round?.currentStatementNickname }}님</h2>
+              </div>
+              <strong>{{ statementRemainingSeconds }}초</strong>
+            </div>
+            <p v-if="isMyStatementTurn">
+              제시어를 직접 말하지 않고 특징을 한마디로 설명하세요.
+            </p>
+            <p v-else>
+              다른 참가자는 설명이 끝날 때까지 기다려주세요.
+            </p>
+            <form class="statement-form" @submit.prevent="submitStatement">
+              <input
+                v-model="statementDraft"
+                type="text"
+                maxlength="100"
+                :disabled="!isMyStatementTurn || isWorking"
+                :placeholder="isMyStatementTurn ? '100자 이하로 한마디 설명을 입력하세요' : '현재 발언자만 입력할 수 있습니다'"
+              />
+              <button type="submit" :disabled="!isMyStatementTurn || isWorking || !statementDraft.trim()">
+                설명 제출
+              </button>
+            </form>
           </section>
 
           <section v-else-if="phase === 'discussion'" class="panel hero-panel">
@@ -397,14 +484,26 @@ onBeforeUnmount(() => {
 
           <section class="panel chat-panel">
             <div class="panel-heading">
-              <h2>게임 채팅</h2>
-              <span>{{ canChat ? '입력 가능' : '현재 단계에서는 읽기만 가능' }}</span>
+              <div>
+                <span class="eyebrow">LIVE DISCUSSION</span>
+                <h2>게임 채팅</h2>
+              </div>
+              <span class="chat-status-badge" :class="{ locked: !canChat }">
+                {{ canChat ? '채팅 가능' : '채팅 잠김' }}
+              </span>
             </div>
             <ul class="chat-list">
               <li v-for="message in messages" :key="message.id" :class="{ system: message.isSystem }">
-                <small>R{{ message.roundNo || '-' }} · {{ message.createdAt }}</small>
-                <strong>{{ message.nickname }}</strong>
-                <span>{{ message.content }}</span>
+                <template v-if="message.isSystem">
+                  <span>{{ message.content }}</span>
+                </template>
+                <template v-else>
+                  <div class="chat-meta">
+                    <strong>{{ message.nickname }}</strong>
+                    <small>R{{ message.roundNo || '-' }} · {{ message.createdAt }}</small>
+                  </div>
+                  <p>{{ message.content }}</p>
+                </template>
               </li>
             </ul>
             <form @submit.prevent="sendChat">
@@ -415,8 +514,29 @@ onBeforeUnmount(() => {
         </main>
 
         <aside class="side-column">
+          <section class="panel statement-list-panel">
+            <span class="section-kicker">한마디 설명 목록</span>
+            <p v-if="!statements.length">설명 단계가 시작되면 순서가 공개됩니다.</p>
+            <ol v-else class="statement-list">
+              <li
+                v-for="statement in statements"
+                :key="statement.id"
+                :class="{
+                  active: phase === 'statement' && match.round?.currentStatementUserId === statement.userId,
+                  timeout: statement.isTimeout,
+                }"
+              >
+                <div>
+                  <b>{{ statement.turnOrder }}</b>
+                  <strong>{{ statement.nickname }}</strong>
+                </div>
+                <p>{{ statement.statementText || '차례 대기 중' }}</p>
+              </li>
+            </ol>
+          </section>
+
           <section class="panel">
-            <h2>투표 현황</h2>
+            <span class="section-kicker">투표 현황</span>
             <p v-if="!isVoting && !currentVotes.length">투표 단계가 시작되면 공개됩니다.</p>
             <ul v-else class="vote-list">
               <li v-for="group in groupedVotes" :key="group.targetId">
@@ -431,7 +551,7 @@ onBeforeUnmount(() => {
           </section>
 
           <section v-if="isHost && hostAdvanceLabel" class="panel host-panel">
-            <h2>방장 진행</h2>
+            <span class="section-kicker">방장 진행</span>
             <button type="button" class="primary" :disabled="isWorking" @click="advancePhase">
               {{ hostAdvanceLabel }}
             </button>
@@ -444,24 +564,53 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .liar-game {
+  background:
+    radial-gradient(circle at 50% -12%, rgba(255, 190, 85, 0.15), transparent 34%),
+    radial-gradient(circle at 13% 18%, rgba(127, 29, 29, 0.2), transparent 31%),
+    linear-gradient(180deg, rgba(35, 20, 14, 0.97), rgba(8, 6, 6, 0.99));
+  border: 1px solid rgba(255, 190, 85, 0.18);
   display: grid;
-  gap: 1rem;
+  gap: clamp(0.9rem, 1.8vw, 1.25rem);
+  min-height: min(820px, calc(100vh - 3rem));
+  overflow: hidden;
+  position: relative;
+}
+
+.game-veil {
+  background:
+    linear-gradient(90deg, transparent, rgba(255, 190, 85, 0.075), transparent),
+    radial-gradient(circle at 78% 18%, rgba(255, 138, 0, 0.08), transparent 28%);
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.empty-state,
+.match-header,
+.game-layout {
+  position: relative;
+  z-index: 1;
+}
+
+.empty-state {
+  color: rgba(255, 245, 224, 0.72);
+  font-weight: 900;
 }
 
 .eyebrow,
-.match-header p,
 .hero-panel p,
-.panel-heading span,
 .vote-list span,
 .panel > p,
 small {
   color: rgba(255, 245, 224, 0.62);
 }
 
-.eyebrow {
-  font-size: 0.76rem;
+.eyebrow,
+.section-kicker {
+  color: rgba(255, 190, 85, 0.72);
+  font-size: 0.72rem;
   font-weight: 900;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.08em;
   margin: 0;
   text-transform: uppercase;
 }
@@ -476,27 +625,39 @@ h2 {
   font-size: 1rem;
 }
 
-.match-header,
-.panel-heading {
+.match-header {
   align-items: center;
+  background: rgba(10, 7, 6, 0.46);
+  border: 1px solid rgba(255, 190, 85, 0.14);
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.22);
   display: flex;
-  gap: 0.75rem;
+  gap: 1rem;
   justify-content: space-between;
+  padding: 0.85rem 1rem;
+}
+
+.match-header h1 {
+  color: #fff1d6;
+  font-size: clamp(1.35rem, 2.4vw, 2rem);
+  line-height: 1.1;
+  margin-top: 0.1rem;
+  text-shadow: 0 0 24px rgba(255, 138, 0, 0.2);
 }
 
 .score-goal {
-  background: rgba(139, 92, 246, 0.16);
-  border: 1px solid rgba(196, 181, 253, 0.34);
+  background: rgba(255, 190, 85, 0.12);
+  border: 1px solid rgba(255, 190, 85, 0.28);
   border-radius: 999px;
-  color: #ddd6fe;
+  color: #ffd591;
   font-weight: 900;
   padding: 0.5rem 0.8rem;
 }
 
 .game-layout {
   display: grid;
-  gap: 0.85rem;
-  grid-template-columns: minmax(12rem, 0.8fr) minmax(18rem, 1.6fr) minmax(12rem, 0.9fr);
+  gap: clamp(0.9rem, 1.7vw, 1.25rem);
+  grid-template-columns: minmax(11rem, 0.78fr) minmax(22rem, 1.7fr) minmax(12rem, 0.88fr);
 }
 
 .side-column,
@@ -511,19 +672,24 @@ h2 {
 }
 
 .panel {
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(196, 181, 253, 0.2);
-  border-radius: 0.85rem;
-  padding: 0.9rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.022)),
+    rgba(14, 10, 8, 0.76);
+  border: 1px solid rgba(255, 190, 85, 0.16);
+  border-radius: 16px;
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.3),
+    inset 0 0 34px rgba(255, 138, 0, 0.04);
+  padding: 1rem;
 }
 
 .role-card strong {
   color: #86efac;
-  font-size: 1.35rem;
+  font-size: 1.45rem;
 }
 
 .role-card strong.liar {
-  color: #fda4af;
+  color: #fca5a5;
 }
 
 .score-list,
@@ -539,12 +705,18 @@ h2 {
 .score-list li,
 .vote-list li {
   align-items: center;
-  background: rgba(255, 255, 255, 0.045);
-  border-radius: 0.55rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
   display: flex;
   gap: 0.45rem;
   justify-content: space-between;
-  padding: 0.55rem;
+  padding: 0.62rem;
+}
+
+.score-list strong,
+.vote-list strong {
+  color: #fff1d6;
 }
 
 .vote-list li {
@@ -553,7 +725,15 @@ h2 {
 }
 
 .hero-panel {
-  min-height: 8rem;
+  background:
+    linear-gradient(90deg, rgba(255, 190, 85, 0.08), rgba(127, 29, 29, 0.1)),
+    rgba(14, 10, 8, 0.8);
+  min-height: 8.5rem;
+}
+
+.hero-panel h2 {
+  color: #fff1d6;
+  font-size: 1.25rem;
 }
 
 .candidate-grid {
@@ -564,10 +744,10 @@ h2 {
 
 button,
 input {
-  background: rgba(15, 10, 25, 0.82);
-  border: 1px solid rgba(196, 181, 253, 0.3);
-  border-radius: 0.65rem;
-  color: var(--color-text);
+  background: rgba(0, 0, 0, 0.34);
+  border: 1px solid rgba(255, 190, 85, 0.16);
+  border-radius: 8px;
+  color: #fff1d6;
   font: inherit;
   padding: 0.7rem 0.78rem;
 }
@@ -578,14 +758,18 @@ button {
 }
 
 button.primary,
-.guess-form button {
-  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
-  color: white;
+.guess-form button,
+.statement-form button {
+  background: linear-gradient(180deg, #ffbe55, #b86b1b);
+  border: 0;
+  color: #231107;
 }
 
 button.selected {
-  border-color: #c4b5fd;
-  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.22);
+  background: rgba(255, 190, 85, 0.14);
+  border-color: rgba(255, 190, 85, 0.7);
+  box-shadow: 0 0 0 3px rgba(255, 190, 85, 0.1);
+  color: #ffd591;
 }
 
 button:disabled,
@@ -595,6 +779,7 @@ input:disabled {
 }
 
 .guess-form,
+.statement-form,
 .chat-panel form {
   display: grid;
   gap: 0.5rem;
@@ -613,27 +798,201 @@ input:disabled {
 }
 
 .result-panel dd {
+  color: #fff1d6;
   font-weight: 900;
   margin: 0;
+}
+
+.statement-turn-heading {
+  align-items: center;
+  display: flex;
+  gap: 0.8rem;
+  justify-content: space-between;
+}
+
+.statement-turn-heading strong {
+  background: rgba(255, 190, 85, 0.12);
+  border: 1px solid rgba(255, 190, 85, 0.3);
+  border-radius: 999px;
+  color: #ffd591;
+  font-size: 1rem;
+  padding: 0.42rem 0.68rem;
+}
+
+.statement-list {
+  display: grid;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.statement-list li {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.62rem;
+}
+
+.statement-list li.active {
+  border-color: rgba(255, 190, 85, 0.56);
+  box-shadow: 0 0 0 2px rgba(255, 190, 85, 0.08);
+}
+
+.statement-list li.timeout p {
+  color: #fca5a5;
+}
+
+.statement-list div {
+  align-items: center;
+  display: flex;
+  gap: 0.45rem;
+}
+
+.statement-list b {
+  align-items: center;
+  background: rgba(255, 190, 85, 0.12);
+  border-radius: 50%;
+  color: #ffd591;
+  display: inline-flex;
+  font-size: 0.7rem;
+  height: 1.35rem;
+  justify-content: center;
+  width: 1.35rem;
+}
+
+.statement-list strong {
+  color: #fff1d6;
+  font-size: 0.88rem;
+}
+
+.statement-list p {
+  color: rgba(255, 245, 224, 0.68);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.panel-heading {
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 190, 85, 0.11);
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  margin: -1rem -1rem 0;
+  padding: 1rem;
+}
+
+.panel-heading h2 {
+  color: #fff1d6;
+  font-size: 1.45rem;
+  margin-top: 0.2rem;
+}
+
+.chat-status-badge {
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.28);
+  border-radius: 999px;
+  color: #86efac;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 0.38rem 0.65rem;
+}
+
+.chat-status-badge.locked {
+  background: rgba(148, 116, 84, 0.12);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 245, 224, 0.52);
+}
+
+.chat-panel {
+  overflow: hidden;
 }
 
 .chat-list {
   max-height: 23rem;
   min-height: 16rem;
   overflow-y: auto;
+  scrollbar-color: rgba(255, 190, 85, 0.36) rgba(0, 0, 0, 0.18);
 }
 
 .chat-list li {
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 12px;
   display: grid;
-  gap: 0.12rem;
+  gap: 0.28rem;
+  max-width: 82%;
+  padding: 0.72rem 0.82rem;
 }
 
 .chat-list li.system {
-  color: #c4b5fd;
+  background: rgba(255, 190, 85, 0.08);
+  border-color: rgba(255, 190, 85, 0.14);
+  border-radius: 999px;
+  color: rgba(255, 210, 138, 0.82);
+  justify-self: center;
+  max-width: 90%;
+  padding: 0.35rem 0.7rem;
+  text-align: center;
+}
+
+.chat-meta {
+  align-items: center;
+  display: flex;
+  gap: 0.65rem;
+  justify-content: space-between;
+}
+
+.chat-meta strong {
+  color: #ffd28a;
+  font-size: 0.82rem;
+}
+
+.chat-list p {
+  color: rgba(255, 245, 224, 0.86);
+  line-height: 1.5;
+}
+
+.chat-panel form {
+  border-top: 1px solid rgba(255, 190, 85, 0.11);
+  margin: 0 -1rem -1rem;
+  padding: 0.9rem 1rem 1rem;
+}
+
+.chat-panel form button {
+  background: linear-gradient(180deg, #ffbe55, #b86b1b);
+  border: 0;
+  color: #231107;
+  font-weight: 900;
 }
 
 @media (max-width: 1100px) {
   .game-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .liar-game {
+    min-height: auto;
+  }
+
+  .match-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .score-goal {
+    justify-self: start;
+    width: fit-content;
+  }
+
+  .guess-form,
+  .statement-form,
+  .chat-panel form {
     grid-template-columns: 1fr;
   }
 }

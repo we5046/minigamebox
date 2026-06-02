@@ -13,6 +13,7 @@
 | 프로젝트 구조 분석 | 완료 | `docs/liar-game-analysis.md` |
 | 최신 기획 기준 정리 | 완료 | `docs/liar-game-spec.md` |
 | 라이어 DB와 RPC 초안 | 완료 | `liar-game.sql` |
+| 순서별 한마디 설명 단계 | 완료 | `liar-game-statement-fix.sql` |
 | 로비 라이어 방 생성 | 완료 | `src/views/HomeView.vue`, `src/api/roomApi.js` |
 | 라이어 전용 API | 완료 | `src/api/liarGameApi.js` |
 | 게임 타입별 플레이 라우팅 | 완료 | `src/views/GamePlayRouteView.vue` |
@@ -36,7 +37,11 @@
 - 1차 동률이면 공동 최다 득표 후보만 대상으로 재투표
 - 재투표도 동률이면 라운드 무효, 점수 지급 없음
 - 실제 라이어가 지목되면 한 번의 제시어 추측
-- MVP 단계 진행은 방장이 수동으로 처리
+- 역할 확인 후 순서별 한마디 설명 진행
+- 현재 발언자만 100자 이하 설명 제출 가능
+- 발언 시간 초과 시 `답변 없음` 자동 기록
+- 설명 완료 후 자유 토론 시작
+- `statement` 이외 MVP 단계 진행은 방장이 수동으로 처리
 
 ## 3. SQL 적용 순서
 
@@ -46,7 +51,8 @@
 2. `password-room-fix.sql`을 적용한다.
 3. 필요하면 `stalker-role-fix.sql`과 `mypage-game-records-fix.sql`을 적용한다.
 4. `liar-game.sql`을 적용한다.
-5. PostgREST 스키마 reload가 끝난 뒤 프론트를 새로고침한다.
+5. `liar-game-statement-fix.sql`을 적용한다.
+6. PostgREST 스키마 reload가 끝난 뒤 프론트를 새로고침한다.
 
 Supabase Dashboard의 SQL Editor에서는 파일 하나씩 새 쿼리로 열어 전체 내용을 실행한다. 각 파일은 트랜잭션으로 감싸져 있으므로 오류가 발생하면 먼저 선행 스키마를 보완하고 해당 파일 전체를 다시 실행한다.
 
@@ -62,6 +68,13 @@ Supabase Dashboard의 SQL Editor에서는 파일 하나씩 새 쿼리로 열어 
 - 라이어 전용 RPC 생성
 - 토론 단계 외 라이어 게임 채팅 저장 차단 트리거 생성
 
+`liar-game-statement-fix.sql`은 다음 작업을 수행한다.
+
+- `statement` 라운드 단계와 발언 진행 상태 추가
+- `liar_statements` 공개 테이블, RLS, Realtime 등록
+- 랜덤 발언 순서 생성, 설명 제출, 시간 초과 처리 RPC 생성
+- 현재 차례와 설명 목록을 공개 매치 payload에 추가
+
 ### 3.1 적용 후 확인 쿼리
 
 ```sql
@@ -70,6 +83,7 @@ select
   to_regclass('public.liar_room_settings') as liar_room_settings,
   to_regclass('public.liar_match_states') as liar_match_states,
   to_regclass('public.liar_rounds') as liar_rounds,
+  to_regclass('public.liar_statements') as liar_statements,
   to_regclass('private.liar_words') as liar_words;
 
 select routine_name
@@ -85,6 +99,7 @@ where pubname = 'supabase_realtime'
     'liar_match_states',
     'liar_scores',
     'liar_rounds',
+    'liar_statements',
     'liar_votes'
   )
 order by tablename;
@@ -114,7 +129,16 @@ order by category_key;
 3. 전원 준비 후 시작하면 모든 참가자가 플레이 화면으로 이동하는지 확인한다.
 4. 일반 유저는 같은 제시어를 보고 라이어는 제시어를 보지 못하는지 확인한다.
 
-### 4.3 토론과 투표
+### 4.3 한마디 설명
+
+1. 역할 확인 이후 방장이 `한마디 설명 시작`을 누르면 `statement` 단계로 이동하는지 확인한다.
+2. 참가자별 랜덤 발언 순서와 현재 발언자가 모든 브라우저에서 동일하게 표시되는지 확인한다.
+3. 현재 발언자만 100자 이하 설명을 제출할 수 있는지 확인한다.
+4. 제출한 설명이 즉시 모든 브라우저의 목록에 표시되는지 확인한다.
+5. 제한 시간이 끝나면 `답변 없음`으로 기록되고 다음 참가자에게 넘어가는지 확인한다.
+6. 모든 설명이 완료되면 자동으로 `discussion` 단계로 이동하는지 확인한다.
+
+### 4.4 토론과 투표
 
 1. `discussion` 단계에서만 게임 채팅을 저장할 수 있는지 확인한다.
 2. `voting` 단계에서 누가 누구에게 투표했는지 즉시 공개되는지 확인한다.
@@ -123,7 +147,7 @@ order by category_key;
 5. 동률이면 `revote`로 이동하고 공동 최다 득표 후보만 선택 가능한지 확인한다.
 6. 재투표도 동률이면 `invalid` 결과와 점수 미지급을 확인한다.
 
-### 4.4 추측과 종료
+### 4.5 추측과 종료
 
 1. 실제 라이어가 지목되면 `liar_guess`로 이동하는지 확인한다.
 2. 일반 유저의 추측 제출은 거부되는지 확인한다.
@@ -132,7 +156,7 @@ order by category_key;
 5. 목표 점수 도달 시 최종 우승자와 공동 우승을 올바르게 표시하는지 확인한다.
 6. 대기방 복귀 후 준비 상태가 초기화되는지 확인한다.
 
-### 4.5 보안
+### 4.6 보안
 
 브라우저 개발자 도구와 Data API를 사용해 다음을 확인한다.
 
@@ -141,6 +165,7 @@ order by category_key;
 3. 일반 유저가 `private.liar_round_secrets`를 직접 조회할 수 없는지 확인한다.
 4. `public.liar_votes`는 조회만 가능하고 직접 INSERT는 거부되는지 확인한다.
 5. 토론 단계 외 `game_messages` 직접 INSERT가 거부되는지 확인한다.
+6. `public.liar_statements`는 조회만 가능하고 직접 INSERT 또는 UPDATE는 거부되는지 확인한다.
 
 ## 5. 후속 작업
 
