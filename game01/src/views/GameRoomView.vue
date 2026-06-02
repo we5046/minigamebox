@@ -147,6 +147,11 @@ const isHost = computed(() => currentPlayer.value?.isHost === true);
 const isLiarRoom = computed(() => room.value?.gameType === 'liar');
 const isCatchmindRoom = computed(() => room.value?.gameType === 'catchmind');
 const usesRoleConfig = computed(() => room.value?.gameType === 'mafia');
+const roomThemeClass = computed(() => {
+  if (isLiarRoom.value) return 'theme-liar';
+  if (isCatchmindRoom.value) return 'theme-catchmind';
+  return 'theme-mafia';
+});
 const isGameStarted = computed(
   () =>
     room.value?.status === 'playing' ||
@@ -1996,7 +2001,7 @@ async function leaveRoom() {
 </script>
 
 <template>
-  <section class="page-card room game-lobby-container">
+  <section class="page-card room game-lobby-container" :class="roomThemeClass">
     <div class="lobby-glow"></div>
 
     <p class="eyebrow">Game Room #{{ String(roomId).slice(0, 8) }}</p>
@@ -5158,6 +5163,175 @@ async function leaveRoom() {
 .icon-close-btn:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.game-lobby-container {
+  --room-accent: #ffbe55;
+  --room-accent-strong: #ff8a00;
+  --room-accent-deep: #c9711d;
+  --room-accent-rgb: 255, 190, 85;
+  --room-glow-rgb: 255, 120, 52;
+  --room-surface-rgb: 30, 20, 15;
+  --room-surface-deep-rgb: 15, 10, 8;
+  --room-text: #fff1d6;
+  --room-text-rgb: 255, 245, 224;
+}
+
+.game-lobby-container.theme-catchmind {
+  --room-accent: #10b981;
+  --room-accent-strong: #34d399;
+  --room-accent-deep: #047857;
+  --room-accent-rgb: 110, 231, 183;
+  --room-glow-rgb: 16, 185, 129;
+  --room-surface-rgb: 10, 34, 29;
+  --room-surface-deep-rgb: 4, 15, 13;
+  --room-text: #ecfdf5;
+  --room-text-rgb: 209, 250, 229;
+}
+
+.game-lobby-container.theme-liar {
+  --room-accent: #a78bfa;
+  --room-accent-strong: #c4b5fd;
+  --room-accent-deep: #7c3aed;
+  --room-accent-rgb: 196, 181, 253;
+  --room-glow-rgb: 167, 139, 250;
+  --room-surface-rgb: 28, 20, 48;
+  --room-surface-deep-rgb: 10, 7, 19;
+  --room-text: #f5f3ff;
+  --room-text-rgb: 237, 233, 254;
+}
+
+.game-lobby-container:not(.theme-mafia) {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--room-surface-rgb), 0.92),
+    rgba(var(--room-surface-deep-rgb), 0.97)
+  );
+  border-color: rgba(var(--room-accent-rgb), 0.24);
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.6),
+    inset 0 0 40px rgba(var(--room-glow-rgb), 0.07);
+}
+
+.game-lobby-container:not(.theme-mafia) .lobby-glow {
+  background: radial-gradient(
+    circle at 50% 0%,
+    rgba(var(--room-glow-rgb), 0.15),
+    transparent 40%
+  );
+}
+
+.game-lobby-container:not(.theme-mafia) .eyebrow,
+.game-lobby-container:not(.theme-mafia) .mode-badge,
+.game-lobby-container:not(.theme-mafia) .host-name,
+.game-lobby-container:not(.theme-mafia) .control-title,
+.game-lobby-container:not(.theme-mafia) .control-status.active,
+.game-lobby-container:not(.theme-mafia) .secondary-btn,
+.game-lobby-container:not(.theme-mafia) .room-rules-toggle b,
+.game-lobby-container:not(.theme-mafia) .briefing-section-title strong,
+.game-lobby-container:not(.theme-mafia) .invite-friend-card strong,
+.game-lobby-container:not(.theme-mafia) .player-name,
+.game-lobby-container:not(.theme-mafia) .edit-room-header h2 {
+  color: var(--room-accent);
+}
+
+.game-lobby-container:not(.theme-mafia) .room-title {
+  text-shadow: 0 0 20px rgba(var(--room-glow-rgb), 0.42);
+}
+
+.game-lobby-container:not(.theme-mafia) .atmosphere-quote {
+  border-left-color: rgba(var(--room-glow-rgb), 0.46);
+  color: rgba(var(--room-glow-rgb), 0.78);
+}
+
+.game-lobby-container:not(.theme-mafia) .mode-badge,
+.game-lobby-container:not(.theme-mafia) .room-control-panel,
+.game-lobby-container:not(.theme-mafia) .game-started-panel,
+.game-lobby-container:not(.theme-mafia) .room-rules-toggle,
+.game-lobby-container:not(.theme-mafia) .room-rules-grid,
+.game-lobby-container:not(.theme-mafia) .players-section,
+.game-lobby-container:not(.theme-mafia) .room-chat-section,
+.game-lobby-container:not(.theme-mafia) .player-card,
+.game-lobby-container:not(.theme-mafia) .edit-room-form,
+.game-lobby-container:not(.theme-mafia) .invite-modal {
+  border-color: rgba(var(--room-accent-rgb), 0.2);
+}
+
+.game-lobby-container:not(.theme-mafia) .room-control-panel,
+.game-lobby-container:not(.theme-mafia) .players-section,
+.game-lobby-container:not(.theme-mafia) .room-chat-section,
+.game-lobby-container:not(.theme-mafia) .rules-briefing-panel,
+.game-lobby-container:not(.theme-mafia) .rules-flow-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018)),
+    rgba(var(--room-surface-deep-rgb), 0.76);
+}
+
+.game-lobby-container:not(.theme-mafia) .game-started-panel,
+.game-lobby-container:not(.theme-mafia) .room-rules-grid {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(var(--room-accent-rgb), 0.14), transparent 34%),
+    linear-gradient(135deg, rgba(var(--room-surface-rgb), 0.84), rgba(var(--room-surface-deep-rgb), 0.94));
+}
+
+.game-lobby-container:not(.theme-mafia) .room-rules-toggle {
+  background:
+    linear-gradient(90deg, rgba(var(--room-accent-rgb), 0.1), rgba(var(--room-glow-rgb), 0.045)),
+    rgba(var(--room-surface-deep-rgb), 0.72);
+}
+
+.game-lobby-container:not(.theme-mafia) .briefing-hero,
+.game-lobby-container:not(.theme-mafia) .rule-status-row,
+.game-lobby-container:not(.theme-mafia) .player-card,
+.game-lobby-container:not(.theme-mafia) .invite-friend-card {
+  background: rgba(var(--room-accent-rgb), 0.07);
+}
+
+.game-lobby-container:not(.theme-mafia) .edit-room-form,
+.game-lobby-container:not(.theme-mafia) .invite-modal {
+  background:
+    radial-gradient(circle at 15% 0%, rgba(var(--room-glow-rgb), 0.15), transparent 34%),
+    linear-gradient(180deg, rgba(var(--room-surface-rgb), 0.98), rgba(var(--room-surface-deep-rgb), 0.99));
+}
+
+.game-lobby-container:not(.theme-mafia) .control-header,
+.game-lobby-container:not(.theme-mafia) .chat-header,
+.game-lobby-container:not(.theme-mafia) .chat-form,
+.game-lobby-container:not(.theme-mafia) .edit-room-header {
+  border-color: rgba(var(--room-accent-rgb), 0.18);
+}
+
+.game-lobby-container:not(.theme-mafia) .primary-btn,
+.game-lobby-container:not(.theme-mafia) .chat-form button,
+.game-lobby-container:not(.theme-mafia) .edit-actions button[type='submit'],
+.game-lobby-container:not(.theme-mafia) .invite-search-row button {
+  background: linear-gradient(
+    180deg,
+    var(--room-accent-strong),
+    var(--room-accent-deep)
+  );
+  color: rgba(var(--room-surface-deep-rgb), 0.98);
+}
+
+.game-lobby-container:not(.theme-mafia) .secondary-btn {
+  border-color: rgba(var(--room-accent-rgb), 0.34);
+}
+
+.game-lobby-container:not(.theme-mafia) .secondary-btn:hover:not(:disabled),
+.game-lobby-container:not(.theme-mafia) .room-rules-toggle:hover,
+.game-lobby-container:not(.theme-mafia) .room-rules-toggle.active,
+.game-lobby-container:not(.theme-mafia) .player-card.is-me,
+.game-lobby-container:not(.theme-mafia) .empty-slot:hover {
+  background: rgba(var(--room-accent-rgb), 0.1);
+  border-color: rgba(var(--room-accent-rgb), 0.58);
+}
+
+.game-lobby-container:not(.theme-mafia) .chat-form input:focus,
+.game-lobby-container:not(.theme-mafia) .edit-room-form input:focus,
+.game-lobby-container:not(.theme-mafia) .edit-room-form textarea:focus,
+.game-lobby-container:not(.theme-mafia) .invite-search-row input:focus {
+  border-color: rgba(var(--room-accent-rgb), 0.48);
+  box-shadow: 0 0 0 3px rgba(var(--room-accent-rgb), 0.1);
 }
 
 @media (max-width: 1100px) {

@@ -981,6 +981,131 @@ input:disabled {
   font-weight: 900;
 }
 
+.liar-game {
+  --liar-accent: #a78bfa;
+  --liar-accent-strong: #c4b5fd;
+  --liar-accent-deep: #7c3aed;
+  --liar-accent-rgb: 196, 181, 253;
+  --liar-glow-rgb: 167, 139, 250;
+  --liar-text: #f5f3ff;
+  --liar-text-rgb: 237, 233, 254;
+  background:
+    radial-gradient(circle at 50% -12%, rgba(var(--liar-accent-rgb), 0.18), transparent 34%),
+    radial-gradient(circle at 13% 18%, rgba(76, 29, 149, 0.22), transparent 31%),
+    linear-gradient(180deg, rgba(28, 20, 48, 0.98), rgba(10, 7, 19, 0.99));
+  border-color: rgba(var(--liar-accent-rgb), 0.22);
+}
+
+.liar-game .game-veil {
+  background:
+    linear-gradient(90deg, transparent, rgba(var(--liar-accent-rgb), 0.08), transparent),
+    radial-gradient(circle at 78% 18%, rgba(var(--liar-glow-rgb), 0.11), transparent 28%);
+}
+
+.liar-game .empty-state,
+.liar-game .eyebrow,
+.liar-game .hero-panel p,
+.liar-game .vote-list span,
+.liar-game .panel > p,
+.liar-game small,
+.liar-game .statement-list p,
+.liar-game .chat-list p {
+  color: rgba(var(--liar-text-rgb), 0.72);
+}
+
+.liar-game .eyebrow,
+.liar-game .section-kicker {
+  color: rgba(var(--liar-accent-rgb), 0.82);
+}
+
+.liar-game .match-header,
+.liar-game .panel {
+  border-color: rgba(var(--liar-accent-rgb), 0.18);
+}
+
+.liar-game .match-header {
+  background: rgba(10, 7, 19, 0.58);
+}
+
+.liar-game .panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018)),
+    rgba(12, 8, 24, 0.82);
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.3),
+    inset 0 0 34px rgba(var(--liar-glow-rgb), 0.05);
+}
+
+.liar-game .match-header h1,
+.liar-game .score-list strong,
+.liar-game .vote-list strong,
+.liar-game .hero-panel h2,
+.liar-game .result-panel dd,
+.liar-game .statement-list strong,
+.liar-game .panel-heading h2,
+.liar-game button,
+.liar-game input {
+  color: var(--liar-text);
+}
+
+.liar-game .match-header h1 {
+  text-shadow: 0 0 24px rgba(var(--liar-glow-rgb), 0.28);
+}
+
+.liar-game .score-goal,
+.liar-game .statement-turn-heading strong,
+.liar-game .statement-list b {
+  background: rgba(var(--liar-accent-rgb), 0.13);
+  border-color: rgba(var(--liar-accent-rgb), 0.34);
+  color: var(--liar-accent-strong);
+}
+
+.liar-game .hero-panel {
+  background:
+    linear-gradient(90deg, rgba(var(--liar-accent-rgb), 0.1), rgba(76, 29, 149, 0.13)),
+    rgba(12, 8, 24, 0.82);
+}
+
+.liar-game button,
+.liar-game input {
+  border-color: rgba(var(--liar-accent-rgb), 0.2);
+}
+
+.liar-game button.primary,
+.liar-game .guess-form button,
+.liar-game .statement-form button,
+.liar-game .chat-panel form button {
+  background: linear-gradient(180deg, var(--liar-accent-strong), var(--liar-accent-deep));
+  color: #160b28;
+}
+
+.liar-game button.selected,
+.liar-game .statement-list li.active {
+  background: rgba(var(--liar-accent-rgb), 0.15);
+  border-color: rgba(var(--liar-accent-rgb), 0.72);
+  box-shadow: 0 0 0 3px rgba(var(--liar-accent-rgb), 0.11);
+  color: var(--liar-accent-strong);
+}
+
+.liar-game .panel-heading,
+.liar-game .chat-panel form {
+  border-color: rgba(var(--liar-accent-rgb), 0.15);
+}
+
+.liar-game .chat-list {
+  scrollbar-color: rgba(var(--liar-accent-rgb), 0.42) rgba(0, 0, 0, 0.18);
+}
+
+.liar-game .chat-list li.system {
+  background: rgba(var(--liar-accent-rgb), 0.1);
+  border-color: rgba(var(--liar-accent-rgb), 0.18);
+  color: rgba(var(--liar-accent-rgb), 0.92);
+}
+
+.liar-game .chat-meta strong {
+  color: var(--liar-accent-strong);
+}
+
 @container (max-width: 30rem) {
   .panel-heading {
     align-items: flex-start;

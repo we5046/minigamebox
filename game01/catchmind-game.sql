@@ -99,6 +99,66 @@ create table if not exists public.catchmind_correct_answers (
 create index if not exists catchmind_rounds_game_idx
   on public.catchmind_rounds(game_id, round_no desc);
 
+create or replace function private.delete_empty_catchmind_room()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_room_id uuid;
+begin
+  if tg_op = 'DELETE' then
+    v_room_id := old.room_id;
+  else
+    v_room_id := new.room_id;
+  end if;
+
+  if pg_trigger_depth() > 1 then
+    if tg_op = 'DELETE' then return old; end if;
+    return new;
+  end if;
+
+  if exists (
+    select 1
+    from public.rooms room
+    where room.id = v_room_id
+      and room.game_type = 'catchmind'
+  )
+    and not exists (
+      select 1
+      from public.room_players player
+      where player.room_id = v_room_id
+        and player.connection_status = 'active'
+    )
+  then
+    delete from public.rooms
+    where id = v_room_id;
+  end if;
+
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists delete_empty_catchmind_room
+  on public.room_players;
+
+create trigger delete_empty_catchmind_room
+  after delete or update of connection_status on public.room_players
+  for each row
+  execute function private.delete_empty_catchmind_room();
+
+-- Remove placeholders left by older deployments before this trigger existed.
+delete from public.rooms room
+where room.game_type = 'catchmind'
+  and not exists (
+    select 1
+    from public.room_players player
+    where player.room_id = room.id
+      and player.connection_status = 'active'
+  );
+
 insert into private.catchmind_words (word, normalized_word)
 values
   ('사과', '사과'),
@@ -725,7 +785,7 @@ begin
   select * into v_match from public.catchmind_matches where game_id = v_game_id for update;
   select * into v_round from public.catchmind_rounds where game_id = v_game_id order by round_no desc limit 1 for update;
 
-  if v_match.status = 'finished' then
+  if v_match.status = 'finished' and v_round.phase = 'GAME_RESULT' then
     return private.get_catchmind_payload(p_room_id);
   end if;
 
@@ -751,6 +811,7 @@ begin
         and score = (select max(score) from public.catchmind_players where game_id = v_game_id);
       update public.catchmind_matches set status = 'finished', winner_user_ids = v_winners, updated_at = now() where game_id = v_game_id;
       update public.catchmind_rounds set phase = 'GAME_RESULT', updated_at = now() where id = v_round.id;
+      update public.games set status = 'finished', ended_at = coalesce(ended_at, now()) where id = v_game_id;
       update public.rooms set status = 'game_over', phase = 'result', updated_at = now() where id = p_room_id;
     else
       perform private.start_catchmind_round(v_game_id);
