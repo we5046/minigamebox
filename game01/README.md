@@ -2,6 +2,16 @@
 
 This template should help get you started developing with Vue 3 in Vite.
 
+## Game modes
+
+- 마피아 게임
+- 라이어 게임
+- 캐치마인드
+
+캐치마인드는 한 명의 출제자가 제시된 단어를 그림으로 표현하고, 나머지
+플레이어들이 채팅으로 정답을 맞히는 그림 퀴즈 게임입니다. 라운드마다
+출제자가 바뀌며, 정답을 맞힌 플레이어는 점수를 얻습니다.
+
 ## Recommended IDE Setup
 
 [VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
@@ -42,6 +52,9 @@ npm run build
 Apply the SQL files in this order after the base tables exist:
 
 1. `room-admin.sql`
+2. `liar-game.sql`
+3. `liar-game-statement-fix.sql`
+4. `catchmind-game.sql`
 
 `room-admin.sql` removes historical `create_room` overloads before recreating
 the RPC used by the frontend. This avoids PostgREST `PGRST203` errors. It also

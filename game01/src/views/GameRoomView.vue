@@ -44,6 +44,7 @@ import {
   getLiarRoomSettings,
   startLiarMatch,
 } from '@/api/liarGameApi';
+import { startCatchmindMatch } from '@/api/catchmindApi';
 
 const props = defineProps({
   roomId: {
@@ -132,6 +133,8 @@ const currentPlayer = computed(() => {
 });
 const isHost = computed(() => currentPlayer.value?.isHost === true);
 const isLiarRoom = computed(() => room.value?.gameType === 'liar');
+const isCatchmindRoom = computed(() => room.value?.gameType === 'catchmind');
+const usesRoleConfig = computed(() => room.value?.gameType === 'mafia');
 const isGameStarted = computed(
   () =>
     room.value?.status === 'playing' ||
@@ -277,6 +280,24 @@ const roomBriefing = computed(() => {
     };
   }
 
+  if (isCatchmindRoom.value) {
+    return {
+      players: `${players.value.length} / ${room.value.maxPlayers}`,
+      minStartPlayers: room.value.minStartPlayers,
+      roleTotal: players.value.length,
+      roles: [
+        { key: 'drawer', label: '출제자', tone: 'doctor', count: 1 },
+        { key: 'answerer', label: '정답 도전자', tone: 'citizen', count: Math.max(0, players.value.length - 1) },
+      ],
+      settings: [
+        { label: '입장 방식', value: getEntryModeLabel(room.value.entryMode), tone: room.value.entryMode === 'private' ? 'private' : 'public' },
+        { label: '라운드', value: '출제자 순환', tone: 'allowed' },
+        { label: '정답 입력', value: '채팅 완전 일치', tone: 'allowed' },
+        { label: '방 상태', value: room.value.status === 'waiting' ? '대기중' : '게임중', tone: room.value.status === 'waiting' ? 'public' : 'disabled' },
+      ],
+    };
+  }
+
   return {
     players: `${players.value.length} / ${room.value.maxPlayers}`,
     minStartPlayers: room.value.minStartPlayers,
@@ -333,6 +354,10 @@ const gameFlowTotalSeconds = computed(() => {
     );
   }
 
+  if (isCatchmindRoom.value) {
+    return 60;
+  }
+
   return (
     Number(room.value.nightTimeSeconds || 0) +
     Number(room.value.discussionTimeSeconds || 0) +
@@ -374,6 +399,14 @@ const gameFlowItems = computed(() => {
     ];
   }
 
+  if (isCatchmindRoom.value) {
+    return [
+      { icon: '🎨', label: '그림 그리기', description: '출제자가 제시어를 그림으로 표현', duration: '60s' },
+      { icon: '💬', label: '정답 입력', description: '채팅으로 정답 맞히기', duration: '동시 진행' },
+      { icon: '🏆', label: '라운드 결과', description: '정답과 점수 공개', duration: '수동' },
+    ];
+  }
+
   const items = [
     {
       icon: '🌙',
@@ -410,7 +443,7 @@ const isFriendlyEditMode = computed(
   () => editRoomDescription.value === '친선전',
 );
 const minEditableMaxPlayers = computed(() =>
-  Math.max(isLiarRoom.value ? 3 : 4, players.value.length),
+  Math.max(isLiarRoom.value ? 3 : isCatchmindRoom.value ? 2 : 4, players.value.length),
 );
 const editMinStartPlayerOptions = computed(() =>
   Array.from(
@@ -758,6 +791,15 @@ watch([editRoomMaxPlayers, editRoomDescription], () => {
       applyClassicEditLiarSettings();
     }
 
+    return;
+  }
+
+  if (isCatchmindRoom.value) {
+    editRoomMinStartPlayers.value = Math.max(2, Math.min(editRoomMaxPlayers.value, editRoomMinStartPlayers.value));
+    editSpectatorAllowed.value = false;
+    editFirstNightAbilityAllowed.value = false;
+    editFinalDefenseEnabled.value = false;
+    editRoleRevealMode.value = 'private';
     return;
   }
 
@@ -1600,6 +1642,15 @@ function openEditRoomForm() {
     return;
   }
 
+  if (isCatchmindRoom.value) {
+    editRoomMinStartPlayers.value = 2;
+    editSpectatorAllowed.value = false;
+    editFirstNightAbilityAllowed.value = false;
+    editFinalDefenseEnabled.value = false;
+    editRoleRevealMode.value = 'private';
+    return;
+  }
+
   if (!isFriendlyEditMode.value) {
     applyClassicEditRoomSettings();
   }
@@ -1643,6 +1694,11 @@ function selectEditRoomMode(mode) {
       applyClassicEditLiarSettings();
     }
 
+    return;
+  }
+
+  if (isCatchmindRoom.value) {
+    editRoomMinStartPlayers.value = 2;
     return;
   }
 
@@ -1743,7 +1799,7 @@ async function saveRoomInfo() {
     return;
   }
 
-  if (!isLiarRoom.value && !isEditRoleConfigValid.value) {
+  if (usesRoleConfig.value && !isEditRoleConfigValid.value) {
     toastStore.error('역할 인원수 합계가 참가 인원과 같아야 합니다.');
     return;
   }
@@ -1764,13 +1820,15 @@ async function saveRoomInfo() {
       title: editRoomTitle.value,
       description: editRoomDescription.value,
       maxPlayers: Number(editRoomMaxPlayers.value),
-      roleConfig: isLiarRoom.value ? {} : editRoomRoleConfig.value,
+      roleConfig: usesRoleConfig.value ? editRoomRoleConfig.value : {},
       nightTimeSeconds: Number(editNightTimeSeconds.value),
       voteTimeSeconds: Number(editVoteTimeSeconds.value),
       discussionTimeSeconds: Number(editRoomDiscussionTimeSeconds.value),
       minStartPlayers: isLiarRoom.value
         ? 3
-        : Number(editRoomMinStartPlayers.value),
+        : isCatchmindRoom.value
+          ? 2
+          : Number(editRoomMinStartPlayers.value),
       tieVoteRule: isLiarRoom.value ? 'revote' : editRoomTieVoteRule.value,
       spectatorAllowed: isLiarRoom.value
         ? false
@@ -1824,6 +1882,8 @@ async function startGame() {
   try {
     if (isLiarRoom.value) {
       await startLiarMatch(props.roomId);
+    } else if (isCatchmindRoom.value) {
+      await startCatchmindMatch(props.roomId);
     } else {
       await startGameRequest(props.roomId);
     }
@@ -1920,6 +1980,8 @@ async function leaveRoom() {
             {{
               isLiarRoom
                 ? '"제시어를 모르는 라이어는 누구인가?"'
+                : isCatchmindRoom
+                  ? '"그림 속에 숨은 정답을 맞혀보세요."'
                 : '"거짓말을 하는 자는 누구인가? 밤이 깊어갑니다..."'
             }}
           </p>
@@ -2025,9 +2087,9 @@ async function leaveRoom() {
 
         <div class="form-group">
           <label>참가 인원</label>
-          <div v-if="!isFriendlyEditMode && !isLiarRoom" class="option-group">
+          <div v-if="!isFriendlyEditMode && usesRoleConfig" class="option-group">
             <button
-              v-for="count in isLiarRoom ? liarPlayerCountOptions : fixedPlayerCounts"
+              v-for="count in usesRoleConfig ? fixedPlayerCounts : liarPlayerCountOptions"
               :key="count"
               type="button"
               class="option-btn"
@@ -2098,9 +2160,11 @@ async function leaveRoom() {
                 ? isFriendlyEditMode
                   ? '테마와 목표 점수, 진영별 승리 점수를 직접 조정할 수 있습니다.'
                   : '표준 라이어 게임 점수 규칙으로 빠르게 시작합니다.'
-                : isFriendlyEditMode
-                  ? '역할 구성과 세부 규칙을 직접 조정할 수 있습니다.'
-                  : '공식 역할 구성과 표준 규칙으로 빠르게 시작합니다.'
+                : isCatchmindRoom
+                  ? '출제자가 그림을 그리고 나머지 참가자가 채팅으로 정답을 맞힙니다.'
+                  : isFriendlyEditMode
+                    ? '역할 구성과 세부 규칙을 직접 조정할 수 있습니다.'
+                    : '공식 역할 구성과 표준 규칙으로 빠르게 시작합니다.'
             }}
           </p>
         </div>
@@ -2120,7 +2184,7 @@ async function leaveRoom() {
             </select>
           </div>
 
-          <div v-if="!isLiarRoom" class="form-group">
+          <div v-if="usesRoleConfig" class="form-group">
             <label>역할 공개</label>
             <div class="option-group">
               <button
@@ -2326,7 +2390,7 @@ async function leaveRoom() {
           </p>
         </section>
 
-        <section v-else-if="isFriendlyEditMode" class="advanced-settings-panel">
+        <section v-else-if="isFriendlyEditMode && usesRoleConfig" class="advanced-settings-panel">
           <button
             type="button"
             class="advanced-settings-toggle"
@@ -2476,7 +2540,7 @@ async function leaveRoom() {
         </p>
 
         <section
-          v-if="!isLiarRoom"
+          v-if="usesRoleConfig"
           class="role-config-section"
           :class="{
             invalid: !isEditRoleConfigValid,
@@ -2562,7 +2626,7 @@ async function leaveRoom() {
           <button
             type="submit"
             class="submit-btn"
-            :disabled="isUpdating || (!isLiarRoom && !isEditRoleConfigValid)"
+            :disabled="isUpdating || (usesRoleConfig && !isEditRoleConfigValid)"
           >
             {{ isUpdating ? '저장 중...' : '저장' }}
           </button>

@@ -9,11 +9,11 @@ const GAME_CATALOG = {
     name: '마피아 게임',
     description: '역할 추리 게임에서 쌓은 기록입니다.',
   },
-  rainbowTail: {
-    type: 'rainbowTail',
-    icon: '🌈',
-    name: '무지개 꼬리잡기',
-    description: '색을 연결하며 쌓은 기록입니다.',
+  catchmind: {
+    type: 'catchmind',
+    icon: '🎨',
+    name: '캐치마인드',
+    description: '그림 퀴즈 게임에서 쌓은 기록입니다.',
   },
   liar: {
     type: 'liar',

@@ -42,7 +42,7 @@
 메인 로비는 `src/views/HomeView.vue`에서 게임 타입별 방 목록을 필터링한다.
 
 - `selectedGameType`의 기본값은 `mafia`
-- `GAME_THEMES`에는 `mafia`, `rainbowTail`, `liar`가 등록되어 있음
+- `GAME_THEMES`에는 `mafia`, `catchmind`, `liar`가 등록되어 있음
 - `selectedGameRooms`는 `room.gameType === selectedGameType` 조건으로 필터링
 - 준비 중 게임은 `isAvailable: false` 조건으로 방 생성 폼 진입과 제출을 막음
 

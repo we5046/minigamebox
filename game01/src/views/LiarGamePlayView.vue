@@ -665,6 +665,7 @@ h2 {
 .panel {
   display: grid;
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .side-column {
@@ -908,6 +909,7 @@ input:disabled {
 }
 
 .chat-panel {
+  container-type: inline-size;
   overflow: hidden;
 }
 
@@ -915,6 +917,7 @@ input:disabled {
   max-height: 23rem;
   min-height: 16rem;
   overflow-y: auto;
+  padding: 0.15rem;
   scrollbar-color: rgba(255, 190, 85, 0.36) rgba(0, 0, 0, 0.18);
 }
 
@@ -926,17 +929,21 @@ input:disabled {
   gap: 0.28rem;
   max-width: 82%;
   padding: 0.72rem 0.82rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .chat-list li.system {
   background: rgba(255, 190, 85, 0.08);
   border-color: rgba(255, 190, 85, 0.14);
-  border-radius: 999px;
+  border-radius: 14px;
   color: rgba(255, 210, 138, 0.82);
   justify-self: center;
-  max-width: 90%;
-  padding: 0.35rem 0.7rem;
+  line-height: 1.45;
+  max-width: min(92%, 34rem);
+  padding: 0.48rem 0.72rem;
   text-align: center;
+  width: fit-content;
 }
 
 .chat-meta {
@@ -962,11 +969,39 @@ input:disabled {
   padding: 0.9rem 1rem 1rem;
 }
 
+.chat-panel form input {
+  min-width: 0;
+  width: 100%;
+}
+
 .chat-panel form button {
   background: linear-gradient(180deg, #ffbe55, #b86b1b);
   border: 0;
   color: #231107;
   font-weight: 900;
+}
+
+@container (max-width: 30rem) {
+  .panel-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .chat-list li {
+    max-width: 94%;
+  }
+
+  .chat-list li.system {
+    max-width: 96%;
+  }
+
+  .chat-panel form {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-panel form button {
+    width: 100%;
+  }
 }
 
 @media (max-width: 1100px) {

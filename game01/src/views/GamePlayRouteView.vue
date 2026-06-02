@@ -4,14 +4,17 @@ import { useRoute } from 'vue-router'
 import { getRoom } from '@/api/roomApi'
 import GamePlayView from './GamePlayView.vue'
 import LiarGamePlayView from './LiarGamePlayView.vue'
+import CatchmindGamePlayView from './CatchmindGamePlayView.vue'
 
 const route = useRoute()
 const room = ref(null)
 const loadError = ref('')
 const roomId = computed(() => String(route.params.roomId || ''))
-const gameComponent = computed(() =>
-  room.value?.gameType === 'liar' ? LiarGamePlayView : GamePlayView,
-)
+const gameComponent = computed(() => {
+  if (room.value?.gameType === 'liar') return LiarGamePlayView
+  if (room.value?.gameType === 'catchmind') return CatchmindGamePlayView
+  return GamePlayView
+})
 
 onMounted(async () => {
   try {

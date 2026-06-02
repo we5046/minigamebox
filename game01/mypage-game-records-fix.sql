@@ -146,7 +146,10 @@ set search_path = ''
 as $$
   select case p_game_type
     when 'mafia' then '마피아 게임'
-    when 'rainbowTail' then '무지개 꼬리잡기'
+    when 'catchmind' then '캐치마인드'
+    when 'rainbowTail' then '캐치마인드'
+    when 'rainbow_tail' then '캐치마인드'
+    when 'rainbow-tail' then '캐치마인드'
     when 'liar' then '라이어 게임'
     else coalesce(nullif(trim(p_game_type), ''), '알 수 없는 게임')
   end;
