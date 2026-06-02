@@ -17,6 +17,17 @@ create table if not exists private.catchmind_words (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.catchmind_room_settings (
+  room_id uuid primary key references public.rooms(id) on delete cascade,
+  setting_mode text not null default 'classic'
+    check (setting_mode in ('classic', 'custom')),
+  total_rounds integer not null default 6 check (total_rounds between 1 and 30),
+  drawer_rule text not null default 'random'
+    check (drawer_rule in ('random', 'correct_answerer')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.catchmind_matches (
   game_id uuid primary key references public.games(id) on delete cascade,
   room_id uuid not null references public.rooms(id) on delete cascade,
@@ -25,10 +36,24 @@ create table if not exists public.catchmind_matches (
   current_round_no integer not null default 0,
   total_rounds integer not null default 6 check (total_rounds between 1 and 30),
   target_score integer not null default 5 check (target_score between 1 and 30),
+  drawer_rule text not null default 'random'
+    check (drawer_rule in ('random', 'correct_answerer')),
+  next_drawer_user_id uuid references public.profiles(id),
   winner_user_ids uuid[] not null default '{}'::uuid[],
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.catchmind_matches
+  add column if not exists drawer_rule text not null default 'random',
+  add column if not exists next_drawer_user_id uuid references public.profiles(id);
+
+alter table public.catchmind_matches
+  drop constraint if exists catchmind_matches_drawer_rule_check;
+
+alter table public.catchmind_matches
+  add constraint catchmind_matches_drawer_rule_check
+  check (drawer_rule in ('random', 'correct_answerer'));
 
 create table if not exists public.catchmind_players (
   game_id uuid not null references public.games(id) on delete cascade,
@@ -129,6 +154,108 @@ as $$
   limit 1;
 $$;
 
+create or replace function private.get_catchmind_room_settings(p_room_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_settings public.catchmind_room_settings;
+begin
+  if v_user_id is null then raise exception 'Not authenticated'; end if;
+
+  if not exists (
+    select 1
+    from public.room_players player
+    where player.room_id = p_room_id
+      and player.user_id = v_user_id
+  ) then
+    raise exception 'Room participant required';
+  end if;
+
+  select *
+  into v_settings
+  from public.catchmind_room_settings
+  where room_id = p_room_id;
+
+  return jsonb_build_object(
+    'roomId', p_room_id,
+    'settingMode', coalesce(v_settings.setting_mode, 'classic'),
+    'totalRounds', coalesce(v_settings.total_rounds, 6),
+    'drawerRule', coalesce(v_settings.drawer_rule, 'random')
+  );
+end;
+$$;
+
+create or replace function private.configure_catchmind_room(
+  p_room_id uuid,
+  p_setting_mode text default 'classic',
+  p_total_rounds integer default 6,
+  p_drawer_rule text default 'random'
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_room public.rooms;
+  v_setting_mode text := coalesce(nullif(trim(p_setting_mode), ''), 'classic');
+  v_total_rounds integer := coalesce(p_total_rounds, 6);
+  v_drawer_rule text := coalesce(nullif(trim(p_drawer_rule), ''), 'random');
+begin
+  if v_user_id is null then raise exception 'Not authenticated'; end if;
+
+  select *
+  into v_room
+  from public.rooms
+  where id = p_room_id
+  for update;
+
+  if not found or v_room.game_type <> 'catchmind' then
+    raise exception 'Catchmind room not found';
+  end if;
+
+  if v_room.host_user_id <> v_user_id then raise exception 'Host only'; end if;
+  if v_room.status <> 'waiting' then raise exception 'Catchmind already started'; end if;
+
+  if v_setting_mode not in ('classic', 'custom') then
+    raise exception 'Invalid Catchmind setting mode';
+  end if;
+
+  if v_setting_mode = 'classic' then
+    v_total_rounds := 6;
+    v_drawer_rule := 'random';
+  end if;
+
+  if v_total_rounds < 1 or v_total_rounds > 30 then
+    raise exception 'Catchmind total rounds must be between 1 and 30';
+  end if;
+
+  if v_drawer_rule not in ('random', 'correct_answerer') then
+    raise exception 'Invalid Catchmind drawer rule';
+  end if;
+
+  insert into public.catchmind_room_settings (
+    room_id, setting_mode, total_rounds, drawer_rule
+  ) values (
+    p_room_id, v_setting_mode, v_total_rounds, v_drawer_rule
+  )
+  on conflict (room_id)
+  do update set
+    setting_mode = excluded.setting_mode,
+    total_rounds = excluded.total_rounds,
+    drawer_rule = excluded.drawer_rule,
+    updated_at = now();
+
+  return private.get_catchmind_room_settings(p_room_id);
+end;
+$$;
+
 create or replace function private.insert_catchmind_message(
   p_room_id uuid,
   p_game_id uuid,
@@ -203,6 +330,7 @@ begin
     'currentRoundNo', v_match.current_round_no,
     'totalRounds', v_match.total_rounds,
     'targetScore', v_match.target_score,
+    'drawerRule', v_match.drawer_rule,
     'winnerUserIds', to_jsonb(v_match.winner_user_ids),
     'round', case when v_round.id is null then null else jsonb_build_object(
       'id', v_round.id,
@@ -260,23 +388,34 @@ declare
   v_word private.catchmind_words;
   v_drawer_id uuid;
   v_room_id uuid;
-  v_player_count integer;
 begin
   select * into v_match
   from public.catchmind_matches
   where game_id = p_game_id
   for update;
 
-  select count(*) into v_player_count
-  from public.catchmind_players
-  where game_id = p_game_id;
+  if v_match.drawer_rule = 'correct_answerer'
+    and v_match.next_drawer_user_id is not null
+    and exists (
+      select 1
+      from public.catchmind_players player
+      where player.game_id = p_game_id
+        and player.user_id = v_match.next_drawer_user_id
+    )
+  then
+    v_drawer_id := v_match.next_drawer_user_id;
+  else
+    select player.user_id
+    into v_drawer_id
+    from public.catchmind_players player
+    where player.game_id = p_game_id
+    order by random()
+    limit 1;
+  end if;
 
-  select player.user_id into v_drawer_id
-  from public.catchmind_players player
-  where player.game_id = p_game_id
-  order by player.display_order
-  offset (v_match.current_round_no % v_player_count)
-  limit 1;
+  if v_drawer_id is null then
+    raise exception 'Not enough Catchmind players';
+  end if;
 
   select * into v_word
   from private.catchmind_words
@@ -296,7 +435,10 @@ begin
   values (v_round.id, v_word.id);
 
   update public.catchmind_matches
-  set current_round_no = v_round.round_no, updated_at = now()
+  set
+    current_round_no = v_round.round_no,
+    next_drawer_user_id = null,
+    updated_at = now()
   where game_id = p_game_id;
 
   select room_id into v_room_id from public.games where id = p_game_id;
@@ -423,6 +565,7 @@ declare
   v_user_id uuid := auth.uid();
   v_room public.rooms;
   v_game public.games;
+  v_settings public.catchmind_room_settings;
   v_player_count integer;
 begin
   if v_user_id is null then raise exception 'Not authenticated'; end if;
@@ -456,8 +599,19 @@ begin
   values (p_room_id, 'playing', 'discussion', 0, now(), now() + interval '100 years')
   returning * into v_game;
 
-  insert into public.catchmind_matches (game_id, room_id, total_rounds)
-  values (v_game.id, p_room_id, greatest(v_player_count * 2, 4));
+  select *
+  into v_settings
+  from public.catchmind_room_settings
+  where room_id = p_room_id;
+
+  insert into public.catchmind_matches (
+    game_id, room_id, total_rounds, drawer_rule
+  ) values (
+    v_game.id,
+    p_room_id,
+    coalesce(v_settings.total_rounds, 6),
+    coalesce(v_settings.drawer_rule, 'random')
+  );
 
   insert into public.catchmind_players (game_id, user_id, display_order)
   select v_game.id, player.user_id, row_number() over (order by player.joined_at, player.user_id)
@@ -518,6 +672,15 @@ begin
       update public.catchmind_players set score = score + 1, updated_at = now()
       where game_id = v_game_id and user_id = v_user_id
       returning score into v_score;
+
+      update public.catchmind_matches
+      set
+        next_drawer_user_id = case
+          when drawer_rule = 'correct_answerer' then v_user_id
+          else null
+        end,
+        updated_at = now()
+      where game_id = v_game_id;
 
       perform private.insert_catchmind_message(
         p_room_id, v_game_id, v_round.round_no, null, 'System',
@@ -777,6 +940,8 @@ begin
   update public.room_players set is_ready = is_host where room_id = p_room_id;
 end; $$;
 
+create or replace function public.get_catchmind_room_settings(p_room_id uuid) returns jsonb language sql stable security invoker set search_path = '' as $$ select private.get_catchmind_room_settings(p_room_id); $$;
+create or replace function public.configure_catchmind_room(p_room_id uuid, p_setting_mode text default 'classic', p_total_rounds integer default 6, p_drawer_rule text default 'random') returns jsonb language sql security invoker set search_path = '' as $$ select private.configure_catchmind_room(p_room_id, p_setting_mode, p_total_rounds, p_drawer_rule); $$;
 create or replace function public.start_catchmind_match(p_room_id uuid) returns jsonb language sql security invoker set search_path = '' as $$ select private.start_catchmind_match(p_room_id); $$;
 create or replace function public.get_current_catchmind(p_room_id uuid) returns jsonb language sql stable security invoker set search_path = '' as $$ select private.get_catchmind_payload(p_room_id); $$;
 create or replace function public.submit_catchmind_answer(p_room_id uuid, p_answer text) returns jsonb language sql security invoker set search_path = '' as $$ select private.submit_catchmind_answer(p_room_id, p_answer); $$;
@@ -786,6 +951,8 @@ create or replace function public.join_catchmind_match(p_room_id uuid, p_entry_p
 create or replace function public.leave_catchmind_match(p_room_id uuid) returns void language sql security invoker set search_path = '' as $$ select private.leave_catchmind_match(p_room_id); $$;
 create or replace function public.return_catchmind_lobby(p_room_id uuid) returns void language sql security invoker set search_path = '' as $$ select private.return_catchmind_lobby(p_room_id); $$;
 
+revoke all on function public.get_catchmind_room_settings(uuid) from public, anon;
+revoke all on function public.configure_catchmind_room(uuid, text, integer, text) from public, anon;
 revoke all on function public.start_catchmind_match(uuid) from public, anon;
 revoke all on function public.get_current_catchmind(uuid) from public, anon;
 revoke all on function public.submit_catchmind_answer(uuid, text) from public, anon;
@@ -795,32 +962,42 @@ revoke all on function public.join_catchmind_match(uuid, text) from public, anon
 revoke all on function public.leave_catchmind_match(uuid) from public, anon;
 revoke all on function public.return_catchmind_lobby(uuid) from public, anon;
 
+alter table public.catchmind_room_settings enable row level security;
 alter table public.catchmind_matches enable row level security;
 alter table public.catchmind_players enable row level security;
 alter table public.catchmind_rounds enable row level security;
 alter table public.catchmind_correct_answers enable row level security;
 
+drop policy if exists catchmind_room_settings_select on public.catchmind_room_settings;
 drop policy if exists catchmind_matches_select on public.catchmind_matches;
 drop policy if exists catchmind_players_select on public.catchmind_players;
 drop policy if exists catchmind_rounds_select on public.catchmind_rounds;
 drop policy if exists catchmind_answers_select on public.catchmind_correct_answers;
+create policy catchmind_room_settings_select on public.catchmind_room_settings for select to authenticated using (
+  exists (
+    select 1
+    from public.room_players player
+    where player.room_id = catchmind_room_settings.room_id
+      and player.user_id = auth.uid()
+  )
+);
 create policy catchmind_matches_select on public.catchmind_matches for select to authenticated using (private.is_catchmind_player(game_id));
 create policy catchmind_players_select on public.catchmind_players for select to authenticated using (private.is_catchmind_player(game_id));
 create policy catchmind_rounds_select on public.catchmind_rounds for select to authenticated using (private.is_catchmind_player(game_id));
 create policy catchmind_answers_select on public.catchmind_correct_answers for select to authenticated using (private.is_catchmind_player(game_id));
 
 revoke all on table private.catchmind_words, private.catchmind_round_secrets from public, anon, authenticated;
-revoke all on table public.catchmind_matches, public.catchmind_players, public.catchmind_rounds, public.catchmind_correct_answers from anon, authenticated;
-grant select on table public.catchmind_matches, public.catchmind_players, public.catchmind_rounds, public.catchmind_correct_answers to authenticated;
+revoke all on table public.catchmind_room_settings, public.catchmind_matches, public.catchmind_players, public.catchmind_rounds, public.catchmind_correct_answers from anon, authenticated;
+grant select on table public.catchmind_room_settings, public.catchmind_matches, public.catchmind_players, public.catchmind_rounds, public.catchmind_correct_answers to authenticated;
 revoke all on all functions in schema private from public;
 grant usage on schema private to authenticated;
-grant execute on function private.start_catchmind_match(uuid), private.get_catchmind_payload(uuid), private.submit_catchmind_answer(uuid, text), private.advance_catchmind_phase(uuid), private.reconcile_catchmind_match(uuid), private.join_catchmind_match(uuid, text), private.leave_catchmind_match(uuid), private.return_catchmind_lobby(uuid) to authenticated;
-grant execute on function public.start_catchmind_match(uuid), public.get_current_catchmind(uuid), public.submit_catchmind_answer(uuid, text), public.advance_catchmind_phase(uuid), public.reconcile_catchmind_match(uuid), public.join_catchmind_match(uuid, text), public.leave_catchmind_match(uuid), public.return_catchmind_lobby(uuid) to authenticated;
+grant execute on function private.get_catchmind_room_settings(uuid), private.configure_catchmind_room(uuid, text, integer, text), private.start_catchmind_match(uuid), private.get_catchmind_payload(uuid), private.submit_catchmind_answer(uuid, text), private.advance_catchmind_phase(uuid), private.reconcile_catchmind_match(uuid), private.join_catchmind_match(uuid, text), private.leave_catchmind_match(uuid), private.return_catchmind_lobby(uuid) to authenticated;
+grant execute on function public.get_catchmind_room_settings(uuid), public.configure_catchmind_room(uuid, text, integer, text), public.start_catchmind_match(uuid), public.get_current_catchmind(uuid), public.submit_catchmind_answer(uuid, text), public.advance_catchmind_phase(uuid), public.reconcile_catchmind_match(uuid), public.join_catchmind_match(uuid, text), public.leave_catchmind_match(uuid), public.return_catchmind_lobby(uuid) to authenticated;
 
 do $realtime$
 declare v_table text;
 begin
-  foreach v_table in array array['catchmind_matches', 'catchmind_players', 'catchmind_rounds', 'catchmind_correct_answers']
+  foreach v_table in array array['catchmind_room_settings', 'catchmind_matches', 'catchmind_players', 'catchmind_rounds', 'catchmind_correct_answers']
   loop
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = v_table) then
       execute format('alter publication supabase_realtime add table public.%I', v_table);

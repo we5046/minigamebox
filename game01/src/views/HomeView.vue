@@ -31,7 +31,10 @@ import {
   joinRoom as joinRoomRequest,
 } from '@/api/roomApi';
 import { getLiarCategories } from '@/api/liarGameApi';
-import { joinCatchmindMatch } from '@/api/catchmindApi';
+import {
+  DEFAULT_CATCHMIND_ROOM_SETTINGS,
+  joinCatchmindMatch,
+} from '@/api/catchmindApi';
 import {
   getFriendships,
   removeFriend,
@@ -105,6 +108,12 @@ const newLiarCategoryId = ref(null);
 const newLiarTargetScore = ref(5);
 const newLiarCitizenWinScore = ref(1);
 const newLiarWinScore = ref(2);
+const newCatchmindTotalRounds = ref(
+  DEFAULT_CATCHMIND_ROOM_SETTINGS.totalRounds,
+);
+const newCatchmindDrawerRule = ref(
+  DEFAULT_CATCHMIND_ROOM_SETTINGS.drawerRule,
+);
 const friendNickname = ref('');
 const isLoadingFriends = ref(false);
 const isSendingFriendRequest = ref(false);
@@ -687,6 +696,14 @@ async function createRoom() {
             liarWinScore: Number(newLiarWinScore.value),
           }
         : null,
+      catchmindSettings: isCatchmindGameSelected.value
+        ? {
+            settingMode:
+              newRoomDescription.value === '친선전' ? 'custom' : 'classic',
+            totalRounds: Number(newCatchmindTotalRounds.value),
+            drawerRule: newCatchmindDrawerRule.value,
+          }
+        : null,
     });
     newRoomTitle.value = '';
     newRoomDescription.value = '클래식';
@@ -719,6 +736,10 @@ async function createRoom() {
     newLiarTargetScore.value = 5;
     newLiarCitizenWinScore.value = 1;
     newLiarWinScore.value = 2;
+    newCatchmindTotalRounds.value =
+      DEFAULT_CATCHMIND_ROOM_SETTINGS.totalRounds;
+    newCatchmindDrawerRule.value =
+      DEFAULT_CATCHMIND_ROOM_SETTINGS.drawerRule;
     isNewRoomAdvancedOpen.value = false;
     isCreateFormOpen.value = false;
     await roomStore.fetchRooms();
@@ -1067,6 +1088,12 @@ function selectNewRoomMode(mode) {
 
   if (isCatchmindGameSelected.value) {
     newRoomMinStartPlayers.value = 2;
+    if (mode === '클래식') {
+      newCatchmindTotalRounds.value =
+        DEFAULT_CATCHMIND_ROOM_SETTINGS.totalRounds;
+      newCatchmindDrawerRule.value =
+        DEFAULT_CATCHMIND_ROOM_SETTINGS.drawerRule;
+    }
     return;
   }
 
@@ -1785,7 +1812,9 @@ async function logout() {
                       ? '테마와 목표 점수, 진영별 승리 점수를 조정합니다.'
                       : '테마를 선택하고 표준 라이어 게임 규칙으로 빠르게 시작합니다.'
                     : isCatchmindGameSelected
-                      ? '출제자가 그림을 그리고 나머지 참가자가 채팅으로 정답을 맞힙니다.'
+                      ? isFriendlyRoomMode
+                        ? '총 문제 수와 다음 출제자 규칙을 직접 조정합니다.'
+                        : '총 6문제, 랜덤 출제자 규칙으로 빠르게 시작합니다.'
                       : isFriendlyRoomMode
                         ? '역할 구성과 세부 규칙을 직접 조정할 수 있습니다.'
                         : '공식 역할 구성과 표준 규칙으로 빠르게 시작합니다.'
@@ -1946,6 +1975,51 @@ async function logout() {
 
               <p class="classic-rules-note">
                 라이어 1명, 자기 투표 불가, 동률 시 재투표 규칙은 고정됩니다.
+              </p>
+            </section>
+
+            <p
+              v-if="isCatchmindGameSelected && !isFriendlyRoomMode"
+              class="classic-rules-note"
+            >
+              클래식은 총 6문제, 라운드마다 랜덤 출제자 규칙으로 진행합니다.
+            </p>
+
+            <section
+              v-else-if="isCatchmindGameSelected && isFriendlyRoomMode"
+              class="advanced-settings-panel"
+            >
+              <button
+                type="button"
+                class="advanced-settings-toggle"
+                :class="{ active: isNewRoomAdvancedOpen }"
+                @click="toggleNewRoomAdvancedSettings"
+              >
+                <span>세부 설정</span>
+                <strong>{{ isNewRoomAdvancedOpen ? '접기' : '펼치기' }}</strong>
+              </button>
+
+              <div v-if="isNewRoomAdvancedOpen" class="advanced-settings-grid">
+                <div class="form-group">
+                  <label>총 문제 수</label>
+                  <select v-model.number="newCatchmindTotalRounds">
+                    <option v-for="rounds in [4, 6, 8, 10, 12, 16, 20]" :key="`catchmind-rounds-${rounds}`" :value="rounds">
+                      {{ rounds }}문제
+                    </option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>다음 출제자</label>
+                  <select v-model="newCatchmindDrawerRule">
+                    <option value="random">랜덤 참가자</option>
+                    <option value="correct_answerer">직전 정답자</option>
+                  </select>
+                </div>
+              </div>
+
+              <p class="classic-rules-note">
+                직전 정답자가 없거나 퇴장한 경우에는 랜덤 참가자가 출제합니다.
               </p>
             </section>
 

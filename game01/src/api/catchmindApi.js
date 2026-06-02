@@ -1,7 +1,32 @@
 import { createSupabaseError, supabase } from './supabaseClient'
 
+export const DEFAULT_CATCHMIND_ROOM_SETTINGS = {
+  settingMode: 'classic',
+  totalRounds: 6,
+  drawerRule: 'random',
+}
+
 function unwrapRpcRow(data) {
   return Array.isArray(data) ? data[0] || null : data
+}
+
+function normalizeCatchmindRoomSettings(row = {}) {
+  return {
+    roomId: row.room_id || row.roomId || null,
+    settingMode:
+      row.setting_mode ||
+      row.settingMode ||
+      DEFAULT_CATCHMIND_ROOM_SETTINGS.settingMode,
+    totalRounds: Number(
+      row.total_rounds ??
+        row.totalRounds ??
+        DEFAULT_CATCHMIND_ROOM_SETTINGS.totalRounds,
+    ),
+    drawerRule:
+      row.drawer_rule ||
+      row.drawerRule ||
+      DEFAULT_CATCHMIND_ROOM_SETTINGS.drawerRule,
+  }
 }
 
 export function normalizeAnswer(value = '') {
@@ -24,6 +49,35 @@ async function callCatchmindRpc(name, params, fallback) {
 
 export function startCatchmindMatch(roomId) {
   return callCatchmindRpc('start_catchmind_match', { p_room_id: roomId }, '캐치마인드를 시작하지 못했습니다.')
+}
+
+export async function getCatchmindRoomSettings(roomId) {
+  return normalizeCatchmindRoomSettings(
+    await callCatchmindRpc(
+      'get_catchmind_room_settings',
+      { p_room_id: roomId },
+      '캐치마인드 방 설정을 불러오지 못했습니다.',
+    ),
+  )
+}
+
+export async function configureCatchmindRoom(roomId, settings = {}) {
+  return normalizeCatchmindRoomSettings(
+    await callCatchmindRpc(
+      'configure_catchmind_room',
+      {
+        p_room_id: roomId,
+        p_setting_mode:
+          settings.settingMode || DEFAULT_CATCHMIND_ROOM_SETTINGS.settingMode,
+        p_total_rounds: Number(
+          settings.totalRounds || DEFAULT_CATCHMIND_ROOM_SETTINGS.totalRounds,
+        ),
+        p_drawer_rule:
+          settings.drawerRule || DEFAULT_CATCHMIND_ROOM_SETTINGS.drawerRule,
+      },
+      '캐치마인드 방 설정을 저장하지 못했습니다.',
+    ),
+  )
 }
 
 export function getCurrentCatchmind(roomId) {

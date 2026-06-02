@@ -182,6 +182,7 @@ export async function createRoom({
   entryPassword = '',
   roleConfig = null,
   liarSettings = null,
+  catchmindSettings = null,
 }) {
   const { data: room, error } = await supabase.rpc('create_room', {
     p_title: title.trim(),
@@ -236,6 +237,26 @@ export async function createRoom({
         'createRoom: configure_liar_room rpc failed',
         liarSettingsError,
         '라이어 게임 설정 DB 함수가 배포되지 않았습니다. Supabase에 liar-game.sql을 적용해야 합니다.',
+      )
+    }
+  }
+
+  if (gameType === 'catchmind') {
+    const { error: catchmindSettingsError } = await supabase.rpc(
+      'configure_catchmind_room',
+      {
+        p_room_id: room.id,
+        p_setting_mode: catchmindSettings?.settingMode || 'classic',
+        p_total_rounds: Number(catchmindSettings?.totalRounds || 6),
+        p_drawer_rule: catchmindSettings?.drawerRule || 'random',
+      },
+    )
+
+    if (catchmindSettingsError) {
+      throw createSupabaseError(
+        'createRoom: configure_catchmind_room rpc failed',
+        catchmindSettingsError,
+        '캐치마인드 게임 설정 DB 함수가 배포되지 않았습니다. Supabase에 catchmind-game.sql을 적용해야 합니다.',
       )
     }
   }

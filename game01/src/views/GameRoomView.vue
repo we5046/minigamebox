@@ -44,7 +44,12 @@ import {
   getLiarRoomSettings,
   startLiarMatch,
 } from '@/api/liarGameApi';
-import { startCatchmindMatch } from '@/api/catchmindApi';
+import {
+  DEFAULT_CATCHMIND_ROOM_SETTINGS,
+  configureCatchmindRoom,
+  getCatchmindRoomSettings,
+  startCatchmindMatch,
+} from '@/api/catchmindApi';
 
 const props = defineProps({
   roomId: {
@@ -91,6 +96,13 @@ const editLiarCitizenWinScore = ref(
   DEFAULT_LIAR_ROOM_SETTINGS.citizenWinScore,
 );
 const editLiarWinScore = ref(DEFAULT_LIAR_ROOM_SETTINGS.liarWinScore);
+const catchmindSettings = ref({ ...DEFAULT_CATCHMIND_ROOM_SETTINGS });
+const editCatchmindTotalRounds = ref(
+  DEFAULT_CATCHMIND_ROOM_SETTINGS.totalRounds,
+);
+const editCatchmindDrawerRule = ref(
+  DEFAULT_CATCHMIND_ROOM_SETTINGS.drawerRule,
+);
 
 let unsubscribeRoom = null;
 let roomChatSubscription = null;
@@ -291,7 +303,8 @@ const roomBriefing = computed(() => {
       ],
       settings: [
         { label: '입장 방식', value: getEntryModeLabel(room.value.entryMode), tone: room.value.entryMode === 'private' ? 'private' : 'public' },
-        { label: '라운드', value: '출제자 순환', tone: 'allowed' },
+        { label: '총 문제 수', value: `${catchmindSettings.value.totalRounds}문제`, tone: 'allowed' },
+        { label: '다음 출제자', value: getCatchmindDrawerRuleLabel(catchmindSettings.value.drawerRule), tone: 'allowed' },
         { label: '정답 입력', value: '채팅 완전 일치', tone: 'allowed' },
         { label: '방 상태', value: room.value.status === 'waiting' ? '대기중' : '게임중', tone: room.value.status === 'waiting' ? 'public' : 'disabled' },
       ],
@@ -561,6 +574,20 @@ async function syncLiarRoomSettings() {
 
   liarSettings.value = nextSettings;
   liarCategories.value = nextCategories;
+}
+
+function copyCatchmindSettingsToEdit(nextSettings = catchmindSettings.value) {
+  editCatchmindTotalRounds.value = Number(nextSettings.totalRounds);
+  editCatchmindDrawerRule.value = nextSettings.drawerRule;
+}
+
+async function syncCatchmindRoomSettings() {
+  if (!isCatchmindRoom.value) {
+    catchmindSettings.value = { ...DEFAULT_CATCHMIND_ROOM_SETTINGS };
+    return;
+  }
+
+  catchmindSettings.value = await getCatchmindRoomSettings(props.roomId);
 }
 
 function getEffectiveRoleConfig(roleConfig, maxPlayers) {
@@ -1151,7 +1178,7 @@ async function fetchRoom() {
     }
 
     hasLoadedRoomOnce.value = true;
-    await syncLiarRoomSettings();
+    await Promise.all([syncLiarRoomSettings(), syncCatchmindRoomSettings()]);
     await syncRoomPresence();
     await sendRoomHeartbeat({ force: true });
     startRoomHeartbeat();
@@ -1300,7 +1327,7 @@ async function syncRoom() {
       try {
         room.value = await getRoom(props.roomId);
         lastSyncedAt.value = new Date();
-        await syncLiarRoomSettings();
+        await Promise.all([syncLiarRoomSettings(), syncCatchmindRoomSettings()]);
         await syncRoomPresence();
         redirectToGameIfStarted();
       } catch (error) {
@@ -1371,6 +1398,10 @@ function getRoleRevealLabel(mode) {
 
 function getEntryModeLabel(mode) {
   return mode === 'private' ? '비공개방' : '공개방';
+}
+
+function getCatchmindDrawerRuleLabel(rule) {
+  return rule === 'correct_answerer' ? '직전 정답자' : '랜덤 참가자';
 }
 
 function redirectToGameIfStarted() {
@@ -1643,11 +1674,20 @@ function openEditRoomForm() {
   }
 
   if (isCatchmindRoom.value) {
+    copyCatchmindSettingsToEdit();
     editRoomMinStartPlayers.value = 2;
     editSpectatorAllowed.value = false;
     editFirstNightAbilityAllowed.value = false;
     editFinalDefenseEnabled.value = false;
     editRoleRevealMode.value = 'private';
+
+    if (!isFriendlyEditMode.value) {
+      editCatchmindTotalRounds.value =
+        DEFAULT_CATCHMIND_ROOM_SETTINGS.totalRounds;
+      editCatchmindDrawerRule.value =
+        DEFAULT_CATCHMIND_ROOM_SETTINGS.drawerRule;
+    }
+
     return;
   }
 
@@ -1677,6 +1717,7 @@ function closeEditRoomForm() {
   isRecommendedEditRolesEnabled.value = false;
   isEditAdvancedOpen.value = true;
   copyLiarSettingsToEdit(DEFAULT_LIAR_ROOM_SETTINGS);
+  copyCatchmindSettingsToEdit(DEFAULT_CATCHMIND_ROOM_SETTINGS);
 }
 
 function setEditRoomMaxPlayers(count) {
@@ -1699,6 +1740,12 @@ function selectEditRoomMode(mode) {
 
   if (isCatchmindRoom.value) {
     editRoomMinStartPlayers.value = 2;
+    if (mode === '클래식') {
+      editCatchmindTotalRounds.value =
+        DEFAULT_CATCHMIND_ROOM_SETTINGS.totalRounds;
+      editCatchmindDrawerRule.value =
+        DEFAULT_CATCHMIND_ROOM_SETTINGS.drawerRule;
+    }
     return;
   }
 
@@ -1855,6 +1902,14 @@ async function saveRoomInfo() {
         targetScore: Number(editLiarTargetScore.value),
         citizenWinScore: Number(editLiarCitizenWinScore.value),
         liarWinScore: Number(editLiarWinScore.value),
+      });
+    }
+
+    if (isCatchmindRoom.value) {
+      catchmindSettings.value = await configureCatchmindRoom(props.roomId, {
+        settingMode: isFriendlyEditMode.value ? 'custom' : 'classic',
+        totalRounds: Number(editCatchmindTotalRounds.value),
+        drawerRule: editCatchmindDrawerRule.value,
       });
     }
 
@@ -2387,6 +2442,51 @@ async function leaveRoom() {
 
           <p class="classic-rules-note">
             라이어 1명, 자기 투표 불가, 동률 시 재투표 규칙은 고정됩니다.
+          </p>
+        </section>
+
+        <p
+          v-if="isCatchmindRoom && !isFriendlyEditMode"
+          class="classic-rules-note"
+        >
+          클래식은 총 6문제, 라운드마다 랜덤 출제자 규칙으로 진행합니다.
+        </p>
+
+        <section
+          v-else-if="isCatchmindRoom && isFriendlyEditMode"
+          class="advanced-settings-panel"
+        >
+          <button
+            type="button"
+            class="advanced-settings-toggle"
+            :class="{ active: isEditAdvancedOpen }"
+            @click="toggleEditAdvancedSettings"
+          >
+            <span>세부 설정</span>
+            <strong>{{ isEditAdvancedOpen ? '접기' : '펼치기' }}</strong>
+          </button>
+
+          <div v-if="isEditAdvancedOpen" class="advanced-settings-grid">
+            <div class="form-group">
+              <label>총 문제 수</label>
+              <select v-model.number="editCatchmindTotalRounds">
+                <option v-for="rounds in [4, 6, 8, 10, 12, 16, 20]" :key="`edit-catchmind-rounds-${rounds}`" :value="rounds">
+                  {{ rounds }}문제
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>다음 출제자</label>
+              <select v-model="editCatchmindDrawerRule">
+                <option value="random">랜덤 참가자</option>
+                <option value="correct_answerer">직전 정답자</option>
+              </select>
+            </div>
+          </div>
+
+          <p class="classic-rules-note">
+            직전 정답자가 없거나 퇴장한 경우에는 랜덤 참가자가 출제합니다.
           </p>
         </section>
 
