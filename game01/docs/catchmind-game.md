@@ -17,10 +17,15 @@
 
 그림판은 마우스와 터치 입력, 색상 선택, 굵기 선택, 지우개, 전체 지우기를
 지원합니다. 현재 선 데이터는 Supabase Realtime broadcast로 전달됩니다.
-새로고침이나 늦은 입장 이후 복구를 위한 주기적 스냅샷 저장은 후속 작업입니다.
+새로고침하거나 늦게 입장한 참가자는 현재 출제자에게 Canvas 스냅샷을 요청해
+진행 중인 그림을 복구합니다. 영구 저장을 위한 주기적 스냅샷 보관은 후속 작업입니다.
 
 ## 배포
 
-기본 방 RPC가 설치된 뒤 Supabase SQL Editor에서 `catchmind-game.sql`을
-실행합니다. 기존 `rainbowTail`, `rainbow_tail`, `rainbow-tail` 방 데이터는
-`catchmind`로 이전됩니다.
+기본 방 RPC와 `password-room-fix.sql`이 설치된 뒤 Supabase SQL Editor에서
+`catchmind-game.sql`을 실행합니다. 기존 `rainbowTail`, `rainbow_tail`,
+`rainbow-tail` 방 데이터는 `catchmind`로 이전됩니다.
+
+진행 중인 캐치마인드 방은 정원이 남아 있으면 중간 입장이 가능합니다.
+퇴장하거나 연결이 끊긴 참가자는 매치 참가 목록에서 제거되며, 활성 참가자가
+1명 이하로 남으면 게임은 즉시 종료됩니다.

@@ -8,7 +8,8 @@ import { getRoom, heartbeatRoomPresence, ROOM_PRESENCE_TIMEOUTS } from '@/api/ro
 import {
   advanceCatchmindPhase,
   broadcastCatchmindCanvas,
-  getCurrentCatchmind,
+  leaveCatchmindMatch,
+  reconcileCatchmindMatch,
   returnCatchmindLobby,
   submitCatchmindAnswer,
   subscribeToCatchmind,
@@ -143,6 +144,20 @@ function stopDrawing() {
 function handleCanvasEvent(payload) {
   if (payload?.type === 'clear') clearCanvas()
   if (payload?.type === 'segment' && payload.segment) drawSegment(payload.segment)
+  if (payload?.type === 'snapshot-request' && isDrawer.value) {
+    const dataUrl = canvasRef.value?.toDataURL?.('image/png')
+    if (dataUrl) broadcastCatchmindCanvas(canvasChannel, { type: 'snapshot', dataUrl })
+  }
+  if (payload?.type === 'snapshot' && payload.dataUrl && !isDrawer.value) {
+    const image = new Image()
+    image.onload = () => {
+      const context = getCanvasContext()
+      if (!context || !canvasRef.value) return
+      context.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height)
+      context.drawImage(image, 0, 0, canvasRef.value.width, canvasRef.value.height)
+    }
+    image.src = payload.dataUrl
+  }
 }
 
 async function ensureSubscriptions(gameId) {
@@ -153,8 +168,11 @@ async function ensureSubscriptions(gameId) {
   subscribedGameId = gameId
   unsubscribeState = subscribeToCatchmind(gameId, scheduleSync)
   unsubscribeMessages = subscribeToGameMessages(roomId.value, gameId, scheduleSync)
-  // TODO: persist periodic snapshots so refreshed viewers can recover the current drawing.
-  const canvasSub = subscribeToCatchmindCanvas(roomId.value, handleCanvasEvent)
+  const canvasSub = subscribeToCatchmindCanvas(
+    roomId.value,
+    handleCanvasEvent,
+    (channel) => broadcastCatchmindCanvas(channel, { type: 'snapshot-request' }),
+  )
   canvasChannel = canvasSub.channel
   unsubscribeCanvas = canvasSub.unsubscribe
 }
@@ -172,7 +190,7 @@ async function syncState() {
       await router.replace(`/rooms/${roomId.value}`)
       return
     }
-    match.value = await getCurrentCatchmind(roomId.value)
+    match.value = await reconcileCatchmindMatch(roomId.value)
     await ensureSubscriptions(match.value?.gameId)
     messages.value = await getGameMessages(roomId.value, match.value?.gameId, { limit: 120 })
     if (activeRoundId !== match.value?.round?.id) {
@@ -229,6 +247,19 @@ async function returnToLobby() {
   }
 }
 
+async function leaveGame() {
+  if (isWorking.value) return
+  isWorking.value = true
+  try {
+    await leaveCatchmindMatch(roomId.value)
+    await router.push('/home')
+  } catch (error) {
+    toastStore.error(error.message)
+  } finally {
+    isWorking.value = false
+  }
+}
+
 watch(() => match.value?.round?.id, () => nextTick(() => clearCanvas()))
 
 onMounted(async () => {
@@ -261,7 +292,10 @@ onBeforeUnmount(() => {
           <span>CATCHMIND · ROUND {{ match.currentRoundNo }} / {{ match.totalRounds }}</span>
           <h1>{{ phase === 'GAME_RESULT' ? '게임 결과' : `${match.round?.drawerNickname}님의 그림 차례` }}</h1>
         </div>
-        <strong>{{ displayedSeconds }}초</strong>
+        <div class="status-actions">
+          <strong>{{ displayedSeconds }}초</strong>
+          <button type="button" :disabled="isWorking" @click="leaveGame">게임 나가기</button>
+        </div>
       </header>
 
       <Transition name="result-pop">
@@ -365,6 +399,8 @@ onBeforeUnmount(() => {
 .status-bar span { color: #6ee7b7; font-size: .74rem; font-weight: 900; letter-spacing: .08em; }
 .status-bar h1 { font-size: 1.5rem; margin: .2rem 0 0; }
 .status-bar > strong { color: #fbbf24; font-size: 1.2rem; }
+.status-actions { align-items: center; display: flex; gap: .65rem; }
+.status-actions > strong { color: #fbbf24; font-size: 1.2rem; }
 .layout { display: grid; gap: 1rem; grid-template-columns: minmax(11rem, .75fr) minmax(24rem, 2fr) minmax(15rem, 1fr); }
 .board-column { display: grid; gap: .8rem; min-width: 0; }
 h2 { color: #d1fae5; font-size: 1rem; margin: 0 0 .75rem; }

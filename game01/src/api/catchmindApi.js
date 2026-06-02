@@ -42,6 +42,22 @@ export function advanceCatchmindPhase(roomId) {
   return callCatchmindRpc('advance_catchmind_phase', { p_room_id: roomId }, '다음 단계로 이동하지 못했습니다.')
 }
 
+export function reconcileCatchmindMatch(roomId) {
+  return callCatchmindRpc('reconcile_catchmind_match', { p_room_id: roomId }, '캐치마인드 참가자 상태를 동기화하지 못했습니다.')
+}
+
+export function joinCatchmindMatch(roomId, entryPassword = '') {
+  return callCatchmindRpc(
+    'join_catchmind_match',
+    { p_room_id: roomId, p_entry_password: entryPassword },
+    '진행 중인 캐치마인드 게임에 입장하지 못했습니다.',
+  )
+}
+
+export function leaveCatchmindMatch(roomId) {
+  return callCatchmindRpc('leave_catchmind_match', { p_room_id: roomId }, '캐치마인드 게임에서 퇴장하지 못했습니다.')
+}
+
 export function returnCatchmindLobby(roomId) {
   return callCatchmindRpc('return_catchmind_lobby', { p_room_id: roomId }, '대기방으로 돌아가지 못했습니다.')
 }
@@ -60,11 +76,13 @@ export function subscribeToCatchmind(gameId, callback) {
   return () => supabase.removeChannel(channel)
 }
 
-export function subscribeToCatchmindCanvas(roomId, callback) {
+export function subscribeToCatchmindCanvas(roomId, callback, onSubscribed) {
   const channel = supabase
     .channel(`catchmind-canvas-${roomId}`, { config: { broadcast: { self: false } } })
     .on('broadcast', { event: 'canvas' }, ({ payload }) => callback(payload))
-    .subscribe()
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') onSubscribed?.(channel)
+    })
 
   return {
     channel,

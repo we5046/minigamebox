@@ -31,6 +31,7 @@ import {
   joinRoom as joinRoomRequest,
 } from '@/api/roomApi';
 import { getLiarCategories } from '@/api/liarGameApi';
+import { joinCatchmindMatch } from '@/api/catchmindApi';
 import {
   getFriendships,
   removeFriend,
@@ -1330,7 +1331,11 @@ async function submitJoinRoom() {
 
   try {
     const roomId = selectedJoinRoom.value.id;
-    await joinRoomRequest(roomId, joinRoomPassword.value.trim());
+    if (isJoinablePlayingCatchmindRoom(selectedJoinRoom.value)) {
+      await joinCatchmindMatch(roomId, joinRoomPassword.value.trim());
+    } else {
+      await joinRoomRequest(roomId, joinRoomPassword.value.trim());
+    }
     closeJoinRoomModal();
     await roomStore.fetchRooms();
     router.push(`/rooms/${roomId}`);
@@ -1358,7 +1363,11 @@ async function enterRoom(room) {
   isJoiningRoom.value = true;
 
   try {
-    await joinRoomRequest(room.id);
+    if (isJoinablePlayingCatchmindRoom(room)) {
+      await joinCatchmindMatch(room.id);
+    } else {
+      await joinRoomRequest(room.id);
+    }
     await roomStore.fetchRooms();
     router.push(`/rooms/${room.id}`);
   } catch (error) {
@@ -1411,11 +1420,22 @@ function getEntryModeLabel(mode) {
 function canEnterRoom(room) {
   const currentPlayers = room.players?.length || room.currentPlayers || 0;
 
-  return room.status === 'waiting' && currentPlayers < room.maxPlayers;
+  return (
+    (room.status === 'waiting' || isJoinablePlayingCatchmindRoom(room)) &&
+    currentPlayers < room.maxPlayers
+  );
+}
+
+function isJoinablePlayingCatchmindRoom(room) {
+  return room?.gameType === 'catchmind' && room?.status === 'playing';
 }
 
 function getRoomAvailabilityLabel(room) {
   const currentPlayers = room.players?.length || room.currentPlayers || 0;
+
+  if (isJoinablePlayingCatchmindRoom(room)) {
+    return '게임 중 입장 가능';
+  }
 
   if (room.status !== 'waiting') {
     return '게임 진행 중';
@@ -1429,6 +1449,10 @@ function getRoomAvailabilityLabel(room) {
 }
 
 function getRoomAvailabilityClass(room) {
+  if (isJoinablePlayingCatchmindRoom(room)) {
+    return 'available';
+  }
+
   if (room.status !== 'waiting') {
     return 'playing';
   }

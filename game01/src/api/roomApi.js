@@ -54,7 +54,8 @@ export function normalizeRoom(room) {
     .map((player) => toPlayer({ ...player, room_status: room.status }))
     .sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt))
   const players =
-    room.status === 'waiting'
+    room.status === 'waiting' ||
+    (room.game_type === 'catchmind' && room.status === 'playing')
       ? allPlayers.filter((player) => player.isConnected)
       : allPlayers
   const hostPlayer = players.find((player) => player.userId === room.host_user_id)
@@ -283,6 +284,28 @@ export async function joinRoom(roomId, entryPassword = '') {
   })
 
   if (error) {
+    if ((error.message || '').includes('Room is not waiting')) {
+      const { error: catchmindError } = await supabase.rpc('join_catchmind_match', {
+        p_room_id: roomId,
+        p_entry_password: entryPassword,
+      })
+
+      if (!catchmindError) {
+        return getRoom(roomId)
+      }
+
+      if (
+        !(catchmindError.message || '').includes('Active Catchmind room not found') &&
+        catchmindError.code !== 'PGRST202'
+      ) {
+        throw createSupabaseError(
+          'joinRoom: join_catchmind_match rpc failed',
+          catchmindError,
+          getJoinRoomErrorMessage(catchmindError),
+        )
+      }
+    }
+
     throw createSupabaseError('joinRoom: join_room rpc failed', error, getJoinRoomErrorMessage(error))
   }
 
