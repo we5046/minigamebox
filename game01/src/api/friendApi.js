@@ -1,4 +1,5 @@
 import { createSupabaseError, supabase } from './supabaseClient'
+import { createRealtimeSubscription } from './realtimeSubscription'
 
 const friendshipChannels = new Map()
 
@@ -90,32 +91,36 @@ export async function removeFriend(friendshipId) {
 export function subscribeToFriendships(currentUserId, callback) {
   unsubscribeFromFriendships(currentUserId)
 
-  const channel = supabase
-    .channel(`friendships-${currentUserId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, (payload) => {
-      const requesterId = payload.new?.requester_user_id || payload.old?.requester_user_id
-      const addresseeId = payload.new?.addressee_user_id || payload.old?.addressee_user_id
+  const subscription = createRealtimeSubscription({
+    createChannel: (handleStatus) =>
+      supabase
+        .channel(`friendships-${currentUserId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, (payload) => {
+          const requesterId = payload.new?.requester_user_id || payload.old?.requester_user_id
+          const addresseeId = payload.new?.addressee_user_id || payload.old?.addressee_user_id
 
-      if (requesterId === currentUserId || addresseeId === currentUserId) {
-        callback(payload)
-      }
-    })
-    .subscribe((status) => {
-      callback({ type: 'subscription-status', status })
-    })
+          if (requesterId === currentUserId || addresseeId === currentUserId) {
+            callback(payload)
+          }
+        })
+        .subscribe((status) => {
+          callback({ type: 'subscription-status', status })
+          handleStatus(status)
+        }),
+  })
 
-  friendshipChannels.set(currentUserId, channel)
+  friendshipChannels.set(currentUserId, subscription)
 
   return () => unsubscribeFromFriendships(currentUserId)
 }
 
 function unsubscribeFromFriendships(currentUserId) {
-  const channel = friendshipChannels.get(currentUserId)
+  const subscription = friendshipChannels.get(currentUserId)
 
-  if (!channel) {
+  if (!subscription) {
     return
   }
 
   friendshipChannels.delete(currentUserId)
-  supabase.removeChannel(channel)
+  subscription.unsubscribe()
 }

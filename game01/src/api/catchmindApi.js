@@ -1,4 +1,5 @@
 import { createSupabaseError, supabase } from './supabaseClient'
+import { createRealtimeSubscription } from './realtimeSubscription'
 
 export const DEFAULT_CATCHMIND_ROOM_SETTINGS = {
   settingMode: 'classic',
@@ -100,6 +101,24 @@ export function reconcileCatchmindMatch(roomId) {
   return callCatchmindRpc('reconcile_catchmind_match', { p_room_id: roomId }, '캐치마인드 참가자 상태를 동기화하지 못했습니다.')
 }
 
+export function getCatchmindCanvasSnapshot(roomId, roundId) {
+  if (!roundId) return Promise.resolve(null)
+  return callCatchmindRpc(
+    'get_catchmind_canvas_snapshot',
+    { p_room_id: roomId, p_round_id: roundId },
+    '캐치마인드 캔버스를 불러오지 못했습니다.',
+  )
+}
+
+export function saveCatchmindCanvasSnapshot(roomId, roundId, imageData) {
+  if (!roundId || !imageData) return Promise.resolve(null)
+  return callCatchmindRpc(
+    'save_catchmind_canvas_snapshot',
+    { p_room_id: roomId, p_round_id: roundId, p_image_data: imageData },
+    '캐치마인드 캔버스를 저장하지 못했습니다.',
+  )
+}
+
 export function joinCatchmindMatch(roomId, entryPassword = '') {
   return callCatchmindRpc(
     'join_catchmind_match',
@@ -119,28 +138,38 @@ export function returnCatchmindLobby(roomId) {
 export function subscribeToCatchmind(gameId, callback) {
   if (!gameId) return () => {}
 
-  const channel = supabase
-    .channel(`catchmind-state-${gameId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'catchmind_matches', filter: `game_id=eq.${gameId}` }, callback)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'catchmind_players', filter: `game_id=eq.${gameId}` }, callback)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'catchmind_rounds', filter: `game_id=eq.${gameId}` }, callback)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'catchmind_correct_answers', filter: `game_id=eq.${gameId}` }, callback)
-    .subscribe()
+  const subscription = createRealtimeSubscription({
+    createChannel: (handleStatus) =>
+      supabase
+        .channel(`catchmind-state-${gameId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'catchmind_matches', filter: `game_id=eq.${gameId}` }, callback)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'catchmind_players', filter: `game_id=eq.${gameId}` }, callback)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'catchmind_rounds', filter: `game_id=eq.${gameId}` }, callback)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'catchmind_correct_answers', filter: `game_id=eq.${gameId}` }, callback)
+        .subscribe((status) => {
+          callback({ type: 'subscription-status', status })
+          handleStatus(status)
+        }),
+  })
 
-  return () => supabase.removeChannel(channel)
+  return () => subscription.unsubscribe()
 }
 
 export function subscribeToCatchmindCanvas(roomId, callback, onSubscribed) {
-  const channel = supabase
-    .channel(`catchmind-canvas-${roomId}`, { config: { broadcast: { self: false } } })
-    .on('broadcast', { event: 'canvas' }, ({ payload }) => callback(payload))
-    .subscribe((status) => {
-      if (status === 'SUBSCRIBED') onSubscribed?.(channel)
-    })
+  const subscription = createRealtimeSubscription({
+    createChannel: (handleStatus) =>
+      supabase
+        .channel(`catchmind-canvas-${roomId}`, { config: { broadcast: { self: false } } })
+        .on('broadcast', { event: 'canvas' }, ({ payload }) => callback(payload))
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') onSubscribed?.(subscription)
+          handleStatus(status)
+        }),
+  })
 
   return {
-    channel,
-    unsubscribe: () => supabase.removeChannel(channel),
+    channel: subscription,
+    unsubscribe: () => subscription.unsubscribe(),
   }
 }
 

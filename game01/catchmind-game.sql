@@ -96,6 +96,16 @@ create table if not exists public.catchmind_correct_answers (
   primary key (round_id, user_id)
 );
 
+create table if not exists public.catchmind_canvas_snapshots (
+  round_id uuid primary key references public.catchmind_rounds(id) on delete cascade,
+  game_id uuid not null references public.games(id) on delete cascade,
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  image_data text not null,
+  updated_by uuid references public.profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists catchmind_rounds_game_idx
   on public.catchmind_rounds(game_id, round_no desc);
 
@@ -436,6 +446,98 @@ begin
 end;
 $$;
 
+create or replace function private.get_catchmind_canvas_snapshot(
+  p_room_id uuid,
+  p_round_id uuid
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_game_id uuid := private.get_catchmind_game_id(p_room_id);
+  v_snapshot public.catchmind_canvas_snapshots;
+begin
+  if not private.is_catchmind_player(v_game_id, v_user_id) then
+    raise exception 'Catchmind participant required';
+  end if;
+
+  select *
+  into v_snapshot
+  from public.catchmind_canvas_snapshots snapshot
+  where snapshot.room_id = p_room_id
+    and snapshot.round_id = p_round_id;
+
+  if not found then
+    return null;
+  end if;
+
+  return jsonb_build_object(
+    'roundId', v_snapshot.round_id,
+    'gameId', v_snapshot.game_id,
+    'roomId', v_snapshot.room_id,
+    'imageData', v_snapshot.image_data,
+    'updatedAt', v_snapshot.updated_at
+  );
+end;
+$$;
+
+create or replace function private.save_catchmind_canvas_snapshot(
+  p_room_id uuid,
+  p_round_id uuid,
+  p_image_data text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_game_id uuid := private.get_catchmind_game_id(p_room_id);
+  v_round public.catchmind_rounds;
+  v_image_data text := trim(coalesce(p_image_data, ''));
+begin
+  if not private.is_catchmind_player(v_game_id, v_user_id) then
+    raise exception 'Catchmind participant required';
+  end if;
+
+  select *
+  into v_round
+  from public.catchmind_rounds round
+  where round.id = p_round_id
+    and round.game_id = v_game_id;
+
+  if not found then
+    raise exception 'Catchmind round not found';
+  end if;
+
+  if v_round.drawer_user_id <> v_user_id then
+    raise exception 'Catchmind drawer only';
+  end if;
+
+  if length(v_image_data) < 32 or length(v_image_data) > 2000000 then
+    raise exception 'Invalid Catchmind canvas snapshot';
+  end if;
+
+  insert into public.catchmind_canvas_snapshots (
+    round_id, game_id, room_id, image_data, updated_by
+  ) values (
+    p_round_id, v_game_id, p_room_id, v_image_data, v_user_id
+  )
+  on conflict (round_id)
+  do update set
+    image_data = excluded.image_data,
+    updated_by = excluded.updated_by,
+    updated_at = now();
+
+  return private.get_catchmind_canvas_snapshot(p_room_id, p_round_id);
+end;
+$$;
+
 create or replace function private.start_catchmind_round(p_game_id uuid)
 returns void
 language plpgsql
@@ -542,7 +644,11 @@ begin
       from public.room_players room_player
       where room_player.room_id = p_room_id
         and room_player.user_id = player.user_id
-        and room_player.connection_status = 'active'
+        and (
+          room_player.connection_status = 'active'
+          or coalesce(room_player.disconnected_at, now())
+            > now() - interval '60 seconds'
+        )
     );
 
   select count(*), coalesce(array_agg(user_id), '{}'::uuid[])
@@ -1008,6 +1114,8 @@ create or replace function public.get_current_catchmind(p_room_id uuid) returns 
 create or replace function public.submit_catchmind_answer(p_room_id uuid, p_answer text) returns jsonb language sql security invoker set search_path = '' as $$ select private.submit_catchmind_answer(p_room_id, p_answer); $$;
 create or replace function public.advance_catchmind_phase(p_room_id uuid) returns jsonb language sql security invoker set search_path = '' as $$ select private.advance_catchmind_phase(p_room_id); $$;
 create or replace function public.reconcile_catchmind_match(p_room_id uuid) returns jsonb language sql security invoker set search_path = '' as $$ select private.reconcile_catchmind_match(p_room_id); select private.get_catchmind_payload(p_room_id); $$;
+create or replace function public.get_catchmind_canvas_snapshot(p_room_id uuid, p_round_id uuid) returns jsonb language sql stable security invoker set search_path = '' as $$ select private.get_catchmind_canvas_snapshot(p_room_id, p_round_id); $$;
+create or replace function public.save_catchmind_canvas_snapshot(p_room_id uuid, p_round_id uuid, p_image_data text) returns jsonb language sql security invoker set search_path = '' as $$ select private.save_catchmind_canvas_snapshot(p_room_id, p_round_id, p_image_data); $$;
 create or replace function public.join_catchmind_match(p_room_id uuid, p_entry_password text default '') returns jsonb language sql security invoker set search_path = '' as $$ select private.join_catchmind_match(p_room_id, p_entry_password); $$;
 create or replace function public.leave_catchmind_match(p_room_id uuid) returns void language sql security invoker set search_path = '' as $$ select private.leave_catchmind_match(p_room_id); $$;
 create or replace function public.return_catchmind_lobby(p_room_id uuid) returns void language sql security invoker set search_path = '' as $$ select private.return_catchmind_lobby(p_room_id); $$;
@@ -1019,6 +1127,8 @@ revoke all on function public.get_current_catchmind(uuid) from public, anon;
 revoke all on function public.submit_catchmind_answer(uuid, text) from public, anon;
 revoke all on function public.advance_catchmind_phase(uuid) from public, anon;
 revoke all on function public.reconcile_catchmind_match(uuid) from public, anon;
+revoke all on function public.get_catchmind_canvas_snapshot(uuid, uuid) from public, anon;
+revoke all on function public.save_catchmind_canvas_snapshot(uuid, uuid, text) from public, anon;
 revoke all on function public.join_catchmind_match(uuid, text) from public, anon;
 revoke all on function public.leave_catchmind_match(uuid) from public, anon;
 revoke all on function public.return_catchmind_lobby(uuid) from public, anon;
@@ -1028,12 +1138,14 @@ alter table public.catchmind_matches enable row level security;
 alter table public.catchmind_players enable row level security;
 alter table public.catchmind_rounds enable row level security;
 alter table public.catchmind_correct_answers enable row level security;
+alter table public.catchmind_canvas_snapshots enable row level security;
 
 drop policy if exists catchmind_room_settings_select on public.catchmind_room_settings;
 drop policy if exists catchmind_matches_select on public.catchmind_matches;
 drop policy if exists catchmind_players_select on public.catchmind_players;
 drop policy if exists catchmind_rounds_select on public.catchmind_rounds;
 drop policy if exists catchmind_answers_select on public.catchmind_correct_answers;
+drop policy if exists catchmind_canvas_snapshots_select on public.catchmind_canvas_snapshots;
 create policy catchmind_room_settings_select on public.catchmind_room_settings for select to authenticated using (
   exists (
     select 1
@@ -1046,19 +1158,20 @@ create policy catchmind_matches_select on public.catchmind_matches for select to
 create policy catchmind_players_select on public.catchmind_players for select to authenticated using (private.is_catchmind_player(game_id));
 create policy catchmind_rounds_select on public.catchmind_rounds for select to authenticated using (private.is_catchmind_player(game_id));
 create policy catchmind_answers_select on public.catchmind_correct_answers for select to authenticated using (private.is_catchmind_player(game_id));
+create policy catchmind_canvas_snapshots_select on public.catchmind_canvas_snapshots for select to authenticated using (private.is_catchmind_player(game_id));
 
 revoke all on table private.catchmind_words, private.catchmind_round_secrets from public, anon, authenticated;
-revoke all on table public.catchmind_room_settings, public.catchmind_matches, public.catchmind_players, public.catchmind_rounds, public.catchmind_correct_answers from anon, authenticated;
-grant select on table public.catchmind_room_settings, public.catchmind_matches, public.catchmind_players, public.catchmind_rounds, public.catchmind_correct_answers to authenticated;
+revoke all on table public.catchmind_room_settings, public.catchmind_matches, public.catchmind_players, public.catchmind_rounds, public.catchmind_correct_answers, public.catchmind_canvas_snapshots from anon, authenticated;
+grant select on table public.catchmind_room_settings, public.catchmind_matches, public.catchmind_players, public.catchmind_rounds, public.catchmind_correct_answers, public.catchmind_canvas_snapshots to authenticated;
 revoke all on all functions in schema private from public;
 grant usage on schema private to authenticated;
-grant execute on function private.get_catchmind_room_settings(uuid), private.configure_catchmind_room(uuid, text, integer, text), private.start_catchmind_match(uuid), private.get_catchmind_payload(uuid), private.submit_catchmind_answer(uuid, text), private.advance_catchmind_phase(uuid), private.reconcile_catchmind_match(uuid), private.join_catchmind_match(uuid, text), private.leave_catchmind_match(uuid), private.return_catchmind_lobby(uuid) to authenticated;
-grant execute on function public.get_catchmind_room_settings(uuid), public.configure_catchmind_room(uuid, text, integer, text), public.start_catchmind_match(uuid), public.get_current_catchmind(uuid), public.submit_catchmind_answer(uuid, text), public.advance_catchmind_phase(uuid), public.reconcile_catchmind_match(uuid), public.join_catchmind_match(uuid, text), public.leave_catchmind_match(uuid), public.return_catchmind_lobby(uuid) to authenticated;
+grant execute on function private.get_catchmind_room_settings(uuid), private.configure_catchmind_room(uuid, text, integer, text), private.start_catchmind_match(uuid), private.get_catchmind_payload(uuid), private.submit_catchmind_answer(uuid, text), private.advance_catchmind_phase(uuid), private.reconcile_catchmind_match(uuid), private.get_catchmind_canvas_snapshot(uuid, uuid), private.save_catchmind_canvas_snapshot(uuid, uuid, text), private.join_catchmind_match(uuid, text), private.leave_catchmind_match(uuid), private.return_catchmind_lobby(uuid) to authenticated;
+grant execute on function public.get_catchmind_room_settings(uuid), public.configure_catchmind_room(uuid, text, integer, text), public.start_catchmind_match(uuid), public.get_current_catchmind(uuid), public.submit_catchmind_answer(uuid, text), public.advance_catchmind_phase(uuid), public.reconcile_catchmind_match(uuid), public.get_catchmind_canvas_snapshot(uuid, uuid), public.save_catchmind_canvas_snapshot(uuid, uuid, text), public.join_catchmind_match(uuid, text), public.leave_catchmind_match(uuid), public.return_catchmind_lobby(uuid) to authenticated;
 
 do $realtime$
 declare v_table text;
 begin
-  foreach v_table in array array['catchmind_room_settings', 'catchmind_matches', 'catchmind_players', 'catchmind_rounds', 'catchmind_correct_answers']
+  foreach v_table in array array['catchmind_room_settings', 'catchmind_matches', 'catchmind_players', 'catchmind_rounds', 'catchmind_correct_answers', 'catchmind_canvas_snapshots']
   loop
     if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = v_table) then
       execute format('alter publication supabase_realtime add table public.%I', v_table);

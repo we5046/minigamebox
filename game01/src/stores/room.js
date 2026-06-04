@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { supabase } from '@/api/supabaseClient'
+import { createRealtimeSubscription } from '@/api/realtimeSubscription'
 import { getRooms as getRoomsFromApi } from '@/api/roomApi'
 
 export const useRoomStore = defineStore('room', () => {
@@ -19,15 +20,18 @@ export const useRoomStore = defineStore('room', () => {
   function subscribeToRooms() {
     unsubscribeFromRooms()
 
-    roomSubscription = supabase
-      .channel('public:rooms')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => {
-        fetchRooms()
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players' }, () => {
-        fetchRooms()
-      })
-      .subscribe()
+    roomSubscription = createRealtimeSubscription({
+      createChannel: (handleStatus) =>
+        supabase
+          .channel('public:rooms')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => {
+            fetchRooms()
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'room_players' }, () => {
+            fetchRooms()
+          })
+          .subscribe(handleStatus),
+    })
 
     return unsubscribeFromRooms
   }
@@ -37,9 +41,9 @@ export const useRoomStore = defineStore('room', () => {
       return
     }
 
-    const channel = roomSubscription
+    const subscription = roomSubscription
     roomSubscription = null
-    supabase.removeChannel(channel)
+    subscription.unsubscribe()
   }
 
   return { rooms, fetchRooms, subscribeToRooms, unsubscribeFromRooms }

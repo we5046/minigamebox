@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient'
+import { createRealtimeSubscription } from './realtimeSubscription'
 
 const chatChannels = new Map()
 
@@ -41,36 +42,40 @@ export function normalizeBroadcastMessage(payload) {
 function subscribeToChatChannel(channelKey, callback) {
   unsubscribeFromChatChannel(channelKey)
 
-  const channel = supabase
-    .channel(channelKey, {
-      config: {
-        broadcast: {
-          self: true,
-        },
-      },
-    })
-    .on('broadcast', { event: 'message' }, callback)
-    .subscribe((status) => {
-      callback({ type: 'subscription-status', status })
-    })
+  const subscription = createRealtimeSubscription({
+    createChannel: (handleStatus) =>
+      supabase
+        .channel(channelKey, {
+          config: {
+            broadcast: {
+              self: true,
+            },
+          },
+        })
+        .on('broadcast', { event: 'message' }, callback)
+        .subscribe((status) => {
+          callback({ type: 'subscription-status', status })
+          handleStatus(status)
+        }),
+  })
 
-  chatChannels.set(channelKey, channel)
+  chatChannels.set(channelKey, subscription)
 
   return {
-    channel,
+    channel: subscription,
     unsubscribe: () => unsubscribeFromChatChannel(channelKey),
   }
 }
 
 function unsubscribeFromChatChannel(channelKey) {
-  const channel = chatChannels.get(channelKey)
+  const subscription = chatChannels.get(channelKey)
 
-  if (!channel) {
+  if (!subscription) {
     return
   }
 
   chatChannels.delete(channelKey)
-  supabase.removeChannel(channel)
+  subscription.unsubscribe()
 }
 
 export function subscribeToPublicChat(callback) {
@@ -213,27 +218,31 @@ export function subscribeToGameMessages(roomId, gameId, callback) {
   const channelKey = `game-messages-${roomId}-${gameId}`
   unsubscribeFromChatChannel(channelKey)
 
-  const channel = supabase
-    .channel(channelKey)
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'game_messages',
-        filter: `game_id=eq.${gameId}`,
-      },
-      (payload) => {
-        if (payload.new?.room_id === roomId) {
-          callback(payload)
-        }
-      },
-    )
-    .subscribe((status) => {
-      callback({ type: 'subscription-status', status })
-    })
+  const subscription = createRealtimeSubscription({
+    createChannel: (handleStatus) =>
+      supabase
+        .channel(channelKey)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'game_messages',
+            filter: `game_id=eq.${gameId}`,
+          },
+          (payload) => {
+            if (payload.new?.room_id === roomId) {
+              callback(payload)
+            }
+          },
+        )
+        .subscribe((status) => {
+          callback({ type: 'subscription-status', status })
+          handleStatus(status)
+        }),
+  })
 
-  chatChannels.set(channelKey, channel)
+  chatChannels.set(channelKey, subscription)
 
   return () => unsubscribeFromChatChannel(channelKey)
 }

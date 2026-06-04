@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { supabase } from '@/api/supabaseClient'
+import { createRealtimeSubscription } from '@/api/realtimeSubscription'
 import { getProfile, toCurrentUser } from '@/api/authApi'
 import {
   getMyPageData,
@@ -131,10 +132,10 @@ export const useProfileStore = defineStore('profile', () => {
       return
     }
 
-    const channel = profileSubscription
+    const subscription = profileSubscription
     profileSubscription = null
     subscribedUserId = null
-    supabase.removeChannel(channel)
+    subscription.unsubscribe()
   }
 
   function setProfileBundle(displayData, authProfile = null) {
@@ -187,17 +188,20 @@ export const useProfileStore = defineStore('profile', () => {
       return
     }
 
-    profileSubscription = supabase
-      .channel(`profile-${userId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` }, queueRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'player_stats', filter: `user_id=eq.${userId}` }, queueRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'player_game_stats', filter: `user_id=eq.${userId}` }, queueRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'player_role_stats', filter: `user_id=eq.${userId}` }, queueRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'player_game_role_stats', filter: `user_id=eq.${userId}` }, queueRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'player_recent_matches', filter: `user_id=eq.${userId}` }, queueRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'player_achievements', filter: `user_id=eq.${userId}` }, queueRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'player_cosmetics', filter: `user_id=eq.${userId}` }, queueRefresh)
-      .subscribe()
+    profileSubscription = createRealtimeSubscription({
+      createChannel: (handleStatus) =>
+        supabase
+          .channel(`profile-${userId}`)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` }, queueRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'player_stats', filter: `user_id=eq.${userId}` }, queueRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'player_game_stats', filter: `user_id=eq.${userId}` }, queueRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'player_role_stats', filter: `user_id=eq.${userId}` }, queueRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'player_game_role_stats', filter: `user_id=eq.${userId}` }, queueRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'player_recent_matches', filter: `user_id=eq.${userId}` }, queueRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'player_achievements', filter: `user_id=eq.${userId}` }, queueRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'player_cosmetics', filter: `user_id=eq.${userId}` }, queueRefresh)
+          .subscribe(handleStatus),
+    })
     subscribedUserId = userId
   }
 

@@ -1,4 +1,5 @@
 import { createSupabaseError, supabase } from './supabaseClient'
+import { createRealtimeSubscription } from './realtimeSubscription'
 
 export const DEFAULT_LIAR_ROOM_SETTINGS = {
   settingMode: 'classic',
@@ -232,38 +233,42 @@ export function subscribeToLiarMatch(gameId, callback) {
     return () => {}
   }
 
-  const channel = supabase
-    .channel(`liar-match-${gameId}`)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'liar_match_states', filter: `game_id=eq.${gameId}` },
-      callback,
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'liar_scores', filter: `game_id=eq.${gameId}` },
-      callback,
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'liar_rounds', filter: `game_id=eq.${gameId}` },
-      callback,
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'liar_votes', filter: `game_id=eq.${gameId}` },
-      callback,
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'liar_statements', filter: `game_id=eq.${gameId}` },
-      callback,
-    )
-    .subscribe((status) => {
-      callback({ type: 'subscription-status', status })
-    })
+  const subscription = createRealtimeSubscription({
+    createChannel: (handleStatus) =>
+      supabase
+        .channel(`liar-match-${gameId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'liar_match_states', filter: `game_id=eq.${gameId}` },
+          callback,
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'liar_scores', filter: `game_id=eq.${gameId}` },
+          callback,
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'liar_rounds', filter: `game_id=eq.${gameId}` },
+          callback,
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'liar_votes', filter: `game_id=eq.${gameId}` },
+          callback,
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'liar_statements', filter: `game_id=eq.${gameId}` },
+          callback,
+        )
+        .subscribe((status) => {
+          callback({ type: 'subscription-status', status })
+          handleStatus(status)
+        }),
+  })
 
   return () => {
-    supabase.removeChannel(channel)
+    subscription.unsubscribe()
   }
 }

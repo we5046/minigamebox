@@ -1,4 +1,5 @@
 ﻿import { createSupabaseError, supabase } from './supabaseClient'
+import { createRealtimeSubscription } from './realtimeSubscription'
 
 const roomListChannels = new Map()
 const roomDetailChannels = new Map()
@@ -9,7 +10,7 @@ const HEARTBEAT_REQUEST_TIMEOUT_MS = 8_000
 export const ROOM_PRESENCE_TIMEOUTS = {
   heartbeatIntervalMs: 10_000,
   waitingStaleSeconds: 25,
-  gameStaleSeconds: 50,
+  gameStaleSeconds: 120,
 }
 
 export const DEFAULT_ROOM_DETAIL_SETTINGS = {
@@ -835,14 +836,18 @@ export function subscribeToRooms(callback) {
   const channelName = `rooms-changes-${Date.now()}-${Math.random().toString(36).slice(2)}`
   unsubscribeFromRooms(ROOM_LIST_CHANNEL_KEY)
 
-  const channel = supabase
-    .channel(channelName)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, callback)
-    .subscribe((status) => {
-      callback({ type: 'subscription-status', status })
-    })
+  const subscription = createRealtimeSubscription({
+    createChannel: (handleStatus) =>
+      supabase
+        .channel(channelName)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, callback)
+        .subscribe((status) => {
+          callback({ type: 'subscription-status', status })
+          handleStatus(status)
+        }),
+  })
 
-  roomListChannels.set(ROOM_LIST_CHANNEL_KEY, channel)
+  roomListChannels.set(ROOM_LIST_CHANNEL_KEY, subscription)
 
   return () => unsubscribeFromRooms(ROOM_LIST_CHANNEL_KEY)
 }
@@ -850,23 +855,27 @@ export function subscribeToRooms(callback) {
 export function subscribeToRoom(roomId, callback) {
   unsubscribeFromRoom(roomId)
 
-  const channel = supabase
-    .channel(`room-${roomId}`)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
-      callback,
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` },
-      callback,
-    )
-    .subscribe((status) => {
-      callback({ type: 'subscription-status', status })
-    })
+  const subscription = createRealtimeSubscription({
+    createChannel: (handleStatus) =>
+      supabase
+        .channel(`room-${roomId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
+          callback,
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'room_players', filter: `room_id=eq.${roomId}` },
+          callback,
+        )
+        .subscribe((status) => {
+          callback({ type: 'subscription-status', status })
+          handleStatus(status)
+        }),
+  })
 
-  roomDetailChannels.set(roomId, channel)
+  roomDetailChannels.set(roomId, subscription)
 
   return () => unsubscribeFromRoom(roomId)
 }
@@ -874,51 +883,56 @@ export function subscribeToRoom(roomId, callback) {
 export function subscribeToGame(roomId, callback) {
   unsubscribeFromGame(roomId)
 
-  const channel = supabase
-    .channel(`game-${roomId}`)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'games', filter: `room_id=eq.${roomId}` },
-      callback,
-    )
-    .subscribe((status) => {
-      callback({ type: 'subscription-status', status })
-    })
+  const subscription = createRealtimeSubscription({
+    createChannel: (handleStatus) =>
+      supabase
+        .channel(`game-${roomId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'games', filter: `room_id=eq.${roomId}` },
+          callback,
+        )
+        .subscribe((status) => {
+          callback({ type: 'subscription-status', status })
+          handleStatus(status)
+        }),
+  })
 
-  gameChannels.set(roomId, channel)
+  gameChannels.set(roomId, subscription)
 
   return () => unsubscribeFromGame(roomId)
 }
 
 function unsubscribeFromRooms(channelName) {
-  const channel = roomListChannels.get(channelName)
+  const subscription = roomListChannels.get(channelName)
 
-  if (!channel) {
+  if (!subscription) {
     return
   }
 
   roomListChannels.delete(channelName)
-  supabase.removeChannel(channel)
+  subscription.unsubscribe()
 }
 
 function unsubscribeFromRoom(roomId) {
-  const channel = roomDetailChannels.get(roomId)
+  const subscription = roomDetailChannels.get(roomId)
 
-  if (!channel) {
+  if (!subscription) {
     return
   }
 
   roomDetailChannels.delete(roomId)
-  supabase.removeChannel(channel)
+  subscription.unsubscribe()
 }
 
 function unsubscribeFromGame(roomId) {
-  const channel = gameChannels.get(roomId)
+  const subscription = gameChannels.get(roomId)
 
-  if (!channel) {
+  if (!subscription) {
     return
   }
 
   gameChannels.delete(roomId)
-  supabase.removeChannel(channel)
+  subscription.unsubscribe()
 }
+

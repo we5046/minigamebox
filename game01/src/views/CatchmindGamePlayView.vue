@@ -8,9 +8,11 @@ import { getRoom, heartbeatRoomPresence, ROOM_PRESENCE_TIMEOUTS } from '@/api/ro
 import {
   advanceCatchmindPhase,
   broadcastCatchmindCanvas,
+  getCatchmindCanvasSnapshot,
   leaveCatchmindMatch,
   reconcileCatchmindMatch,
   returnCatchmindLobby,
+  saveCatchmindCanvasSnapshot,
   submitCatchmindAnswer,
   subscribeToCatchmind,
   subscribeToCatchmindCanvas,
@@ -47,6 +49,9 @@ let activeRoundId = ''
 let isDrawing = false
 let lastPoint = null
 let timeoutPromise = null
+let resumeSyncPromise = null
+let snapshotSaveTimer = null
+let snapshotSavePromise = null
 
 const phase = computed(() => match.value?.round?.phase || 'WAITING')
 const players = computed(() => match.value?.players || [])
@@ -105,7 +110,10 @@ function clearCanvas({ broadcast = false } = {}) {
   const context = getCanvasContext()
   if (!canvas || !context) return
   context.clearRect(0, 0, canvas.width, canvas.height)
-  if (broadcast && isDrawer.value) broadcastCatchmindCanvas(canvasChannel, { type: 'clear' })
+  if (broadcast && isDrawer.value) {
+    broadcastCatchmindCanvas(canvasChannel, { type: 'clear' })
+    scheduleCanvasSnapshotSave()
+  }
 }
 
 function drawSegment(segment, { broadcast = false } = {}) {
@@ -122,7 +130,10 @@ function drawSegment(segment, { broadcast = false } = {}) {
   context.lineTo(segment.to.x, segment.to.y)
   context.stroke()
   context.restore()
-  if (broadcast && isDrawer.value) broadcastCatchmindCanvas(canvasChannel, { type: 'segment', segment })
+  if (broadcast && isDrawer.value) {
+    broadcastCatchmindCanvas(canvasChannel, { type: 'segment', segment })
+    scheduleCanvasSnapshotSave()
+  }
 }
 
 function getCanvasPoint(event) {
@@ -159,6 +170,19 @@ function continueDrawing(event) {
 function stopDrawing() {
   isDrawing = false
   lastPoint = null
+  scheduleCanvasSnapshotSave({ immediate: true })
+}
+
+function drawSnapshot(imageData) {
+  if (!imageData) return
+  const image = new Image()
+  image.onload = () => {
+    const context = getCanvasContext()
+    if (!context || !canvasRef.value) return
+    context.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height)
+    context.drawImage(image, 0, 0, canvasRef.value.width, canvasRef.value.height)
+  }
+  image.src = imageData
 }
 
 function handleCanvasEvent(payload) {
@@ -168,23 +192,67 @@ function handleCanvasEvent(payload) {
     const dataUrl = canvasRef.value?.toDataURL?.('image/png')
     if (dataUrl) broadcastCatchmindCanvas(canvasChannel, { type: 'snapshot', dataUrl })
   }
-  if (payload?.type === 'snapshot' && payload.dataUrl && !isDrawer.value) {
-    const image = new Image()
-    image.onload = () => {
-      const context = getCanvasContext()
-      if (!context || !canvasRef.value) return
-      context.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height)
-      context.drawImage(image, 0, 0, canvasRef.value.width, canvasRef.value.height)
-    }
-    image.src = payload.dataUrl
+  if (payload?.type === 'snapshot' && payload.dataUrl && !isDrawer.value) drawSnapshot(payload.dataUrl)
+}
+
+async function saveCanvasSnapshot() {
+  const roundId = match.value?.round?.id
+  const imageData = canvasRef.value?.toDataURL?.('image/png')
+  if (!isDrawer.value || !roundId || !imageData) return
+
+  snapshotSavePromise = saveCatchmindCanvasSnapshot(roomId.value, roundId, imageData)
+    .catch((error) => {
+      console.warn('[Catchmind] canvas snapshot save failed', error)
+    })
+    .finally(() => {
+      snapshotSavePromise = null
+    })
+
+  await snapshotSavePromise
+}
+
+function scheduleCanvasSnapshotSave({ immediate = false } = {}) {
+  if (!isDrawer.value) return
+  if (snapshotSaveTimer) clearTimeout(snapshotSaveTimer)
+
+  if (immediate) {
+    saveCanvasSnapshot()
+    return
+  }
+
+  snapshotSaveTimer = setTimeout(() => {
+    snapshotSaveTimer = null
+    saveCanvasSnapshot()
+  }, 900)
+}
+
+async function loadCanvasSnapshot() {
+  if (isDrawer.value) return
+  const roundId = match.value?.round?.id
+  if (!roundId) return
+
+  try {
+    const snapshot = await getCatchmindCanvasSnapshot(roomId.value, roundId)
+    drawSnapshot(snapshot?.imageData || snapshot?.image_data)
+  } catch (error) {
+    console.warn('[Catchmind] canvas snapshot load failed', error)
   }
 }
 
-async function ensureSubscriptions(gameId) {
-  if (!gameId || subscribedGameId === gameId) return
+function resetSubscriptions() {
   unsubscribeState?.()
   unsubscribeMessages?.()
   unsubscribeCanvas?.()
+  unsubscribeState = null
+  unsubscribeMessages = null
+  unsubscribeCanvas = null
+  canvasChannel = null
+  subscribedGameId = ''
+}
+
+async function ensureSubscriptions(gameId, { force = false } = {}) {
+  if (!gameId || (!force && subscribedGameId === gameId)) return
+  resetSubscriptions()
   subscribedGameId = gameId
   unsubscribeState = subscribeToCatchmind(gameId, scheduleSync)
   unsubscribeMessages = subscribeToGameMessages(roomId.value, gameId, scheduleSync)
@@ -197,6 +265,14 @@ async function ensureSubscriptions(gameId) {
   unsubscribeCanvas = canvasSub.unsubscribe
 }
 
+async function sendHeartbeat() {
+  try {
+    await heartbeatRoomPresence(roomId.value)
+  } catch (error) {
+    console.warn('[Catchmind] heartbeat failed', error)
+  }
+}
+
 let syncTimer = null
 function scheduleSync() {
   if (syncTimer) clearTimeout(syncTimer)
@@ -205,6 +281,7 @@ function scheduleSync() {
 
 async function syncState() {
   try {
+    await sendHeartbeat()
     room.value = await getRoom(roomId.value)
     if (room.value.status === 'waiting') {
       await router.replace(`/rooms/${roomId.value}`)
@@ -217,11 +294,31 @@ async function syncState() {
       activeRoundId = match.value?.round?.id || ''
       await nextTick()
       clearCanvas()
+      await loadCanvasSnapshot()
     }
   } catch (error) {
     toastStore.error(error.message)
   } finally {
     isLoading.value = false
+  }
+}
+
+async function handlePageResume() {
+  if (document.visibilityState && document.visibilityState !== 'visible') return
+  if (resumeSyncPromise) return resumeSyncPromise
+
+  resumeSyncPromise = (async () => {
+    nowTick.value = Date.now()
+    resetSubscriptions()
+    await sendHeartbeat()
+    await syncState()
+    await loadCanvasSnapshot()
+  })()
+
+  try {
+    await resumeSyncPromise
+  } finally {
+    resumeSyncPromise = null
   }
 }
 
@@ -285,21 +382,26 @@ watch(() => match.value?.round?.id, () => nextTick(() => clearCanvas()))
 onMounted(async () => {
   await syncState()
   pollTimer = setInterval(syncState, 2500)
-  heartbeatTimer = setInterval(() => heartbeatRoomPresence(roomId.value).catch(() => {}), ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs)
+  heartbeatTimer = setInterval(sendHeartbeat, ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs)
   countdownTimer = setInterval(() => {
     nowTick.value = Date.now()
     processTimeout()
   }, 500)
+  document.addEventListener('visibilitychange', handlePageResume)
+  window.addEventListener('focus', handlePageResume)
+  window.addEventListener('online', handlePageResume)
 })
 
 onBeforeUnmount(() => {
-  unsubscribeState?.()
-  unsubscribeMessages?.()
-  unsubscribeCanvas?.()
+  resetSubscriptions()
   if (pollTimer) clearInterval(pollTimer)
   if (heartbeatTimer) clearInterval(heartbeatTimer)
   if (countdownTimer) clearInterval(countdownTimer)
   if (syncTimer) clearTimeout(syncTimer)
+  if (snapshotSaveTimer) clearTimeout(snapshotSaveTimer)
+  document.removeEventListener('visibilitychange', handlePageResume)
+  window.removeEventListener('focus', handlePageResume)
+  window.removeEventListener('online', handlePageResume)
 })
 </script>
 

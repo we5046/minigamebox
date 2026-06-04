@@ -55,6 +55,7 @@ let syncTimer = null
 let countdownTimer = null
 let subscribedGameId = null
 let statementTimeoutPromise = null
+let resumeSyncPromise = null
 
 const phase = computed(() => match.value?.round?.phase || '')
 const scoreboard = computed(() => match.value?.scoreboard || [])
@@ -156,6 +157,8 @@ async function ensureSubscriptions(gameId) {
 
   unsubscribeMatch?.()
   unsubscribeMessages?.()
+  unsubscribeMatch = null
+  unsubscribeMessages = null
   subscribedGameId = gameId
   unsubscribeMatch = subscribeToLiarMatch(gameId, scheduleSync)
   unsubscribeMessages = subscribeToGameMessages(roomId.value, gameId, (payload) => {
@@ -182,8 +185,22 @@ async function ensureSubscriptions(gameId) {
   messages.value = await getGameMessages(roomId.value, gameId, { limit: 160 })
 }
 
+function resetMatchSubscriptions() {
+  unsubscribeMatch?.()
+  unsubscribeMessages?.()
+  unsubscribeMatch = null
+  unsubscribeMessages = null
+  subscribedGameId = null
+}
+
+function resetRoomSubscription() {
+  unsubscribeRoom?.()
+  unsubscribeRoom = subscribeToRoom(roomId.value, scheduleSync)
+}
+
 async function syncState() {
   try {
+    await sendHeartbeat()
     const nextRoom = await getRoom(roomId.value)
     room.value = nextRoom
 
@@ -219,6 +236,25 @@ async function sendHeartbeat() {
     await heartbeatRoomPresence(roomId.value)
   } catch (error) {
     console.warn('[LiarGame] heartbeat failed', error)
+  }
+}
+
+async function handlePageResume() {
+  if (document.visibilityState && document.visibilityState !== 'visible') return
+  if (resumeSyncPromise) return resumeSyncPromise
+
+  resumeSyncPromise = (async () => {
+    nowTick.value = Date.now()
+    resetRoomSubscription()
+    resetMatchSubscriptions()
+    await sendHeartbeat()
+    await syncState()
+  })()
+
+  try {
+    await resumeSyncPromise
+  } finally {
+    resumeSyncPromise = null
   }
 }
 
@@ -338,7 +374,7 @@ async function returnToLobby() {
 }
 
 onMounted(async () => {
-  unsubscribeRoom = subscribeToRoom(roomId.value, scheduleSync)
+  resetRoomSubscription()
   pollTimer = setInterval(syncState, 2500)
   heartbeatTimer = setInterval(sendHeartbeat, ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs)
   countdownTimer = setInterval(() => {
@@ -347,16 +383,21 @@ onMounted(async () => {
   }, 500)
   await syncState()
   await sendHeartbeat()
+  document.addEventListener('visibilitychange', handlePageResume)
+  window.addEventListener('focus', handlePageResume)
+  window.addEventListener('online', handlePageResume)
 })
 
 onBeforeUnmount(() => {
   unsubscribeRoom?.()
-  unsubscribeMatch?.()
-  unsubscribeMessages?.()
+  resetMatchSubscriptions()
   if (pollTimer) clearInterval(pollTimer)
   if (heartbeatTimer) clearInterval(heartbeatTimer)
   if (countdownTimer) clearInterval(countdownTimer)
   if (syncTimer) clearTimeout(syncTimer)
+  document.removeEventListener('visibilitychange', handlePageResume)
+  window.removeEventListener('focus', handlePageResume)
+  window.removeEventListener('online', handlePageResume)
 })
 </script>
 

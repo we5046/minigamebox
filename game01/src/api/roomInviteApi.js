@@ -1,4 +1,5 @@
 import { createSupabaseError, supabase } from './supabaseClient'
+import { createRealtimeSubscription } from './realtimeSubscription'
 
 const inviteSelect = `
   *,
@@ -138,32 +139,36 @@ export async function respondRoomInvite(inviteId, accept) {
 export function subscribeToRoomInvites(userId, callback) {
   unsubscribeFromRoomInvites(userId)
 
-  const channel = supabase
-    .channel(`room-invites-${userId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'room_invites' }, (payload) => {
-      const fromUserId = payload.new?.from_user_id || payload.old?.from_user_id
-      const toUserId = payload.new?.to_user_id || payload.old?.to_user_id
+  const subscription = createRealtimeSubscription({
+    createChannel: (handleStatus) =>
+      supabase
+        .channel(`room-invites-${userId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'room_invites' }, (payload) => {
+          const fromUserId = payload.new?.from_user_id || payload.old?.from_user_id
+          const toUserId = payload.new?.to_user_id || payload.old?.to_user_id
 
-      if (fromUserId === userId || toUserId === userId) {
-        callback(payload)
-      }
-    })
-    .subscribe((status) => {
-      callback({ type: 'subscription-status', status })
-    })
+          if (fromUserId === userId || toUserId === userId) {
+            callback(payload)
+          }
+        })
+        .subscribe((status) => {
+          callback({ type: 'subscription-status', status })
+          handleStatus(status)
+        }),
+  })
 
-  inviteChannels.set(userId, channel)
+  inviteChannels.set(userId, subscription)
 
   return () => unsubscribeFromRoomInvites(userId)
 }
 
 function unsubscribeFromRoomInvites(userId) {
-  const channel = inviteChannels.get(userId)
+  const subscription = inviteChannels.get(userId)
 
-  if (!channel) {
+  if (!subscription) {
     return
   }
 
   inviteChannels.delete(userId)
-  supabase.removeChannel(channel)
+  subscription.unsubscribe()
 }

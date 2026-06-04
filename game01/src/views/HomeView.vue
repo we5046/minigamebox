@@ -418,6 +418,43 @@ function applyClassicNewRoomSettings() {
   newRoomRoleRevealMode.value = 'private';
 }
 
+function setupLobbyRealtime() {
+  unsubscribeRooms?.();
+  unsubscribeRooms = roomStore.subscribeToRooms();
+
+  unsubscribePublicChat?.();
+  const publicChatSubscription = subscribeToPublicChat(
+    handlePublicChatRealtimeEvent,
+  );
+  publicChatChannel.value = publicChatSubscription.channel;
+  unsubscribePublicChat = publicChatSubscription.unsubscribe;
+
+  unsubscribeFriendships?.();
+  unsubscribeFriendships = null;
+  setupFriendshipRealtime();
+
+  unsubscribeRoomInvites?.();
+  unsubscribeRoomInvites = null;
+  setupRoomInviteRealtime();
+}
+
+async function handlePageResume() {
+  if (document.visibilityState && document.visibilityState !== 'visible') return;
+
+  setupLobbyRealtime();
+  await roomStore.fetchRooms();
+  await Promise.allSettled([loadFriendships(), loadRoomInvites()]);
+
+  if (savedUser.value) {
+    await setCurrentUserPresence({
+      userId: savedUser.value.id,
+      nickname: character.value.nickname,
+      status: 'lobby',
+      canReceiveWhisper: true,
+    });
+  }
+}
+
 onMounted(async () => {
   unsubscribePresenceUsers = subscribeToPresenceUsers((users) => {
     presenceUsers.value = users;
@@ -434,12 +471,7 @@ onMounted(async () => {
   await loadRoomInvites();
   setupRoomInviteRealtime();
   roomInvitePollTimer = setInterval(loadRoomInvites, 10000);
-  unsubscribeRooms = roomStore.subscribeToRooms();
-  const publicChatSubscription = subscribeToPublicChat(
-    handlePublicChatRealtimeEvent,
-  );
-  publicChatChannel.value = publicChatSubscription.channel;
-  unsubscribePublicChat = publicChatSubscription.unsubscribe;
+  setupLobbyRealtime();
 
   if (savedUser.value) {
     await profileStore.reloadProfile(savedUser.value.id);
@@ -450,6 +482,9 @@ onMounted(async () => {
       canReceiveWhisper: true,
     });
   }
+  document.addEventListener('visibilitychange', handlePageResume);
+  window.addEventListener('focus', handlePageResume);
+  window.addEventListener('online', handlePageResume);
 });
 
 onBeforeUnmount(() => {
@@ -473,6 +508,9 @@ onBeforeUnmount(() => {
   }
   unsubscribePresenceUsers?.();
   unsubscribePresenceUsers = null;
+  document.removeEventListener('visibilitychange', handlePageResume);
+  window.removeEventListener('focus', handlePageResume);
+  window.removeEventListener('online', handlePageResume);
 });
 
 watch(savedUser, async (nextUser, previousUser) => {

@@ -84,6 +84,7 @@ let roomHeartbeatFailureCount = 0
 let nextRoomHeartbeatAt = 0
 let gameSyncPromise = null
 let messagesSyncPromise = null
+let resumeSyncPromise = null
 const uploadedLogGameIds = new Set()
 const EXPIRED_PHASE_SYNC_RETRY_MS = 1_000
 const GAME_STATE_POLL_INTERVAL_MS = 2_000
@@ -943,6 +944,63 @@ async function loadMessages() {
   return messagesSyncPromise
 }
 
+function teardownRealtimeSubscriptions() {
+  unsubscribeRoom?.()
+  unsubscribeGame?.()
+  unsubscribeMessages?.()
+  unsubscribeRoom = null
+  unsubscribeGame = null
+  unsubscribeMessages = null
+}
+
+function setupRealtimeSubscriptions() {
+  teardownRealtimeSubscriptions()
+
+  unsubscribeRoom = subscribeToRoom(roomId.value, (payload) => {
+    if (payload?.type === 'subscription-status') return
+    if (payload?.table === 'rooms' && payload.new) {
+      mergeRoomRealtimePayload(payload.new)
+    }
+    loadGame({ silent: true })
+  })
+
+  unsubscribeGame = subscribeToGame(roomId.value, (payload) => {
+    if (payload?.type === 'subscription-status') return
+    if (payload.new) {
+      mergeGameRealtimePayload(payload.new)
+    }
+    loadGame({ silent: true })
+  })
+
+  unsubscribeMessages = subscribeToGameMessages(roomId.value, game.value?.id, (payload) => {
+    if (payload?.type === 'subscription-status') return
+    const message = normalizeGameMessage(payload.new)
+    pushMessage(message)
+    if (['night_start', 'day_start', 'vote_start', 'final_defense_start'].includes(message.eventKey)) {
+      loadGame({ silent: true })
+    }
+  })
+}
+
+async function handlePageResume() {
+  if (document.visibilityState && document.visibilityState !== 'visible') return
+  if (resumeSyncPromise) return resumeSyncPromise
+
+  resumeSyncPromise = (async () => {
+    nowTick.value = Date.now()
+    teardownRealtimeSubscriptions()
+    await loadGame({ silent: true })
+    await loadMessages()
+    setupRealtimeSubscriptions()
+  })()
+
+  try {
+    await resumeSyncPromise
+  } finally {
+    resumeSyncPromise = null
+  }
+}
+
 
 async function maybeSyncExpiredGameState() {
   if (!game.value?.id || isGameEnded.value || remainingSeconds.value > 0 || isLoading.value) {
@@ -1193,39 +1251,20 @@ onMounted(async () => {
     await loadMessages()
   }, GAME_STATE_POLL_INTERVAL_MS)
 
-  unsubscribeRoom = subscribeToRoom(roomId.value, (payload) => {
-    if (payload?.type === 'subscription-status') return
-    if (payload?.table === 'rooms' && payload.new) {
-      mergeRoomRealtimePayload(payload.new)
-    }
-    loadGame({ silent: true })
-  })
-
-  unsubscribeGame = subscribeToGame(roomId.value, (payload) => {
-    if (payload?.type === 'subscription-status') return
-    if (payload.new) {
-      mergeGameRealtimePayload(payload.new)
-    }
-    loadGame({ silent: true })
-  })
-
-  unsubscribeMessages = subscribeToGameMessages(roomId.value, game.value?.id, (payload) => {
-    if (payload?.type === 'subscription-status') return
-    const message = normalizeGameMessage(payload.new)
-    pushMessage(message)
-    if (['night_start', 'day_start', 'vote_start', 'final_defense_start'].includes(message.eventKey)) {
-      loadGame({ silent: true })
-    }
-  })
+  setupRealtimeSubscriptions()
+  document.addEventListener('visibilitychange', handlePageResume)
+  window.addEventListener('focus', handlePageResume)
+  window.addEventListener('online', handlePageResume)
 })
 
 onBeforeUnmount(() => {
-  unsubscribeRoom?.()
-  unsubscribeGame?.()
-  unsubscribeMessages?.()
+  teardownRealtimeSubscriptions()
   if (countdownTimer) clearInterval(countdownTimer)
   if (gameStatePollTimer) clearInterval(gameStatePollTimer)
   stopRoomHeartbeat()
+  document.removeEventListener('visibilitychange', handlePageResume)
+  window.removeEventListener('focus', handlePageResume)
+  window.removeEventListener('online', handlePageResume)
 })
 </script>
 

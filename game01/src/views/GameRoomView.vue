@@ -733,6 +733,8 @@ function stopRoomHeartbeat() {
 
 function handleVisibilityChange() {
   if (document.visibilityState === 'visible') {
+    unsubscribeRoom?.();
+    unsubscribeRoom = subscribeToRoom(props.roomId, handleRoomRealtimeEvent);
     sendRoomHeartbeat({ force: true, resync: true });
   }
 }
@@ -784,6 +786,8 @@ onMounted(() => {
   unsubscribeRoom = subscribeToRoom(props.roomId, handleRoomRealtimeEvent);
   startRoomTransitionPolling();
   document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('focus', handleVisibilityChange);
+  window.addEventListener('online', handleVisibilityChange);
 });
 
 onBeforeUnmount(() => {
@@ -795,6 +799,8 @@ onBeforeUnmount(() => {
   stopRoomHeartbeat();
   stopRoomTransitionPolling();
   document.removeEventListener('visibilitychange', handleVisibilityChange);
+  window.removeEventListener('focus', handleVisibilityChange);
+  window.removeEventListener('online', handleVisibilityChange);
   if (syncTimer) {
     clearTimeout(syncTimer);
   }
