@@ -623,10 +623,20 @@ onBeforeUnmount(() => {
         </section>
       </section>
     </template>
+    <p class="refresh-guide">※ 뭔가 이상하다면 새로고침(F5)을 한번 눌러주세요.</p>
   </section>
 </template>
 
 <style scoped>
+.refresh-guide {
+  color: rgba(255, 245, 224, 0.62);
+  font-size: 0.82rem;
+  margin: 0;
+  position: relative;
+  text-align: center;
+  z-index: 1;
+}
+
 .catchmind {
   background:
     radial-gradient(circle at 50% -12%, rgba(255, 190, 85, 0.15), transparent 34%),

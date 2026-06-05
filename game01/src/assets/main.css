@@ -2,10 +2,8 @@
 
 #app {
   min-height: 100vh;
-  width: min(100%, 1440px);
-  margin: 0 auto;
-  padding: 0 clamp(0.75rem, 2vw, 1.5rem);
   font-weight: normal;
+  width: 100%;
 }
 
 a,

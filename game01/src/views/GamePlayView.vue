@@ -245,6 +245,17 @@ const playersWithStatus = computed(() =>
     }
   }),
 )
+const playerVisualStateByUserId = computed(() =>
+  Object.fromEntries(
+    playersWithStatus.value.map((player) => [
+      player.userId,
+      {
+        memoRole: player.memoRole || '',
+        visibleTeamRole: player.visibleTeamRole || '',
+      },
+    ]),
+  ),
+)
 const alivePlayers = computed(() => playersWithStatus.value.filter((player) => player.isAlive !== false))
 const targetPlayers = computed(() => (roleKey.value === 'stalker' ? playersWithStatus.value : alivePlayers.value))
 const nightRoleChatChannel = computed(() => {
@@ -573,6 +584,62 @@ const mainVisibleMessages = computed(() =>
 const deadChatMessages = computed(() =>
   isAlive.value ? [] : messages.value.filter((message) => message.channelType === 'dead'),
 )
+
+function isFirstDayWillMessage(message) {
+  return message?.eventKey?.startsWith('first_day_will:') === true
+}
+
+function getMessageVisualContext(message) {
+  const isFirstDayWill = isFirstDayWillMessage(message)
+  const isPublicChannel = (message?.channelType || 'public') === 'public'
+  const playerState = playerVisualStateByUserId.value[message?.userId] || {}
+
+  return {
+    isFirstDayWill,
+    memoRole: !isFirstDayWill && isPublicChannel ? playerState.memoRole || '' : '',
+    visibleTeamRole:
+      !isFirstDayWill && isPublicChannel && ['mafia', 'police'].includes(playerState.visibleTeamRole)
+        ? playerState.visibleTeamRole
+        : '',
+  }
+}
+
+function getMessageRowClasses(message) {
+  return [
+    'chat-message-row',
+    isFirstDayWillMessage(message)
+      ? 'first-day-will-row'
+      : message.userId === savedUser.value?.id
+        ? 'mine'
+        : 'other',
+  ]
+}
+
+function getMessageBubbleClasses(message) {
+  const channelType = message?.channelType || 'public'
+  const context = getMessageVisualContext(message)
+
+  return [
+    `channel-${channelType}`,
+    {
+      'first-day-will-message': context.isFirstDayWill,
+      'has-private-memo': Boolean(context.memoRole),
+      [`memo-${context.memoRole}`]: Boolean(context.memoRole),
+      'has-verified-team': Boolean(context.visibleTeamRole),
+      [`verified-team-${context.visibleTeamRole}`]: Boolean(context.visibleTeamRole),
+    },
+  ]
+}
+
+function getMessageMemoLabel(message) {
+  const memoRole = getMessageVisualContext(message).memoRole
+  return memoRole ? `내 메모: ${roleLabels[memoRole] || memoRole}` : ''
+}
+
+function getMessageTeamLabel(message) {
+  const teamRole = getMessageVisualContext(message).visibleTeamRole
+  return teamRole ? `확인된 ${roleLabels[teamRole] || teamRole} 팀` : ''
+}
 
 function getPlayerMemoStorageKey() {
   const userId = savedUser.value?.id
@@ -1502,10 +1569,7 @@ onBeforeUnmount(() => {
               :class="
                 message.messageType === 'system'
                   ? 'system-message-row'
-                  : [
-                      'chat-message-row',
-                      message.userId === savedUser?.id ? 'mine' : 'other',
-                    ]
+                  : getMessageRowClasses(message)
               "
             >
               <template v-if="message.messageType === 'system'">
@@ -1513,16 +1577,31 @@ onBeforeUnmount(() => {
               </template>
 
               <template v-else>
-                <div class="chat-bubble" :class="`channel-${message.channelType || 'public'}`">
+                <article class="chat-bubble" :class="getMessageBubbleClasses(message)">
+                  <div v-if="isFirstDayWillMessage(message)" class="will-label">
+                    <span>첫날 사망자 유언</span>
+                    <small>마지막 공개 메시지</small>
+                  </div>
                   <div class="chat-meta">
                     <strong>{{ message.nickname }}</strong>
                     <span v-if="message.channelType !== 'public'" class="chat-channel-chip">
                       {{ chatChannelLabels[message.channelType] || message.channelType }}
                     </span>
+                    <span v-if="getMessageMemoLabel(message)" class="chat-identity-chip private-memo">
+                      {{ getMessageMemoLabel(message) }}
+                    </span>
+                    <span
+                      v-if="getMessageTeamLabel(message)"
+                      class="chat-identity-chip verified-team"
+                      :class="getMessageVisualContext(message).visibleTeamRole"
+                    >
+                      {{ getMessageTeamLabel(message) }}
+                    </span>
                     <time>{{ message.createdAt }}</time>
                   </div>
-                  <p>{{ message.content }}</p>
-                </div>
+                  <blockquote v-if="isFirstDayWillMessage(message)">{{ message.content }}</blockquote>
+                  <p v-else>{{ message.content }}</p>
+                </article>
               </template>
             </div>
 
@@ -1836,11 +1915,29 @@ onBeforeUnmount(() => {
         </section>
       </div>
     </template>
+    <p class="refresh-guide">※ 뭔가 이상하다면 새로고침(F5)을 한번 눌러주세요.</p>
   </section>
 </template>
 
 <style scoped>
+.refresh-guide {
+  color: rgba(255, 245, 224, 0.62);
+  font-size: 0.82rem;
+  margin: 0;
+  position: relative;
+  text-align: center;
+  z-index: 1;
+}
+
 .game-play-view {
+  --role-doctor-bg: rgba(20, 83, 45, 0.3);
+  --role-doctor-border: rgba(74, 222, 128, 0.58);
+  --role-mafia-bg: rgba(127, 29, 29, 0.3);
+  --role-mafia-border: rgba(248, 113, 113, 0.64);
+  --role-police-bg: rgba(30, 64, 175, 0.28);
+  --role-police-border: rgba(96, 165, 250, 0.64);
+  --role-stalker-bg: rgba(91, 33, 182, 0.28);
+  --role-stalker-border: rgba(167, 139, 250, 0.6);
   background:
     radial-gradient(circle at 50% -12%, rgba(255, 190, 85, 0.15), transparent 34%),
     radial-gradient(circle at 13% 18%, rgba(127, 29, 29, 0.2), transparent 31%),
@@ -3160,6 +3257,11 @@ button:disabled {
   justify-content: flex-end;
 }
 
+.chat-message-row.first-day-will-row {
+  justify-content: stretch;
+  margin: 0.35rem 0;
+}
+
 .chat-bubble {
   background: rgba(0, 0, 0, 0.24);
   border: 1px solid rgba(255, 255, 255, 0.065);
@@ -3193,6 +3295,89 @@ button:disabled {
   border-color: rgba(192, 132, 252, 0.48);
 }
 
+.chat-message-row .chat-bubble.verified-team-mafia {
+  background: var(--role-mafia-bg);
+  border-color: var(--role-mafia-border);
+  box-shadow: inset 0 0 22px rgba(248, 113, 113, 0.06);
+}
+
+.chat-message-row .chat-bubble.verified-team-police {
+  background: var(--role-police-bg);
+  border-color: var(--role-police-border);
+  box-shadow: inset 0 0 22px rgba(96, 165, 250, 0.06);
+}
+
+.chat-message-row .chat-bubble.memo-mafia {
+  background: var(--role-mafia-bg);
+  border-color: var(--role-mafia-border);
+  border-style: dashed;
+}
+
+.chat-message-row .chat-bubble.memo-police {
+  background: var(--role-police-bg);
+  border-color: var(--role-police-border);
+  border-style: dashed;
+}
+
+.chat-message-row .chat-bubble.memo-doctor {
+  background: var(--role-doctor-bg);
+  border-color: var(--role-doctor-border);
+  border-style: dashed;
+}
+
+.chat-message-row .chat-bubble.memo-stalker {
+  background: var(--role-stalker-bg);
+  border-color: var(--role-stalker-border);
+  border-style: dashed;
+}
+
+.chat-bubble.first-day-will-message {
+  background:
+    linear-gradient(135deg, rgba(88, 28, 135, 0.38), rgba(15, 10, 18, 0.84)),
+    rgba(0, 0, 0, 0.38);
+  border: 1px solid rgba(216, 180, 254, 0.58);
+  border-left: 5px solid #c084fc;
+  box-shadow:
+    0 16px 34px rgba(0, 0, 0, 0.28),
+    inset 0 0 28px rgba(192, 132, 252, 0.08);
+  max-width: min(94%, 58rem);
+  padding: 0.95rem 1.05rem 1.05rem;
+  width: 100%;
+}
+
+.will-label {
+  align-items: center;
+  border-bottom: 1px solid rgba(216, 180, 254, 0.22);
+  display: flex;
+  gap: 0.65rem;
+  justify-content: space-between;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.55rem;
+}
+
+.will-label span {
+  color: #f3e8ff;
+  font-size: 0.76rem;
+  font-weight: 950;
+}
+
+.will-label small {
+  color: rgba(233, 213, 255, 0.58);
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
+.chat-bubble.first-day-will-message blockquote {
+  border-left: 2px solid rgba(216, 180, 254, 0.52);
+  color: #faf5ff;
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.7;
+  margin: 0.75rem 0 0;
+  padding: 0.15rem 0 0.15rem 0.85rem;
+  white-space: pre-wrap;
+}
+
 .chat-meta {
   align-items: center;
   display: flex;
@@ -3220,6 +3405,43 @@ button:disabled {
   background: rgba(88, 28, 135, 0.35);
   border-color: rgba(192, 132, 252, 0.52);
   color: #e9d5ff;
+}
+
+.chat-identity-chip {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 900;
+  padding: 0.13rem 0.43rem;
+}
+
+.chat-identity-chip.private-memo {
+  background: rgba(0, 0, 0, 0.24);
+  border-style: dashed;
+  color: rgba(255, 245, 224, 0.84);
+}
+
+.chat-identity-chip.verified-team.mafia {
+  background: rgba(153, 27, 27, 0.72);
+  border-color: rgba(252, 165, 165, 0.54);
+  color: #fee2e2;
+}
+
+.chat-identity-chip.verified-team.police {
+  background: rgba(30, 64, 175, 0.7);
+  border-color: rgba(147, 197, 253, 0.5);
+  color: #dbeafe;
+}
+
+.chat-bubble.has-private-memo .chat-meta,
+.chat-bubble.has-verified-team .chat-meta {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.chat-bubble.has-private-memo .chat-meta time,
+.chat-bubble.has-verified-team .chat-meta time {
+  margin-left: auto;
 }
 
 .chat-meta time {
@@ -3380,6 +3602,26 @@ button:disabled {
 
   .chat-message {
     max-width: 100%;
+  }
+
+  .chat-bubble {
+    max-width: 92%;
+  }
+
+  .chat-bubble.first-day-will-message {
+    max-width: 100%;
+  }
+
+  .will-label {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .chat-bubble.has-private-memo .chat-meta time,
+  .chat-bubble.has-verified-team .chat-meta time {
+    margin-left: 0;
+    width: 100%;
   }
 
   .system-message {

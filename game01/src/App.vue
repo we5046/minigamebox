@@ -17,6 +17,7 @@ const showAppNav = computed(
 const isAuthPage = computed(() =>
   ['login', 'signup', 'forgot-password'].includes(route.name),
 )
+const isGamePage = computed(() => route.name === 'game-play')
 const brandTarget = computed(() => (isAuthenticated.value ? '/home' : '/login'))
 
 watch(
@@ -58,7 +59,10 @@ async function logout() {
   </header>
 
   <RouterView v-slot="{ Component }">
-    <main class="page-shell" :class="{ 'auth-page-shell': isAuthPage }">
+    <main
+      class="page-shell"
+      :class="{ 'auth-page-shell': isAuthPage, 'game-page-shell': isGamePage }"
+    >
       <Transition name="auth-switch" mode="out-in">
         <component :is="Component" :key="route.fullPath" />
       </Transition>
@@ -72,8 +76,11 @@ async function logout() {
   align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
+  margin: 0 auto;
+  max-width: 1440px;
   padding: 1.25rem 0;
   min-width: 0;
+  width: calc(100% - clamp(1.5rem, 4vw, 3rem));
 }
 
 .brand {
@@ -111,15 +118,26 @@ async function logout() {
 }
 
 .page-shell {
-  padding: 2rem 0 4rem;
+  margin: 0 auto;
+  max-width: 1440px;
   min-width: 0;
+  padding: 2rem clamp(0.75rem, 2vw, 1.5rem) 4rem;
+  width: 100%;
+}
+
+.game-page-shell {
+  max-width: none;
+  padding-inline: clamp(0.5rem, 1vw, 1rem);
 }
 
 .app-header.auth-header {
   left: clamp(0.75rem, 2vw, 1.5rem);
+  margin: 0;
+  max-width: none;
   position: absolute;
   right: clamp(0.75rem, 2vw, 1.5rem);
   top: 0;
+  width: auto;
   z-index: 2;
 }
 
