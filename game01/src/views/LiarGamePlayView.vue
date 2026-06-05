@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
@@ -45,6 +45,7 @@ const statementDraft = ref('')
 const isLoading = ref(true)
 const isWorking = ref(false)
 const nowTick = ref(Date.now())
+const chatListRef = ref(null)
 
 let unsubscribeRoom = null
 let unsubscribeMatch = null
@@ -152,6 +153,12 @@ function scheduleSync() {
   syncTimer = setTimeout(syncState, 100)
 }
 
+function scrollChatToBottom() {
+  const el = chatListRef.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
 async function ensureSubscriptions(gameId) {
   if (!gameId || subscribedGameId === gameId) return
 
@@ -180,9 +187,11 @@ async function ensureSubscriptions(gameId) {
         channelType: payload.new.channel_type || 'public',
         eventKey: payload.new.event_key || null,
       }].slice(-160)
+      nextTick(scrollChatToBottom)
     }
   })
   messages.value = await getGameMessages(roomId.value, gameId, { limit: 160 })
+  nextTick(scrollChatToBottom)
 }
 
 function resetMatchSubscriptions() {
@@ -533,7 +542,7 @@ onBeforeUnmount(() => {
                 {{ canChat ? '채팅 가능' : '채팅 잠김' }}
               </span>
             </div>
-            <ul class="chat-list">
+            <ul ref="chatListRef" class="chat-list">
               <li v-for="message in messages" :key="message.id" :class="{ system: message.isSystem }">
                 <template v-if="message.isSystem">
                   <span>{{ message.content }}</span>
@@ -955,6 +964,7 @@ input:disabled {
 }
 
 .chat-list {
+  align-content: start;
   max-height: 23rem;
   min-height: 16rem;
   overflow-y: auto;
@@ -968,6 +978,7 @@ input:disabled {
   border-radius: 12px;
   display: grid;
   gap: 0.28rem;
+  min-height: 0;
   max-width: 82%;
   padding: 0.72rem 0.82rem;
   overflow-wrap: anywhere;

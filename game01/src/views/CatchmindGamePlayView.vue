@@ -30,6 +30,7 @@ const match = ref(null)
 const messages = ref([])
 const answerDraft = ref('')
 const canvasRef = ref(null)
+const chatMessagesRef = ref(null)
 const isLoading = ref(true)
 const isWorking = ref(false)
 const nowTick = ref(Date.now())
@@ -279,6 +280,12 @@ function scheduleSync() {
   syncTimer = setTimeout(syncState, 100)
 }
 
+function scrollChatToBottom() {
+  const el = chatMessagesRef.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
 async function syncState() {
   try {
     await sendHeartbeat()
@@ -290,6 +297,7 @@ async function syncState() {
     match.value = await reconcileCatchmindMatch(roomId.value)
     await ensureSubscriptions(match.value?.gameId)
     messages.value = await getGameMessages(roomId.value, match.value?.gameId, { limit: 120 })
+    nextTick(scrollChatToBottom)
     if (activeRoundId !== match.value?.round?.id) {
       activeRoundId = match.value?.round?.id || ''
       await nextTick()
@@ -502,7 +510,7 @@ onBeforeUnmount(() => {
               </span>
             </header>
             <div class="chat-phase-banner">{{ actionGuide }}</div>
-            <div class="chat-messages">
+            <div ref="chatMessagesRef" class="chat-messages">
               <div
                 v-for="message in messages"
                 :key="message.id"
