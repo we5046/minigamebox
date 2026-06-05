@@ -1055,6 +1055,26 @@ async function sendWhisperToTarget(target, content) {
 }
 
 async function kickPlayerByNickname(nickname) {
+  const target = findRoomPlayerByNickname(nickname);
+
+  if (!target) {
+    throw new Error(`${nickname}을(를) 현재 방 참가자 목록에서 찾을 수 없습니다.`);
+  }
+
+  await kickPlayer(target);
+}
+
+function canKickPlayer(player) {
+  return (
+    isHost.value &&
+    room.value?.status === 'waiting' &&
+    player?.userId &&
+    player.userId !== savedUser.value?.id &&
+    !isUpdating.value
+  );
+}
+
+async function kickPlayer(player) {
   if (!isHost.value) {
     throw new Error('방장만 강퇴할 수 있습니다.');
   }
@@ -1063,28 +1083,48 @@ async function kickPlayerByNickname(nickname) {
     throw new Error('대기 중인 방에서만 강퇴할 수 있습니다.');
   }
 
-  const target = findRoomPlayerByNickname(nickname);
-
-  if (!target) {
-    throw new Error(`${nickname}을(를) 현재 방 참가자 목록에서 찾을 수 없습니다.`);
+  if (!player?.userId) {
+    throw new Error('강퇴할 대상을 찾을 수 없습니다.');
   }
 
-  if (target.userId === savedUser.value?.id) {
+  if (player.userId === savedUser.value?.id) {
     throw new Error('자기 자신은 강퇴할 수 없습니다.');
   }
 
-  await kickRoomPlayer(props.roomId, target.userId);
+  await kickRoomPlayer(props.roomId, player.userId);
 
   if (chatChannel.value) {
     await sendRoomChatMessage(chatChannel.value, {
       userId: 'system',
       nickname: 'System',
-      content: `${target.nickname}님이 방장에 의해 강퇴되었습니다.`,
+      content: `${player.nickname}님이 방장에 의해 강퇴되었습니다.`,
       isSystem: true,
     }).catch(() => {});
   }
 
   await syncRoom();
+}
+
+async function confirmKickPlayer(player) {
+  if (!canKickPlayer(player)) {
+    return;
+  }
+
+  const shouldKick = window.confirm(`${player.nickname}님을 방에서 내보낼까요?`);
+  if (!shouldKick) {
+    return;
+  }
+
+  isUpdating.value = true;
+
+  try {
+    await kickPlayer(player);
+    toastStore.success(`${player.nickname}님을 방에서 내보냈습니다.`);
+  } catch (error) {
+    toastStore.error(error.message);
+  } finally {
+    isUpdating.value = false;
+  }
 }
 
 async function submitChat() {
@@ -2898,6 +2938,15 @@ async function leaveRoom() {
               >
                 {{ player.isConnected === false ? 'OFFLINE' : player.isReady ? 'READY' : 'WAIT' }}
               </span>
+              <button
+                v-if="canKickPlayer(player)"
+                type="button"
+                class="kick-player-button"
+                aria-label="참가자 내보내기"
+                @click="confirmKickPlayer(player)"
+              >
+                내보내기
+              </button>
             </div>
           </li>
 
@@ -4334,7 +4383,9 @@ async function leaveRoom() {
 
 .player-badges {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
+  justify-content: flex-end;
 }
 
 .ready-badge {
@@ -4352,6 +4403,25 @@ async function leaveRoom() {
   color: #86efac;
   border-color: rgba(34, 197, 94, 0.4);
   box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
+}
+
+.kick-player-button {
+  background: rgba(127, 29, 29, 0.42);
+  border: 1px solid rgba(248, 113, 113, 0.38);
+  border-radius: 4px;
+  color: #fecaca;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 900;
+  padding: 0.35rem 0.55rem;
+  white-space: nowrap;
+}
+
+.kick-player-button:hover {
+  background: rgba(153, 27, 27, 0.62);
+  border-color: rgba(248, 113, 113, 0.62);
+  color: #fee2e2;
 }
 
 .player-card.disconnected .ready-badge {

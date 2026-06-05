@@ -346,6 +346,7 @@ async function processTimeout() {
     await syncState()
   } catch (error) {
     console.warn('[Catchmind] timeout advance failed', error)
+    await syncState()
   } finally {
     timeoutPromise = null
   }

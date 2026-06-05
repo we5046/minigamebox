@@ -717,6 +717,68 @@ begin
       format('출제자가 퇴장하여 라운드가 종료되었습니다. 정답은 "%s"입니다.', v_word),
       true, format('catchmind_drawer_left:%s', v_round.round_no)
     );
+  elsif v_round.phase = 'ANSWERING'
+    and v_round.phase_ends_at is not null
+    and v_round.phase_ends_at <= now()
+  then
+    select word.word
+    into v_word
+    from private.catchmind_round_secrets secret
+    join private.catchmind_words word on word.id = secret.word_id
+    where secret.round_id = v_round.id;
+
+    update public.catchmind_rounds
+    set
+      phase = 'ROUND_RESULT',
+      phase_started_at = now(),
+      phase_ends_at = now() + interval '4 seconds',
+      updated_at = now()
+    where id = v_round.id;
+
+    perform private.insert_catchmind_message(
+      p_room_id, v_game_id, v_round.round_no, null, 'System',
+      format('라운드가 종료되었습니다. 정답은 "%s"입니다.', v_word),
+      true, format('catchmind_round_result:%s', v_round.round_no)
+    );
+  elsif v_round.phase = 'ROUND_RESULT'
+    and v_round.phase_ends_at is not null
+    and v_round.phase_ends_at <= now()
+  then
+    if v_match.status = 'finished' or v_match.current_round_no >= v_match.total_rounds then
+      select coalesce(array_agg(user_id), '{}'::uuid[])
+      into v_winners
+      from public.catchmind_players
+      where game_id = v_game_id
+        and score = (
+          select max(score)
+          from public.catchmind_players
+          where game_id = v_game_id
+        );
+
+      update public.catchmind_matches
+      set
+        status = 'finished',
+        winner_user_ids = v_winners,
+        updated_at = now()
+      where game_id = v_game_id;
+
+      update public.catchmind_rounds
+      set
+        phase = 'GAME_RESULT',
+        phase_ends_at = null,
+        updated_at = now()
+      where id = v_round.id;
+
+      update public.games
+      set status = 'finished', ended_at = coalesce(ended_at, now())
+      where id = v_game_id;
+
+      update public.rooms
+      set status = 'game_over', phase = 'result', updated_at = now()
+      where id = p_room_id;
+    else
+      perform private.start_catchmind_round(v_game_id);
+    end if;
   end if;
 end;
 $$;
