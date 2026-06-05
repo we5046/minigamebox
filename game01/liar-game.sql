@@ -42,7 +42,6 @@ begin
         ('public', 'rooms', 'phase'),
         ('public', 'rooms', 'min_start_players'),
         ('public', 'rooms', 'tie_vote_rule'),
-        ('public', 'rooms', 'spectator_allowed'),
         ('public', 'rooms', 'updated_at'),
         ('public', 'room_players', 'connection_status'),
         ('public', 'room_players', 'is_ready'),
@@ -1325,7 +1324,6 @@ begin
   set
     min_start_players = greatest(min_start_players, 3),
     tie_vote_rule = 'revote',
-    spectator_allowed = false,
     updated_at = now()
   where id = p_room_id;
 

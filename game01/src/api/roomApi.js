@@ -22,7 +22,7 @@ export const DEFAULT_ROOM_DETAIL_SETTINGS = {
   voteTimeSeconds: 15,
   minStartPlayers: 4,
   tieVoteRule: 'no_execution',
-  spectatorAllowed: false,
+  firstDayWillAllowed: true,
   firstNightAbilityAllowed: true,
   finalDefenseEnabled: false,
 }
@@ -83,8 +83,8 @@ export function normalizeRoom(room) {
     minStartPlayers:
       room.min_start_players ?? DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers,
     tieVoteRule: room.tie_vote_rule || DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule,
-    spectatorAllowed:
-      room.spectator_allowed ?? DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed,
+    firstDayWillAllowed:
+      room.first_day_will_allowed ?? DEFAULT_ROOM_DETAIL_SETTINGS.firstDayWillAllowed,
     firstNightAbilityAllowed:
       room.first_night_ability_allowed ??
       DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed,
@@ -115,7 +115,7 @@ const roomSelect = `
   discussion_time_seconds,
   min_start_players,
   tie_vote_rule,
-  spectator_allowed,
+  first_day_will_allowed,
   first_night_ability_allowed,
   final_defense_enabled,
   role_reveal_mode,
@@ -178,7 +178,7 @@ export async function createRoom({
   discussionTimeSeconds = DEFAULT_ROOM_DETAIL_SETTINGS.discussionTimeSeconds,
   minStartPlayers = DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers,
   tieVoteRule = DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule,
-  spectatorAllowed = DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed,
+  firstDayWillAllowed = DEFAULT_ROOM_DETAIL_SETTINGS.firstDayWillAllowed,
   firstNightAbilityAllowed = DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed,
   finalDefenseEnabled = DEFAULT_ROOM_DETAIL_SETTINGS.finalDefenseEnabled,
   roleRevealMode = 'private',
@@ -198,7 +198,7 @@ export async function createRoom({
     p_discussion_time_seconds: discussionTimeSeconds,
     p_min_start_players: minStartPlayers,
     p_tie_vote_rule: tieVoteRule,
-    p_spectator_allowed: spectatorAllowed,
+    p_first_day_will_allowed: firstDayWillAllowed,
     p_first_night_ability_allowed: firstNightAbilityAllowed,
     p_role_reveal_mode: roleRevealMode,
     p_entry_mode: entryMode,
@@ -422,8 +422,8 @@ export async function updateRoom(roomId, payload) {
   if (Object.prototype.hasOwnProperty.call(payload, 'tieVoteRule')) {
     roomPayload.tie_vote_rule = payload.tieVoteRule
   }
-  if (Object.prototype.hasOwnProperty.call(payload, 'spectatorAllowed')) {
-    roomPayload.spectator_allowed = payload.spectatorAllowed
+  if (Object.prototype.hasOwnProperty.call(payload, 'firstDayWillAllowed')) {
+    roomPayload.first_day_will_allowed = payload.firstDayWillAllowed
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'firstNightAbilityAllowed')) {
     roomPayload.first_night_ability_allowed = payload.firstNightAbilityAllowed

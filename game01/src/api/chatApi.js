@@ -210,6 +210,25 @@ export async function sendGameMessage({ roomId, gameId, userId, nickname, conten
   return normalizeGameMessage(data)
 }
 
+export async function submitFirstDayWill(roomId, content) {
+  const { data, error } = await supabase.rpc('submit_first_day_will', {
+    p_room_id: roomId,
+    p_content: content.trim(),
+  })
+
+  if (error) {
+    throw new Error(
+      error.message?.includes('already submitted')
+        ? '유언은 한 번만 남길 수 있습니다.'
+        : error.message?.includes('disabled')
+          ? '이 방에서는 첫날 사망자 유언을 사용할 수 없습니다.'
+          : '지금은 유언을 남길 수 없습니다.',
+    )
+  }
+
+  return normalizeGameMessage(data)
+}
+
 export function subscribeToGameMessages(roomId, gameId, callback) {
   if (!gameId) {
     return () => {}

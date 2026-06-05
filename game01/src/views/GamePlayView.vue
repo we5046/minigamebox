@@ -5,6 +5,7 @@ import {
   getGameMessages,
   normalizeGameMessage,
   sendGameMessage,
+  submitFirstDayWill,
   subscribeToGameMessages,
   uploadGameLogMarkdown,
 } from '@/api/chatApi'
@@ -53,6 +54,7 @@ const voteStatus = ref([])
 const messages = ref([])
 const chatDraft = ref('')
 const deadChatDraft = ref('')
+const firstDayWillDraft = ref('')
 const activeMainChatChannel = ref('public')
 const selectedNightTarget = ref('')
 const selectedVoteTarget = ref('')
@@ -298,6 +300,21 @@ const canSendDeadChat = computed(
     !isAlive.value &&
     room.value?.status === 'playing' &&
     Boolean(game.value?.id) &&
+    Boolean(savedUser.value?.id),
+)
+const hasSubmittedFirstDayWill = computed(() =>
+  messages.value.some(
+    (message) => message.eventKey === `first_day_will:${savedUser.value?.id}`,
+  ),
+)
+const canSubmitFirstDayWill = computed(
+  () =>
+    room.value?.firstDayWillAllowed === true &&
+    !isAlive.value &&
+    Number(game.value?.round_no) === 1 &&
+    ['day', 'discussion'].includes(phaseKey.value) &&
+    remainingSeconds.value > 0 &&
+    !hasSubmittedFirstDayWill.value &&
     Boolean(savedUser.value?.id),
 )
 const nightActionType = computed(() => {
@@ -1108,6 +1125,23 @@ async function handleSendDeadMessage() {
   }
 }
 
+async function handleSubmitFirstDayWill() {
+  if (isSending.value || !firstDayWillDraft.value.trim() || !canSubmitFirstDayWill.value) return
+
+  isSending.value = true
+
+  try {
+    const sentMessage = await submitFirstDayWill(roomId.value, firstDayWillDraft.value)
+    firstDayWillDraft.value = ''
+    pushMessage(sentMessage)
+    toastStore.success('유언을 남겼습니다.')
+  } catch (error) {
+    toastStore.error(error.message)
+  } finally {
+    isSending.value = false
+  }
+}
+
 async function handleSkipPhaseCommand() {
   if (!canSkipPhaseCommand.value) {
     toastStore.error('방장만 /스킵 명령을 사용할 수 있습니다.')
@@ -1522,6 +1556,34 @@ onBeforeUnmount(() => {
 
           <div class="chat-phase-banner dead">
             사망한 플레이어끼리만 대화할 수 있습니다. 사망한 방장도 /스킵을 사용할 수 있습니다.
+          </div>
+
+          <div
+            v-if="room?.firstDayWillAllowed && Number(game?.round_no) === 1"
+            class="first-day-will"
+          >
+            <div class="chat-phase-banner">
+              첫날 사망자 유언은 공개 채팅에 한 번만 남길 수 있습니다.
+            </div>
+            <form
+              v-if="!hasSubmittedFirstDayWill"
+              class="chat-input-area"
+              @submit.prevent="handleSubmitFirstDayWill"
+            >
+              <input
+                v-model="firstDayWillDraft"
+                :disabled="!canSubmitFirstDayWill || isSending"
+                placeholder="첫날 유언을 입력하세요"
+                maxlength="240"
+              />
+              <button
+                type="submit"
+                :disabled="!canSubmitFirstDayWill || isSending || !firstDayWillDraft.trim()"
+              >
+                유언 남기기
+              </button>
+            </form>
+            <div v-else class="chat-phase-banner dead">유언을 이미 남겼습니다.</div>
           </div>
 
           <div class="chat-messages">
@@ -2999,6 +3061,11 @@ button:disabled {
   background: rgba(88, 28, 135, 0.2);
   border-bottom-color: rgba(192, 132, 252, 0.22);
   color: #e9d5ff;
+}
+
+.first-day-will {
+  display: grid;
+  gap: 0.55rem;
 }
 
 .chat-tabs {

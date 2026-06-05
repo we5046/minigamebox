@@ -6,6 +6,12 @@ begin;
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
 
+alter table public.rooms
+  add column if not exists first_day_will_allowed boolean not null default true;
+
+alter table public.rooms
+  drop column if exists spectator_allowed;
+
 do $$
 begin
   if to_regprocedure('extensions.gen_salt(text)') is null
@@ -75,7 +81,9 @@ create trigger hash_room_entry_password
   for each row
   execute function public.hash_room_entry_password();
 
-create or replace function public.create_room(
+drop function if exists public.create_room(text, text, text, integer, integer, integer, integer, integer, text, boolean, boolean, text, text, text, jsonb);
+
+create function public.create_room(
   p_title text,
   p_description text,
   p_game_type text,
@@ -85,7 +93,7 @@ create or replace function public.create_room(
   p_discussion_time_seconds integer,
   p_min_start_players integer,
   p_tie_vote_rule text,
-  p_spectator_allowed boolean,
+  p_first_day_will_allowed boolean,
   p_first_night_ability_allowed boolean,
   p_role_reveal_mode text,
   p_entry_mode text,
@@ -166,7 +174,7 @@ begin
         discussion_time_seconds,
         min_start_players,
         tie_vote_rule,
-        spectator_allowed,
+        first_day_will_allowed,
         first_night_ability_allowed,
         role_reveal_mode,
         entry_mode,
@@ -186,7 +194,10 @@ begin
         p_discussion_time_seconds,
         p_min_start_players,
         coalesce(nullif(trim(p_tie_vote_rule), ''), 'no_execution'),
-        coalesce(p_spectator_allowed, false),
+        case
+          when trim(p_game_type) = 'mafia' then coalesce(p_first_day_will_allowed, true)
+          else false
+        end,
         coalesce(p_first_night_ability_allowed, true),
         p_role_reveal_mode,
         p_entry_mode,

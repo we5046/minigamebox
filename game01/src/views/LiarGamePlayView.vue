@@ -1059,7 +1059,6 @@ input:disabled {
   border-radius: 12px;
   display: grid;
   gap: 0.28rem;
-  min-height: 0;
   max-width: 82%;
   padding: 0.72rem 0.82rem;
   overflow-wrap: anywhere;

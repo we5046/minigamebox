@@ -75,8 +75,8 @@ const newRoomMinStartPlayers = ref(
   DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers,
 );
 const newRoomTieVoteRule = ref(DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule);
-const newRoomSpectatorAllowed = ref(
-  DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed,
+const newRoomFirstDayWillAllowed = ref(
+  DEFAULT_ROOM_DETAIL_SETTINGS.firstDayWillAllowed,
 );
 const newRoomFirstNightAbilityAllowed = ref(
   DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed,
@@ -409,8 +409,8 @@ function applyClassicNewRoomSettings() {
   newRoomMinStartPlayers.value =
     DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers;
   newRoomTieVoteRule.value = DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule;
-  newRoomSpectatorAllowed.value =
-    DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed;
+  newRoomFirstDayWillAllowed.value =
+    DEFAULT_ROOM_DETAIL_SETTINGS.firstDayWillAllowed;
   newRoomFirstNightAbilityAllowed.value =
     DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed;
   newRoomFinalDefenseEnabled.value =
@@ -717,7 +717,10 @@ async function createRoom() {
       discussionTimeSeconds: Number(newRoomDiscussionTimeSeconds.value),
       minStartPlayers: Number(newRoomMinStartPlayers.value),
       tieVoteRule: newRoomTieVoteRule.value,
-      spectatorAllowed: newRoomSpectatorAllowed.value,
+      firstDayWillAllowed:
+        selectedGameType.value === 'mafia'
+          ? newRoomFirstDayWillAllowed.value
+          : false,
       firstNightAbilityAllowed: newRoomFirstNightAbilityAllowed.value,
       finalDefenseEnabled: newRoomFinalDefenseEnabled.value,
       roleRevealMode: newRoomRoleRevealMode.value,
@@ -759,8 +762,8 @@ async function createRoom() {
     newRoomTieVoteRule.value = isLiarGameSelected.value
       ? 'revote'
       : DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule;
-    newRoomSpectatorAllowed.value =
-      DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed;
+    newRoomFirstDayWillAllowed.value =
+      DEFAULT_ROOM_DETAIL_SETTINGS.firstDayWillAllowed;
     newRoomFirstNightAbilityAllowed.value =
       DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed;
     newRoomFinalDefenseEnabled.value =
@@ -2139,21 +2142,21 @@ async function logout() {
                 </div>
 
                 <div class="form-group">
-                  <label>관전 허용</label>
+                  <label>첫날 사망자 유언</label>
                   <div class="option-group">
                     <button
                       type="button"
                       class="option-btn"
-                      :class="{ active: newRoomSpectatorAllowed }"
-                      @click="newRoomSpectatorAllowed = true"
+                      :class="{ active: newRoomFirstDayWillAllowed }"
+                      @click="newRoomFirstDayWillAllowed = true"
                     >
                       활성화
                     </button>
                     <button
                       type="button"
                       class="option-btn"
-                      :class="{ active: !newRoomSpectatorAllowed }"
-                      @click="newRoomSpectatorAllowed = false"
+                      :class="{ active: !newRoomFirstDayWillAllowed }"
+                      @click="newRoomFirstDayWillAllowed = false"
                     >
                       비활성화
                     </button>
@@ -2712,7 +2715,6 @@ async function logout() {
                     </svg>
                     비밀번호 입력 후 입장
                   </button>
-                  <button type="button" disabled>관전하기</button>
                   <button type="button" @click="selectedRoomId = null">
                     닫기
                   </button>
@@ -2752,6 +2754,7 @@ async function logout() {
                 방 만들기
               </button>
             </div>
+            <p class="refresh-guide">※ 뭔가 이상하다면 새로고침(F5)을 한번 눌러주세요.</p>
           </div>
         </section>
 
@@ -3371,9 +3374,17 @@ h2 {
 }
 
 .room-board-footer {
+  align-items: center;
   display: flex;
-  justify-content: flex-end;
+  gap: 1rem;
+  justify-content: space-between;
   min-width: 0;
+}
+
+.refresh-guide {
+  color: rgba(255, 245, 224, 0.62);
+  font-size: 0.82rem;
+  margin: 0;
 }
 
 .room-actions a,

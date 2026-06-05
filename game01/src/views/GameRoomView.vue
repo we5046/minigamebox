@@ -328,9 +328,9 @@ const roomBriefing = computed(() => {
         tone: room.value.entryMode === 'private' ? 'private' : 'public',
       },
       {
-        label: '관전',
-        value: getEnabledLabel(room.value.spectatorAllowed),
-        tone: room.value.spectatorAllowed ? 'allowed' : 'disabled',
+        label: '첫날 사망자 유언',
+        value: getEnabledLabel(room.value.firstDayWillAllowed),
+        tone: room.value.firstDayWillAllowed ? 'allowed' : 'disabled',
       },
       {
         label: '역할 공개',
@@ -474,7 +474,7 @@ const isEditAdvancedOpen = ref(true);
 const editRoomDiscussionTimeSeconds = ref(60);
 const editRoomMinStartPlayers = ref(4);
 const editRoomTieVoteRule = ref('no_execution');
-const editSpectatorAllowed = ref(false);
+const editFirstDayWillAllowed = ref(true);
 const editFirstNightAbilityAllowed = ref(true);
 const editFinalDefenseEnabled = ref(false);
 const editEntryPassword = ref('');
@@ -532,7 +532,8 @@ function applyClassicEditRoomSettings() {
   editRoomMinStartPlayers.value =
     DEFAULT_ROOM_DETAIL_SETTINGS.minStartPlayers;
   editRoomTieVoteRule.value = DEFAULT_ROOM_DETAIL_SETTINGS.tieVoteRule;
-  editSpectatorAllowed.value = DEFAULT_ROOM_DETAIL_SETTINGS.spectatorAllowed;
+  editFirstDayWillAllowed.value =
+    DEFAULT_ROOM_DETAIL_SETTINGS.firstDayWillAllowed;
   editFirstNightAbilityAllowed.value =
     DEFAULT_ROOM_DETAIL_SETTINGS.firstNightAbilityAllowed;
   editFinalDefenseEnabled.value =
@@ -550,7 +551,7 @@ function applyClassicEditLiarSettings() {
   editVoteTimeSeconds.value = DEFAULT_ROOM_DETAIL_SETTINGS.voteTimeSeconds;
   editRoomMinStartPlayers.value = 3;
   editRoomTieVoteRule.value = 'revote';
-  editSpectatorAllowed.value = false;
+  editFirstDayWillAllowed.value = false;
   editFirstNightAbilityAllowed.value = false;
   editFinalDefenseEnabled.value = false;
   editRoleRevealMode.value = 'private';
@@ -820,7 +821,7 @@ watch([editRoomMaxPlayers, editRoomDescription], () => {
   if (isLiarRoom.value) {
     editRoomMinStartPlayers.value = 3;
     editRoomTieVoteRule.value = 'revote';
-    editSpectatorAllowed.value = false;
+    editFirstDayWillAllowed.value = false;
     editFirstNightAbilityAllowed.value = false;
     editFinalDefenseEnabled.value = false;
     editRoleRevealMode.value = 'private';
@@ -834,7 +835,7 @@ watch([editRoomMaxPlayers, editRoomDescription], () => {
 
   if (isCatchmindRoom.value) {
     editRoomMinStartPlayers.value = Math.max(2, Math.min(editRoomMaxPlayers.value, editRoomMinStartPlayers.value));
-    editSpectatorAllowed.value = false;
+    editFirstDayWillAllowed.value = false;
     editFirstNightAbilityAllowed.value = false;
     editFinalDefenseEnabled.value = false;
     editRoleRevealMode.value = 'private';
@@ -1573,7 +1574,8 @@ function mergeRoomPayload(nextRoom) {
     discussionTimeSeconds: nextRoom.discussion_time_seconds ?? room.value.discussionTimeSeconds,
     minStartPlayers: nextRoom.min_start_players ?? room.value.minStartPlayers,
     tieVoteRule: nextRoom.tie_vote_rule ?? room.value.tieVoteRule,
-    spectatorAllowed: nextRoom.spectator_allowed ?? room.value.spectatorAllowed,
+    firstDayWillAllowed:
+      nextRoom.first_day_will_allowed ?? room.value.firstDayWillAllowed,
     firstNightAbilityAllowed: nextRoom.first_night_ability_allowed ?? room.value.firstNightAbilityAllowed,
     finalDefenseEnabled: nextRoom.final_defense_enabled ?? room.value.finalDefenseEnabled,
     roleRevealMode: nextRoom.role_reveal_mode ?? room.value.roleRevealMode,
@@ -1697,7 +1699,7 @@ function openEditRoomForm() {
   editNightTimeSeconds.value = room.value?.nightTimeSeconds || 30;
   editVoteTimeSeconds.value = room.value?.voteTimeSeconds || 15;
   editRoomTieVoteRule.value = room.value?.tieVoteRule || 'no_execution';
-  editSpectatorAllowed.value = room.value?.spectatorAllowed ?? false;
+  editFirstDayWillAllowed.value = room.value?.firstDayWillAllowed ?? true;
   editFirstNightAbilityAllowed.value =
     room.value?.firstNightAbilityAllowed ?? true;
   editFinalDefenseEnabled.value = room.value?.finalDefenseEnabled ?? false;
@@ -1712,7 +1714,7 @@ function openEditRoomForm() {
     copyLiarSettingsToEdit();
     editRoomMinStartPlayers.value = 3;
     editRoomTieVoteRule.value = 'revote';
-    editSpectatorAllowed.value = false;
+    editFirstDayWillAllowed.value = false;
     editFirstNightAbilityAllowed.value = false;
     editFinalDefenseEnabled.value = false;
     editRoleRevealMode.value = 'private';
@@ -1727,7 +1729,7 @@ function openEditRoomForm() {
   if (isCatchmindRoom.value) {
     copyCatchmindSettingsToEdit();
     editRoomMinStartPlayers.value = 2;
-    editSpectatorAllowed.value = false;
+    editFirstDayWillAllowed.value = false;
     editFirstNightAbilityAllowed.value = false;
     editFinalDefenseEnabled.value = false;
     editRoleRevealMode.value = 'private';
@@ -1758,7 +1760,8 @@ function closeEditRoomForm() {
   editRoomDiscussionTimeSeconds.value = 60;
   editRoomMinStartPlayers.value = 4;
   editRoomTieVoteRule.value = 'no_execution';
-  editSpectatorAllowed.value = false;
+  editFirstDayWillAllowed.value =
+    DEFAULT_ROOM_DETAIL_SETTINGS.firstDayWillAllowed;
   editFirstNightAbilityAllowed.value = true;
   editFinalDefenseEnabled.value = false;
   editRoleRevealMode.value = 'private';
@@ -1928,9 +1931,9 @@ async function saveRoomInfo() {
           ? 2
           : Number(editRoomMinStartPlayers.value),
       tieVoteRule: isLiarRoom.value ? 'revote' : editRoomTieVoteRule.value,
-      spectatorAllowed: isLiarRoom.value
+      firstDayWillAllowed: isLiarRoom.value || isCatchmindRoom.value
         ? false
-        : editSpectatorAllowed.value,
+        : editFirstDayWillAllowed.value,
       firstNightAbilityAllowed: isLiarRoom.value
         ? false
         : editFirstNightAbilityAllowed.value,
@@ -2619,21 +2622,21 @@ async function leaveRoom() {
             </div>
 
             <div class="form-group">
-              <label>관전 허용</label>
+              <label>첫날 사망자 유언</label>
               <div class="option-group">
                 <button
                   type="button"
                   class="option-btn"
-                  :class="{ active: editSpectatorAllowed }"
-                  @click="editSpectatorAllowed = true"
+                  :class="{ active: editFirstDayWillAllowed }"
+                  @click="editFirstDayWillAllowed = true"
                 >
                   활성화
                 </button>
                 <button
                   type="button"
                   class="option-btn"
-                  :class="{ active: !editSpectatorAllowed }"
-                  @click="editSpectatorAllowed = false"
+                  :class="{ active: !editFirstDayWillAllowed }"
+                  @click="editFirstDayWillAllowed = false"
                 >
                   비활성화
                 </button>
