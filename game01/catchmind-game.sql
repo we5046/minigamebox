@@ -745,7 +745,13 @@ begin
       where room_player.room_id = p_room_id
         and room_player.user_id = player.user_id
         and (
-          room_player.connection_status = 'active'
+          (
+            room_player.connection_status = 'active'
+            and (
+              room_player.pending_leave_at is null
+              or room_player.pending_leave_at > now() - interval '15 seconds'
+            )
+          )
           or coalesce(room_player.disconnected_at, now())
             > now() - interval '60 seconds'
         )

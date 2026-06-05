@@ -1997,6 +1997,200 @@ begin
 end;
 $$;
 
+create or replace function private.reconcile_liar_match(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_game_id uuid := private.get_liar_game_id_for_room(p_room_id);
+  v_state public.liar_match_states;
+  v_round public.liar_rounds;
+  v_match_player_count integer := 0;
+  v_active_player_count integer := 0;
+  v_active_user_ids uuid[] := '{}'::uuid[];
+begin
+  select *
+  into v_state
+  from public.liar_match_states
+  where game_id = v_game_id
+  for update;
+
+  if not found or v_state.status = 'finished' then
+    return;
+  end if;
+
+  select count(*)
+  into v_match_player_count
+  from public.liar_match_players
+  where game_id = v_game_id;
+
+  select
+    count(*),
+    coalesce(array_agg(player.user_id order by player.joined_at), '{}'::uuid[])
+  into v_active_player_count, v_active_user_ids
+  from public.room_players player
+  where player.room_id = p_room_id
+    and player.connection_status = 'active'
+    and coalesce(player.last_seen_at, player.joined_at)
+      >= now() - interval '120 seconds'
+    and (
+      player.pending_leave_at is null
+      or player.pending_leave_at > now() - interval '15 seconds'
+    );
+
+  if v_active_player_count = 0 then
+    delete from public.rooms
+    where id = p_room_id;
+    return;
+  end if;
+
+  if v_active_player_count >= v_match_player_count then
+    return;
+  end if;
+
+  select *
+  into v_round
+  from public.liar_rounds
+  where game_id = v_game_id
+  order by round_no desc
+  limit 1
+  for update;
+
+  update public.liar_match_states
+  set
+    status = 'finished',
+    winner_user_ids = v_active_user_ids,
+    finished_at = coalesce(finished_at, now()),
+    updated_at = now()
+  where game_id = v_game_id;
+
+  update public.liar_rounds
+  set
+    phase = 'match_result',
+    end_reason = 'player_left',
+    phase_started_at = now(),
+    phase_ends_at = null,
+    ended_at = coalesce(ended_at, now()),
+    updated_at = now()
+  where id = v_round.id;
+
+  update public.games
+  set
+    status = 'ended',
+    ended_at = coalesce(ended_at, now())
+  where id = v_game_id;
+
+  update public.rooms
+  set
+    status = 'game_over',
+    phase = 'result',
+    updated_at = now()
+  where id = p_room_id;
+
+  perform private.record_liar_match_results(v_game_id);
+
+  perform private.insert_liar_system_message(
+    p_room_id,
+    v_game_id,
+    coalesce(v_round.round_no, 0),
+    '참가자가 게임에서 나가 라이어게임이 종료되었습니다.',
+    'liar_player_left'
+  );
+end;
+$$;
+
+create or replace function private.leave_liar_match(p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_game_id uuid := private.get_liar_game_id_for_room(p_room_id);
+  v_next_host_user_id uuid;
+begin
+  if v_user_id is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  if not private.is_liar_match_player(v_game_id, v_user_id) then
+    raise exception 'Liar match participant required';
+  end if;
+
+  delete from public.room_players
+  where room_id = p_room_id
+    and user_id = v_user_id;
+
+  select user_id
+  into v_next_host_user_id
+  from public.room_players
+  where room_id = p_room_id
+    and connection_status = 'active'
+  order by joined_at
+  limit 1;
+
+  if v_next_host_user_id is null then
+    delete from public.rooms
+    where id = p_room_id;
+    return;
+  end if;
+
+  update public.room_players
+  set
+    is_host = (user_id = v_next_host_user_id),
+    is_ready = case when user_id = v_next_host_user_id then true else is_ready end
+  where room_id = p_room_id;
+
+  update public.rooms
+  set
+    host_user_id = v_next_host_user_id,
+    updated_at = now()
+  where id = p_room_id;
+
+  perform private.reconcile_liar_match(p_room_id);
+end;
+$$;
+
+create or replace function private.reconcile_liar_room_player_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_room_id uuid := case when tg_op = 'DELETE' then old.room_id else new.room_id end;
+begin
+  if pg_trigger_depth() > 1 then
+    if tg_op = 'DELETE' then return old; end if;
+    return new;
+  end if;
+
+  if exists (
+    select 1
+    from public.rooms room
+    where room.id = v_room_id
+      and room.game_type = 'liar'
+      and room.status <> 'waiting'
+  ) then
+    perform private.reconcile_liar_match(v_room_id);
+  end if;
+
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists reconcile_liar_room_player_change
+  on public.room_players;
+
+create trigger reconcile_liar_room_player_change
+  after delete or update of connection_status on public.room_players
+  for each row
+  execute function private.reconcile_liar_room_player_change();
+
 create or replace function public.configure_liar_room(
   p_room_id uuid,
   p_setting_mode text default 'classic',
@@ -2098,6 +2292,25 @@ security invoker
 set search_path = ''
 as $$
   select private.return_liar_room_to_lobby(p_room_id);
+$$;
+
+create or replace function public.reconcile_liar_match(p_room_id uuid)
+returns jsonb
+language sql
+security invoker
+set search_path = ''
+as $$
+  select private.reconcile_liar_match(p_room_id);
+  select private.get_current_liar_match(p_room_id);
+$$;
+
+create or replace function public.leave_liar_match(p_room_id uuid)
+returns void
+language sql
+security invoker
+set search_path = ''
+as $$
+  select private.leave_liar_match(p_room_id);
 $$;
 
 alter table public.liar_categories enable row level security;
@@ -2208,6 +2421,8 @@ revoke all on function private.resolve_liar_vote_for_room(uuid) from public;
 revoke all on function private.submit_liar_guess(uuid, text) from public;
 revoke all on function private.advance_liar_phase(uuid) from public;
 revoke all on function private.return_liar_room_to_lobby(uuid) from public;
+revoke all on function private.reconcile_liar_match(uuid) from public;
+revoke all on function private.leave_liar_match(uuid) from public;
 
 grant execute on function private.is_liar_match_player(uuid, uuid) to authenticated;
 grant execute on function private.configure_liar_room(uuid, text, uuid, integer, integer, integer) to authenticated;
@@ -2219,6 +2434,8 @@ grant execute on function private.resolve_liar_vote_for_room(uuid) to authentica
 grant execute on function private.submit_liar_guess(uuid, text) to authenticated;
 grant execute on function private.advance_liar_phase(uuid) to authenticated;
 grant execute on function private.return_liar_room_to_lobby(uuid) to authenticated;
+grant execute on function private.reconcile_liar_match(uuid) to authenticated;
+grant execute on function private.leave_liar_match(uuid) to authenticated;
 
 revoke all on function public.configure_liar_room(uuid, text, uuid, integer, integer, integer) from public;
 revoke all on function public.start_liar_match(uuid) from public;
@@ -2229,6 +2446,8 @@ revoke all on function public.resolve_liar_vote(uuid) from public;
 revoke all on function public.submit_liar_guess(uuid, text) from public;
 revoke all on function public.advance_liar_phase(uuid) from public;
 revoke all on function public.return_liar_room_to_lobby(uuid) from public;
+revoke all on function public.reconcile_liar_match(uuid) from public;
+revoke all on function public.leave_liar_match(uuid) from public;
 
 grant execute on function public.configure_liar_room(uuid, text, uuid, integer, integer, integer) to authenticated;
 grant execute on function public.start_liar_match(uuid) to authenticated;
@@ -2239,6 +2458,8 @@ grant execute on function public.resolve_liar_vote(uuid) to authenticated;
 grant execute on function public.submit_liar_guess(uuid, text) to authenticated;
 grant execute on function public.advance_liar_phase(uuid) to authenticated;
 grant execute on function public.return_liar_room_to_lobby(uuid) to authenticated;
+grant execute on function public.reconcile_liar_match(uuid) to authenticated;
+grant execute on function public.leave_liar_match(uuid) to authenticated;
 
 do $$
 declare

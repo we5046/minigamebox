@@ -4,7 +4,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { getGameMessages, subscribeToGameMessages } from '@/api/chatApi'
-import { getRoom, heartbeatRoomPresence, ROOM_PRESENCE_TIMEOUTS } from '@/api/roomApi'
+import {
+  getRoom,
+  heartbeatRoomPresence,
+  prepareRoomDepartureSignal,
+  ROOM_PRESENCE_TIMEOUTS,
+  signalRoomDeparture,
+} from '@/api/roomApi'
 import {
   advanceCatchmindPhase,
   broadcastCatchmindCanvas,
@@ -53,6 +59,7 @@ let timeoutPromise = null
 let resumeSyncPromise = null
 let snapshotSaveTimer = null
 let snapshotSavePromise = null
+let intentionalDeparture = false
 
 const phase = computed(() => match.value?.round?.phase || 'WAITING')
 const players = computed(() => match.value?.players || [])
@@ -318,6 +325,7 @@ async function handlePageResume() {
   resumeSyncPromise = (async () => {
     nowTick.value = Date.now()
     resetSubscriptions()
+    await prepareRoomDepartureSignal()
     await sendHeartbeat()
     await syncState()
     await loadCanvasSnapshot()
@@ -364,9 +372,11 @@ async function returnToLobby() {
   if (isWorking.value) return
   isWorking.value = true
   try {
+    intentionalDeparture = true
     await returnCatchmindLobby(roomId.value)
     await router.push(`/rooms/${roomId.value}`)
   } catch (error) {
+    intentionalDeparture = false
     toastStore.error(error.message)
   } finally {
     isWorking.value = false
@@ -377,18 +387,26 @@ async function leaveGame() {
   if (isWorking.value) return
   isWorking.value = true
   try {
+    intentionalDeparture = true
     await leaveCatchmindMatch(roomId.value)
     await router.push('/home')
   } catch (error) {
+    intentionalDeparture = false
     toastStore.error(error.message)
   } finally {
     isWorking.value = false
   }
 }
 
+function handlePageDeparture() {
+  if (intentionalDeparture) return
+  signalRoomDeparture(roomId.value)
+}
+
 watch(() => match.value?.round?.id, () => nextTick(() => clearCanvas()))
 
 onMounted(async () => {
+  await prepareRoomDepartureSignal()
   await syncState()
   pollTimer = setInterval(syncState, 2500)
   heartbeatTimer = setInterval(sendHeartbeat, ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs)
@@ -399,6 +417,9 @@ onMounted(async () => {
   document.addEventListener('visibilitychange', handlePageResume)
   window.addEventListener('focus', handlePageResume)
   window.addEventListener('online', handlePageResume)
+  window.addEventListener('pageshow', handlePageResume)
+  window.addEventListener('pagehide', handlePageDeparture)
+  window.addEventListener('beforeunload', handlePageDeparture)
 })
 
 onBeforeUnmount(() => {
@@ -411,6 +432,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handlePageResume)
   window.removeEventListener('focus', handlePageResume)
   window.removeEventListener('online', handlePageResume)
+  window.removeEventListener('pageshow', handlePageResume)
+  window.removeEventListener('pagehide', handlePageDeparture)
+  window.removeEventListener('beforeunload', handlePageDeparture)
 })
 </script>
 

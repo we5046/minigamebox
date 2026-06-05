@@ -228,6 +228,22 @@ export function returnLiarRoomToLobby(roomId) {
   )
 }
 
+export function reconcileLiarMatch(roomId) {
+  return callLiarRpc(
+    'reconcile_liar_match',
+    { p_room_id: roomId },
+    '라이어게임 참가자 상태를 확인하지 못했습니다.',
+  )
+}
+
+export function leaveLiarMatch(roomId) {
+  return callLiarRpc(
+    'leave_liar_match',
+    { p_room_id: roomId },
+    '라이어게임에서 나가지 못했습니다.',
+  )
+}
+
 export function subscribeToLiarMatch(gameId, callback) {
   if (!gameId) {
     return () => {}

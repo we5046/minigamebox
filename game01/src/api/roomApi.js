@@ -6,6 +6,9 @@ const roomDetailChannels = new Map()
 const gameChannels = new Map()
 const ROOM_LIST_CHANNEL_KEY = 'rooms-list'
 const HEARTBEAT_REQUEST_TIMEOUT_MS = 8_000
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+let departureAccessToken = ''
 
 export const ROOM_PRESENCE_TIMEOUTS = {
   heartbeatIntervalMs: 10_000,
@@ -806,6 +809,28 @@ export async function heartbeatRoomPresence(roomId) {
   if (error) {
     throw createSupabaseError('heartbeatRoomPresence: heartbeat_room_presence rpc failed', error, '방 접속 상태를 갱신하지 못했습니다.')
   }
+}
+
+export async function prepareRoomDepartureSignal() {
+  const { data } = await supabase.auth.getSession()
+  departureAccessToken = data?.session?.access_token || ''
+}
+
+export function signalRoomDeparture(roomId) {
+  if (!roomId || !SUPABASE_URL || !SUPABASE_ANON_KEY || !departureAccessToken) {
+    return
+  }
+
+  fetch(`${SUPABASE_URL}/rest/v1/rpc/signal_room_departure`, {
+    method: 'POST',
+    keepalive: true,
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${departureAccessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ p_room_id: roomId }),
+  }).catch(() => {})
 }
 
 export async function cleanupStaleRoomPlayers({

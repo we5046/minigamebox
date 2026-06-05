@@ -7,6 +7,8 @@ import {
   ROOM_PRESENCE_TIMEOUTS,
   getRoom,
   heartbeatRoomPresence,
+  prepareRoomDepartureSignal,
+  signalRoomDeparture,
   subscribeToRoom,
 } from '@/api/roomApi'
 import {
@@ -17,8 +19,9 @@ import {
 import { setCurrentUserPresence } from '@/api/presenceApi'
 import {
   advanceLiarPhase,
-  getCurrentLiarMatch,
   getMyLiarState,
+  leaveLiarMatch,
+  reconcileLiarMatch,
   resolveLiarVote,
   returnLiarRoomToLobby,
   submitLiarGuess,
@@ -57,6 +60,8 @@ let countdownTimer = null
 let subscribedGameId = null
 let statementTimeoutPromise = null
 let resumeSyncPromise = null
+let reconcilePromise = null
+let intentionalDeparture = false
 
 const phase = computed(() => match.value?.round?.phase || '')
 const scoreboard = computed(() => match.value?.scoreboard || [])
@@ -67,6 +72,9 @@ const currentPlayer = computed(() =>
   room.value?.players?.find((player) => player.userId === savedUser.value?.id),
 )
 const isHost = computed(() => currentPlayer.value?.isHost === true)
+const connectedPlayerCount = computed(
+  () => room.value?.players?.filter((player) => player.isConnected).length || 0,
+)
 const myVote = computed(() =>
   currentVotes.value.find((vote) => vote.voterId === savedUser.value?.id),
 )
@@ -144,6 +152,7 @@ function getRoundReasonLabel(reason) {
     liar_guessed_word: '라이어가 제시어를 맞혔습니다.',
     liar_failed_guess: '라이어가 제시어 추측에 실패했습니다.',
     revote_tied: '재투표에서도 동률이 발생하여 라운드가 무효 처리되었습니다.',
+    player_left: '참가자가 게임에서 나가 라이어게임이 종료되었습니다.',
   }
   return labels[reason] || '라운드 결과가 확정되었습니다.'
 }
@@ -218,7 +227,13 @@ async function syncState() {
       return
     }
 
-    const nextMatch = await getCurrentLiarMatch(roomId.value)
+    if (!reconcilePromise) {
+      reconcilePromise = reconcileLiarMatch(roomId.value).finally(() => {
+        reconcilePromise = null
+      })
+    }
+
+    const nextMatch = await reconcilePromise
     match.value = nextMatch
 
     if (nextMatch?.gameId) {
@@ -256,6 +271,7 @@ async function handlePageResume() {
     nowTick.value = Date.now()
     resetRoomSubscription()
     resetMatchSubscriptions()
+    await prepareRoomDepartureSignal()
     await sendHeartbeat()
     await syncState()
   })()
@@ -323,6 +339,15 @@ async function submitStatement() {
     statementDraft.value = ''
     await syncState()
   } catch (error) {
+    const message = error?.message || ''
+    if (
+      message.includes('participant required') ||
+      message.includes('Room not found') ||
+      message.includes('방 정보를 불러오지 못했습니다')
+    ) {
+      await router.replace('/home')
+      return
+    }
     toastStore.error(error.message)
   } finally {
     isWorking.value = false
@@ -373,16 +398,40 @@ async function returnToLobby() {
   isWorking.value = true
 
   try {
+    intentionalDeparture = true
     await returnLiarRoomToLobby(roomId.value)
     await router.push(`/rooms/${roomId.value}`)
   } catch (error) {
+    intentionalDeparture = false
     toastStore.error(error.message)
   } finally {
     isWorking.value = false
   }
 }
 
+async function leaveGame() {
+  if (isWorking.value) return
+  isWorking.value = true
+
+  try {
+    intentionalDeparture = true
+    await leaveLiarMatch(roomId.value)
+    await router.push('/home')
+  } catch (error) {
+    intentionalDeparture = false
+    toastStore.error(error.message)
+  } finally {
+    isWorking.value = false
+  }
+}
+
+function handlePageDeparture() {
+  if (intentionalDeparture) return
+  signalRoomDeparture(roomId.value)
+}
+
 onMounted(async () => {
+  await prepareRoomDepartureSignal()
   resetRoomSubscription()
   pollTimer = setInterval(syncState, 2500)
   heartbeatTimer = setInterval(sendHeartbeat, ROOM_PRESENCE_TIMEOUTS.heartbeatIntervalMs)
@@ -395,6 +444,9 @@ onMounted(async () => {
   document.addEventListener('visibilitychange', handlePageResume)
   window.addEventListener('focus', handlePageResume)
   window.addEventListener('online', handlePageResume)
+  window.addEventListener('pageshow', handlePageResume)
+  window.addEventListener('pagehide', handlePageDeparture)
+  window.addEventListener('beforeunload', handlePageDeparture)
 })
 
 onBeforeUnmount(() => {
@@ -407,6 +459,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handlePageResume)
   window.removeEventListener('focus', handlePageResume)
   window.removeEventListener('online', handlePageResume)
+  window.removeEventListener('pageshow', handlePageResume)
+  window.removeEventListener('pagehide', handlePageDeparture)
+  window.removeEventListener('beforeunload', handlePageDeparture)
 })
 </script>
 
@@ -421,7 +476,12 @@ onBeforeUnmount(() => {
           <p class="eyebrow">LIAR GAME · ROUND {{ match.currentRoundNo }}</p>
           <h1>{{ phaseLabel }}</h1>
         </div>
-        <div class="score-goal">목표 {{ match.targetScore }}점</div>
+        <div class="match-actions">
+          <span class="score-goal">참가 {{ connectedPlayerCount }}명 · 목표 {{ match.targetScore }}점</span>
+          <button type="button" class="leave-game-button" :disabled="isWorking" @click="leaveGame">
+            게임 나가기
+          </button>
+        </div>
       </header>
 
       <div class="game-layout">
@@ -702,6 +762,27 @@ h2 {
   color: #ffd591;
   font-weight: 900;
   padding: 0.5rem 0.8rem;
+}
+
+.match-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: flex-end;
+}
+
+.leave-game-button {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(248, 113, 113, 0.28);
+  color: #fecaca;
+  min-height: 2.35rem;
+  padding: 0.48rem 0.75rem;
+}
+
+.leave-game-button:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(248, 113, 113, 0.48);
 }
 
 .game-layout {
@@ -1200,6 +1281,11 @@ input:disabled {
   .score-goal {
     justify-self: start;
     width: fit-content;
+  }
+
+  .match-actions {
+    align-items: flex-start;
+    justify-content: flex-start;
   }
 
   .guess-form,
