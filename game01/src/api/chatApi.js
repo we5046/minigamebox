@@ -12,6 +12,20 @@ const CHAT_CHANNELS = {
 
 const GAME_LOG_BUCKET = 'game-logs'
 
+async function assertCanChat() {
+  const { error } = await supabase.rpc('assert_can_chat')
+
+  if (error?.message?.includes('Chat suspended')) {
+    throw new Error('관리자에 의해 채팅 이용이 정지되었습니다.')
+  }
+  if (error?.message?.includes('Account suspended')) {
+    throw new Error('관리자에 의해 계정 이용이 정지되었습니다.')
+  }
+  if (error && !error.message?.includes('Could not find the function')) {
+    throw new Error('채팅 권한을 확인하지 못했습니다.')
+  }
+}
+
 function formatChatTime(value) {
   const date = new Date(value)
 
@@ -187,6 +201,8 @@ export async function sendGameMessage({ roomId, gameId, userId, nickname, conten
     return null
   }
 
+  await assertCanChat()
+
   const { data, error } = await supabase
     .from('game_messages')
     .insert({
@@ -304,6 +320,8 @@ export async function sendChatMessage(
   if (!channel) {
     throw new Error('채팅 채널이 아직 연결되지 않았습니다.')
   }
+
+  await assertCanChat()
 
   const result = await channel.send({
     type: 'broadcast',

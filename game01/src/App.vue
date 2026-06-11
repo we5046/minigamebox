@@ -12,8 +12,9 @@ const authStore = useAuthStore()
 
 const isAuthenticated = computed(() => !!authStore.user)
 const showAppNav = computed(
-  () => isAuthenticated.value && ['home', 'shop', 'mypage'].includes(route.name),
+  () => isAuthenticated.value && ['home', 'shop', 'mypage', 'admin'].includes(route.name),
 )
+const isAdmin = computed(() => authStore.user?.role === 'admin')
 const isAuthPage = computed(() =>
   ['login', 'signup', 'forgot-password'].includes(route.name),
 )
@@ -51,6 +52,7 @@ async function logout() {
     <RouterLink class="brand" :to="brandTarget">Minigamebox</RouterLink>
 
     <nav v-if="showAppNav" class="app-nav" aria-label="Main navigation">
+      <RouterLink v-if="isAdmin" to="/admin">관리자</RouterLink>
       <RouterLink to="/home">Home</RouterLink>
       <RouterLink to="/shop">상점</RouterLink>
       <RouterLink to="/mypage">마이페이지</RouterLink>

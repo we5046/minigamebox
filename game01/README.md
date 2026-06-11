@@ -55,11 +55,16 @@ Apply the SQL files in this order after the base tables exist:
 2. `liar-game.sql`
 3. `liar-game-statement-fix.sql`
 4. `catchmind-game.sql`
+5. `admin-access.sql`
 
 `room-admin.sql` removes historical `create_room` overloads before recreating
 the RPC used by the frontend. This avoids PostgREST `PGRST203` errors. It also
 recreates the room presence heartbeat and stale-player cleanup RPCs used by the
 lobby and game screens.
+
+`admin-access.sql` adds user/admin roles, account and chat sanctions, audit
+logs, and the RPCs used by the `/admin` page. After applying it, bootstrap the
+first administrator with the SQL example at the bottom of that file.
 
 After applying the file in the Supabase SQL Editor, verify that only one
 `create_room` function remains:

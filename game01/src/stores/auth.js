@@ -28,7 +28,13 @@ export const useAuthStore = defineStore('auth', () => {
     }
     try {
       const profile = await getProfile(sessionUser.id)
-      setUser(toCurrentUser(profile))
+      const currentUser = toCurrentUser(profile)
+      if (currentUser.accountSuspended) {
+        await supabase.auth.signOut()
+        setUser(null)
+        return
+      }
+      setUser(currentUser)
       setCurrentUser(user.value)
     } catch (error) {
       console.error('Failed to fetch user profile:', error)

@@ -11,11 +11,15 @@ function toAuthEmail(loginId) {
 
 export function toCurrentUser(profile) {
   const stats = profile.stats || {}
+  const access = profile.access || {}
 
   return {
     id: profile.id,
     loginId: profile.login_id,
     nickname: profile.nickname,
+    role: access.role || 'user',
+    accountSuspended: access.accountSuspended === true,
+    chatSuspended: access.chatSuspended === true,
     representativeTitle: profile.representative_title,
     quote: profile.profile_quote,
     experiencePercent: profile.experience_percent,
@@ -37,7 +41,7 @@ export function toCurrentUser(profile) {
 }
 
 export async function getProfile(userId) {
-  const [profileResult, statsResult] = await Promise.all([
+  const [profileResult, statsResult, accessResult] = await Promise.all([
     supabase
       .from('profiles')
       .select('id, login_id, nickname, character_name, level, coin, avatar, representative_title, profile_quote, experience_percent')
@@ -48,6 +52,7 @@ export async function getProfile(userId) {
       .select('user_id, total_games, overall_win_rate, citizen_win_rate, mafia_win_rate, survival_rate, average_survival_turn')
       .eq('user_id', userId)
       .maybeSingle(),
+    supabase.rpc('get_my_access_context'),
   ])
 
   if (profileResult.error) {
@@ -57,6 +62,7 @@ export async function getProfile(userId) {
   return {
     ...profileResult.data,
     stats: statsResult.data,
+    access: accessResult.data || {},
   }
 }
 
@@ -71,6 +77,10 @@ export async function loginUser({ loginId, password }) {
   }
 
   const currentUser = toCurrentUser(await getProfile(data.user.id))
+  if (currentUser.accountSuspended) {
+    await supabase.auth.signOut()
+    throw new Error('이 계정은 관리자에 의해 이용이 정지되었습니다.')
+  }
   setCurrentUser(currentUser)
   return currentUser
 }
